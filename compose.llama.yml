@@ -1,0 +1,110 @@
+# ============================================================================
+# strieber-gpt-3: LLama-Server Only Docker Compose
+# ============================================================================
+# Minimal compose file for running ONLY the llama-server inference engine
+# on a remote GPU machine (e.g., DGX Spark)
+#
+# Usage on remote machine:
+#   docker compose -f compose.llama.yml up -d
+#
+# This exposes port 8000 for remote connections from other machines
+# running the backend and frontend (via compose.dev.yml)
+#
+# Services started: ONLY llama-server + all CLI utilities in container
+
+services:
+  # ==========================================================================
+  # llama-server: Inference engine for gpt-oss-120b
+  # Includes: llama-bench, llama-cli, llama-quantize, and other utilities
+  # ==========================================================================
+  llama-server:
+    build:
+      context: .
+      dockerfile: Dockerfile.llamacpp
+      args:
+        CUDA_VERSION: "13.0.1"
+        UBUNTU_VERSION: "22.04"
+        CUDA_DOCKER_ARCH: "121"  # Blackwell GB10
+
+    image: strieber-llama-server:latest
+    container_name: strieber-llama-server
+
+    # Restart policy
+    restart: unless-stopped
+
+    # GPU configuration
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all  # Use all available GPUs
+              capabilities: [gpu]
+
+    # Shared memory for CUDA operations
+    # 16g sufficient for 20b, may need adjustment for very large models
+    shm_size: 16g
+
+    # IPC mode for better GPU communication
+    ipc: host
+
+    # Port mapping: host:container
+    # IMPORTANT: Make sure this is accessible from remote machines
+    ports:
+      - "${LLAMA_PORT:-8000}:8000"
+
+    # Volume mounts
+    volumes:
+      # Models directory (read-only recommended for safety)
+      # Mount actual models directory, not symlink
+      - /home/trevor/models:/models:ro
+      # Optional: cache directory for prompt caching
+      # - ./cache:/cache
+
+    # Environment variables
+    environment:
+      - CUDA_VISIBLE_DEVICES=0
+      - LLAMA_ARG_HOST=${LLAMA_HOST:-0.0.0.0}
+      - LLAMA_ARG_PORT=8000
+
+    # Resource limits (optional, uncomment if needed)
+    # ulimits:
+    #   memlock: -1
+    #   stack: 67108864
+
+    # Server command optimized for gpt-oss-20b (testing) and gpt-oss-120b (production)
+    # Override MODEL_FILE, CONTEXT_SIZE, GPU_LAYERS in .env for different models
+    command:
+      - "-m"
+      - "/models/gpt-oss-20b-Q4_K_M.gguf"
+      - "--port"
+      - "8000"
+      - "--host"
+      - "0.0.0.0"
+      - "-c"
+      - "${CONTEXT_SIZE:-8192}"       # Context window: 8k (reasonable for 20B model)
+      - "--n-gpu-layers"
+      - "${GPU_LAYERS:-999}"           # Auto-detect layers (works for both models)
+      - "--jinja"                      # Enable chat template support
+      - "-b"
+      - "2048"                         # Batch size: up from default 512 for better throughput
+      - "-ub"
+      - "2048"                         # Ubatch size: physical batch size (same as -b for high-end hardware)
+      - "--flash-attn"
+      - "on"                           # Flash attention: 15% speedup, reduces VRAM usage
+      - "--cont-batching"              # Continuous batching: better throughput with multiple requests
+      - "--parallel"
+      - "1"                            # Concurrent requests: 1 for full context per request
+      # Optional: Advanced parameters (uncomment as needed)
+      # - "--cache-type-k"
+      # - "f16"                        # KV cache precision (can reduce VRAM at cost of speed)
+      # - "--cache-type-v"
+      # - "f16"
+
+    # Health check configuration
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s  # Allow time for model loading

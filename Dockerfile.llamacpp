@@ -1,0 +1,123 @@
+#
+# Multi-stage Docker build for llama.cpp optimized for DGX Spark GB10 Blackwell
+# Includes all CLI utilities: llama-bench, llama-cli, llama-quantize, etc.
+#
+# Build arguments for flexibility
+ARG UBUNTU_VERSION=22.04
+ARG CUDA_VERSION=13.0.1
+ARG BASE_CUDA_DEV_CONTAINER=nvcr.io/nvidia/cuda:${CUDA_VERSION}-devel-ubuntu${UBUNTU_VERSION}
+ARG BASE_CUDA_RUN_CONTAINER=nvcr.io/nvidia/cuda:${CUDA_VERSION}-runtime-ubuntu${UBUNTU_VERSION}
+
+# ============================================================================
+# Build Stage: Compile llama.cpp from source
+# ============================================================================
+FROM ${BASE_CUDA_DEV_CONTAINER} AS build
+
+# Target Blackwell GB10 architecture (compute capability 12.1)
+ARG CUDA_DOCKER_ARCH="121"
+
+# Install build dependencies
+RUN apt-get update && \
+    apt-get install -y \
+        build-essential \
+        cmake \
+        python3 \
+        python3-pip \
+        git \
+        libcurl4-openssl-dev \
+        libgomp1 \
+        ninja-build && \
+    rm -rf /var/lib/apt/lists/*
+
+WORKDIR /app
+
+# Clone llama.cpp repository
+RUN git clone https://github.com/ggml-org/llama.cpp.git .
+
+# Build llama.cpp with DGX Spark optimizations
+# Critical flags:
+#   -DCMAKE_CUDA_ARCHITECTURES=121         - Blackwell GB10 architecture
+#   -DGGML_CUDA_ENABLE_UNIFIED_MEMORY=1    - Enable UMA for 128GB shared memory
+#   -DGGML_NATIVE=OFF                      - Disable x86 optimizations (ARM64 compatibility)
+#   -DGGML_CUDA=ON                         - Enable CUDA acceleration
+#   -DGGML_BACKEND_DL=ON                   - Dynamic backend loading
+#   -DLLAMA_BUILD_TESTS=OFF                - Skip tests to reduce build time
+RUN if [ "${CUDA_DOCKER_ARCH}" != "default" ]; then \
+        export CMAKE_ARGS="-DCMAKE_CUDA_ARCHITECTURES=121"; \
+    fi && \
+    cmake -B build \
+        -GNinja \
+        -DGGML_CUDA_ENABLE_UNIFIED_MEMORY=1 \
+        -DGGML_NATIVE=OFF \
+        -DGGML_CUDA=ON \
+        -DGGML_BACKEND_DL=ON \
+        -DLLAMA_BUILD_TESTS=OFF \
+        ${CMAKE_ARGS} \
+        -DCMAKE_BUILD_TYPE=Release \
+        -DCMAKE_EXE_LINKER_FLAGS=-Wl,--allow-shlib-undefined . && \
+    cmake --build build --config Release -j$(nproc)
+
+# Extract shared libraries for runtime stage
+RUN mkdir -p /app/lib && \
+    find build -name "*.so" -exec cp {} /app/lib \;
+
+# Extract binaries and supporting files
+RUN mkdir -p /app/full && \
+    cp build/bin/* /app/full && \
+    cp *.py /app/full 2>/dev/null || true && \
+    cp -r gguf-py /app/full 2>/dev/null || true && \
+    cp -r requirements /app/full 2>/dev/null || true && \
+    cp requirements.txt /app/full 2>/dev/null || true && \
+    cp .devops/tools.sh /app/full/tools.sh 2>/dev/null || true
+
+# ============================================================================
+# Base Stage: Minimal runtime environment
+# ============================================================================
+FROM ${BASE_CUDA_RUN_CONTAINER} AS base
+
+# Install minimal runtime dependencies
+RUN apt-get update && \
+    apt-get install -y \
+        libgomp1 \
+        curl \
+        ca-certificates && \
+    apt-get autoremove -y && \
+    apt-get clean -y && \
+    rm -rf /tmp/* /var/tmp/* && \
+    find /var/cache/apt/archives /var/lib/apt/lists -not -name lock -type f -delete && \
+    find /var/cache -type f -delete
+
+# Copy shared libraries from build stage
+COPY --from=build /app/lib/ /app
+
+# ============================================================================
+# Final Stage: llama.cpp utilities runtime
+# ============================================================================
+FROM base
+
+# Environment variables for server defaults
+ENV LLAMA_ARG_HOST=0.0.0.0
+ENV LLAMA_ARG_PORT=8000
+
+# Copy ALL binaries from build stage (server + CLI utilities)
+COPY --from=build /app/full/ /app/bin/
+
+# Create symlinks for easy CLI access
+RUN cd /app && \
+    ln -sf bin/* . 2>/dev/null || true
+
+WORKDIR /app
+
+# Health check endpoint (for llama-server)
+HEALTHCHECK --interval=30s --timeout=10s --start-period=60s --retries=3 \
+    CMD /app/bin/llama-server -m /dev/null --help >/dev/null 2>&1 || exit 1
+
+# Expose default port
+EXPOSE 8000
+
+# Set llama-server as default entrypoint (can override with docker run)
+ENTRYPOINT ["/app/bin/llama-server"]
+
+# Default command: basic server startup
+# Override via docker-compose.yml or docker run (e.g., "llama-bench" or "llama-cli")
+CMD ["--host", "0.0.0.0", "--port", "8000"]
