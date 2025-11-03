@@ -15,25 +15,31 @@ help: ## Show this help message
 # ============================================================================
 
 build: ## Build llama.cpp container (includes all CLI utilities)
-	docker compose -f compose.llama.yml build
+	docker compose -f compose.yml build
 
-up: ## Start llama-server container
-	docker compose -f compose.llama.yml up -d
+up: ## Start llama-server container only
+	docker compose -f compose.yml up -d llama-server
 
-down: ## Stop llama-server container
-	docker compose -f compose.llama.yml down
+down: ## Stop all containers (llama-server + open-webui)
+	docker compose -f compose.yml down
 
-restart: ## Restart llama-server container
-	docker compose -f compose.llama.yml restart
+up-all: ## Start both llama-server and open-webui
+	docker compose -f compose.yml up -d
 
-logs: ## Show llama-server logs (follow mode)
-	docker compose -f compose.llama.yml logs -f
+down-all: ## Stop all services (alias for 'down')
+	docker compose -f compose.yml down
 
-shell: ## Open bash shell in container
-	docker compose -f compose.llama.yml exec llama-server /bin/bash
+restart: ## Restart all containers
+	docker compose -f compose.yml restart
+
+logs: ## Show logs from all services (follow mode)
+	docker compose -f compose.yml logs -f
+
+shell: ## Open bash shell in llama-server container
+	docker compose -f compose.yml exec llama-server /bin/bash
 
 status: ## Check container status
-	docker compose -f compose.llama.yml ps
+	docker compose -f compose.yml ps
 
 # ============================================================================
 # Health & Testing
@@ -52,32 +58,32 @@ health-verbose: ## Check health with verbose output
 # For more options on each tool, append -- --help to see all flags
 
 llama-server-exec: ## Execute llama-server directly (use for quick testing)
-	docker compose -f compose.llama.yml exec llama-server /app/bin/llama-server
+	docker compose -f compose.yml exec llama-server /app/bin/llama-server
 
 llama-bench: ## Run llama-bench performance benchmarks
-	docker compose -f compose.llama.yml exec llama-server /app/bin/llama-bench
+	docker compose -f compose.yml exec llama-server /app/bin/llama-bench
 
 llama-cli: ## Interactive CLI interface for model inference
-	docker compose -f compose.llama.yml exec -it llama-server /app/bin/llama-cli
+	docker compose -f compose.yml exec -it llama-server /app/bin/llama-cli
 
 llama-quantize: ## Quantize GGUF models to different formats
-	docker compose -f compose.llama.yml exec llama-server /app/bin/llama-quantize
+	docker compose -f compose.yml exec llama-server /app/bin/llama-quantize
 
 llama-perplexity: ## Calculate model perplexity on input text
-	docker compose -f compose.llama.yml exec llama-server /app/bin/llama-perplexity
+	docker compose -f compose.yml exec llama-server /app/bin/llama-perplexity
 
 llama-embedding: ## Generate embeddings for text input
-	docker compose -f compose.llama.yml exec llama-server /app/bin/llama-embedding
+	docker compose -f compose.yml exec llama-server /app/bin/llama-embedding
 
 llama-tokenize: ## Tokenize text using model's tokenizer
-	docker compose -f compose.llama.yml exec llama-server /app/bin/llama-tokenize
+	docker compose -f compose.yml exec llama-server /app/bin/llama-tokenize
 
 llama-imatrix: ## Generate importance matrix for model optimization
-	docker compose -f compose.llama.yml exec llama-server /app/bin/llama-imatrix
+	docker compose -f compose.yml exec llama-server /app/bin/llama-imatrix
 
 # Generic utility runner: make llama-util CMD="--help"
 llama-util: ## Generic utility runner (usage: make llama-util CMD="/app/bin/llama-bench --help")
-	docker compose -f compose.llama.yml exec llama-server /bin/bash -c "$(CMD)"
+	docker compose -f compose.yml exec llama-server /bin/bash -c "$(CMD)"
 
 # ============================================================================
 # Benchmarking
@@ -87,7 +93,7 @@ bench-sequential: ## Run sequential benchmark (prefill/generation at various con
 	@mkdir -p benchmarks
 	@TIMESTAMP=$$(date +%Y%m%d-%H%M%S); \
 	echo "Sequential benchmark started at $$TIMESTAMP"; \
-	docker compose -f compose.llama.yml exec llama-server \
+	docker compose -f compose.yml exec llama-server \
 	  /app/bin/llama-bench \
 	  -m /models/gpt-oss-20b-Q4_K_M.gguf \
 	  -fa 1 -d 0,4096,8192,16384,32768 -p 2048 -n 32 -ub 2048 -mmp 0 -o jsonl \
@@ -98,7 +104,7 @@ bench-parallel: ## Run parallel benchmark (128k context, batch sizes 1-16)
 	@mkdir -p benchmarks
 	@TIMESTAMP=$$(date +%Y%m%d-%H%M%S); \
 	echo "Parallel benchmark started at $$TIMESTAMP"; \
-	docker compose -f compose.llama.yml exec llama-server \
+	docker compose -f compose.yml exec llama-server \
 	  /app/bin/llama-batched-bench \
 	  -m /models/gpt-oss-20b-Q4_K_M.gguf \
 	  -fa 1 -c 131072 -ub 2048 -npp 4096,8192 -ntg 32 -npl 1,2,4,8,16 --no-mmap -o jsonl \
@@ -109,7 +115,7 @@ bench-extreme: ## Run extreme stress test (300k context, batch sizes 1-32)
 	@mkdir -p benchmarks
 	@TIMESTAMP=$$(date +%Y%m%d-%H%M%S); \
 	echo "Extreme benchmark started at $$TIMESTAMP"; \
-	docker compose -f compose.llama.yml exec llama-server \
+	docker compose -f compose.yml exec llama-server \
 	  /app/bin/llama-batched-bench \
 	  -m /models/gpt-oss-20b-Q4_K_M.gguf \
 	  -fa 1 -c 300000 -ub 2048 -npp 4096,8192 -ntg 32 -npl 1,2,4,8,16,32 --no-mmap -o jsonl \
@@ -135,10 +141,10 @@ bench-list: ## List all benchmark results
 # ============================================================================
 
 list-binaries: ## List all available llama.cpp binaries in container
-	docker compose -f compose.llama.yml exec llama-server ls -lah /app/bin/
+	docker compose -f compose.yml exec llama-server ls -lah /app/bin/
 
 copy-binary: ## Copy a binary from container to host (usage: make copy-binary BIN=llama-bench)
-	docker compose -f compose.llama.yml exec llama-server cat /app/bin/$(BIN) > ./$(BIN)
+	docker compose -f compose.yml exec llama-server cat /app/bin/$(BIN) > ./$(BIN)
 	chmod +x ./$(BIN)
 	@echo "Copied $(BIN) to current directory and made executable"
 
@@ -175,6 +181,6 @@ prune: ## Remove unused Docker images and containers
 	docker system prune -f
 
 clean: ## Clean up everything (stop containers, remove images)
-	docker compose -f compose.llama.yml down
+	docker compose -f compose.yml down
 	docker image rm strieber-llama-server:latest 2>/dev/null || true
 	docker system prune -f

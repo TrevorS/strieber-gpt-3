@@ -1,0 +1,156 @@
+# ============================================================================
+# strieber-gpt-3: LLama-Server + Open WebUI Docker Compose
+# ============================================================================
+# Docker compose file for running llama.cpp inference engine with Open WebUI
+# on a GPU machine (e.g., DGX Spark)
+#
+# Usage:
+#   docker compose up -d          # Start both services
+#   docker compose up -d llama-server   # Start only llama-server
+#
+# Access:
+#   - llama-server OpenAI API: http://localhost:8000
+#   - Open WebUI: http://localhost:3000
+#
+# Services: llama-server (inference) + open-webui (web interface)
+
+services:
+  # ==========================================================================
+  # llama-server: Inference engine for gpt-oss-120b
+  # Includes: llama-bench, llama-cli, llama-quantize, and other utilities
+  # ==========================================================================
+  llama-server:
+    build:
+      context: .
+      dockerfile: Dockerfile.llamacpp
+      args:
+        CUDA_VERSION: "13.0.1"
+        UBUNTU_VERSION: "22.04"
+        CUDA_DOCKER_ARCH: "121"  # Blackwell GB10
+
+    image: strieber-llama-server:latest
+    container_name: strieber-llama-server
+
+    # Restart policy
+    restart: unless-stopped
+
+    # GPU configuration
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all  # Use all available GPUs
+              capabilities: [gpu]
+
+    # Shared memory for CUDA operations
+    # 16g sufficient for 20b, may need adjustment for very large models
+    shm_size: 16g
+
+    # IPC mode for better GPU communication
+    ipc: host
+
+    # Port mapping: host:container
+    # IMPORTANT: Make sure this is accessible from remote machines
+    ports:
+      - "${LLAMA_PORT:-8000}:8000"
+
+    # Volume mounts
+    volumes:
+      # Models directory (read-only recommended for safety)
+      # Mount actual models directory, not symlink
+      - /home/trevor/models:/models:ro
+      # Optional: cache directory for prompt caching
+      # - ./cache:/cache
+
+    # Environment variables
+    environment:
+      - CUDA_VISIBLE_DEVICES=0
+      - LLAMA_ARG_HOST=${LLAMA_HOST:-0.0.0.0}
+      - LLAMA_ARG_PORT=8000
+
+    # Resource limits (optional, uncomment if needed)
+    # ulimits:
+    #   memlock: -1
+    #   stack: 67108864
+
+    # Server command optimized for gpt-oss-20b (testing) and gpt-oss-120b (production)
+    # Override MODEL_FILE, CONTEXT_SIZE, GPU_LAYERS in .env for different models
+    command:
+      - "-m"
+      - "/models/gpt-oss-20b-Q4_K_M.gguf"
+      - "--port"
+      - "8000"
+      - "--host"
+      - "0.0.0.0"
+      - "-c"
+      - "${CONTEXT_SIZE:-8192}"       # Context window: 8k (reasonable for 20B model)
+      - "--n-gpu-layers"
+      - "${GPU_LAYERS:-999}"           # Auto-detect layers (works for both models)
+      - "--jinja"                      # Enable chat template support
+      - "-b"
+      - "2048"                         # Batch size: up from default 512 for better throughput
+      - "-ub"
+      - "2048"                         # Ubatch size: physical batch size (same as -b for high-end hardware)
+      - "--flash-attn"
+      - "on"                           # Flash attention: 15% speedup, reduces VRAM usage
+      - "--cont-batching"              # Continuous batching: better throughput with multiple requests
+      - "--parallel"
+      - "1"                            # Concurrent requests: 1 for full context per request
+      # Optional: Advanced parameters (uncomment as needed)
+      # - "--cache-type-k"
+      # - "f16"                        # KV cache precision (can reduce VRAM at cost of speed)
+      # - "--cache-type-v"
+      # - "f16"
+
+    # Health check configuration
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s  # Allow time for model loading
+
+  # ==========================================================================
+  # open-webui: Web interface for llama-server
+  # Connects to llama-server OpenAI-compatible API endpoint
+  # ==========================================================================
+  open-webui:
+    image: ghcr.io/open-webui/open-webui:main
+    container_name: strieber-open-webui
+
+    # Restart policy
+    restart: unless-stopped
+
+    # Port mapping: host:container
+    ports:
+      - "${OPENWEBUI_PORT:-3000}:8080"
+
+    # Volume for persistent data
+    volumes:
+      # Open WebUI data directory (chats, settings, files, etc.)
+      - open-webui-data:/app/backend/data
+
+    # Environment variables
+    environment:
+      # Connect to llama-server using Docker network name
+      - OPENAI_API_BASE_URL=http://llama-server:8000/v1
+      - OPENAI_API_KEY=sk-open-webui-local  # Dummy key for local usage
+
+    # Depends on llama-server being healthy before starting
+    depends_on:
+      llama-server:
+        condition: service_healthy
+
+    # Health check configuration
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+
+# Named volume for persistent Open WebUI data
+volumes:
+  open-webui-data:
+    driver: local

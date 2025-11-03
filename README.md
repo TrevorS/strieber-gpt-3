@@ -76,7 +76,11 @@ make download-120b
 ### Start the Server
 
 ```bash
+# Start llama-server only
 make up
+
+# Or start both llama-server and Open WebUI
+make up-all
 
 # Check health
 make health
@@ -84,6 +88,17 @@ make health
 # View logs
 make logs
 ```
+
+### Access Open WebUI
+
+Once `make up-all` is running:
+
+```
+Open WebUI: http://localhost:3000
+llama-server API: http://localhost:8000
+```
+
+Configure Open WebUI to use the llama-server endpoint (it's pre-configured by default).
 
 ### Run Utilities
 
@@ -100,7 +115,7 @@ make llama-perplexity
 make llama-embedding
 
 # Help for any utility
-docker compose -f compose.llama.yml exec llama-server /app/bin/llama-bench --help
+docker compose -f compose.yml exec llama-server /app/bin/llama-bench --help
 ```
 
 ---
@@ -140,6 +155,46 @@ make download-120b
 make restart
 ```
 
+### Open WebUI Configuration
+
+**Open WebUI** is a beautiful web interface for interacting with your llama-server.
+
+#### Starting Open WebUI
+
+```bash
+# Start both services
+make up-all
+
+# Access at http://localhost:3000
+```
+
+#### OpenAI API Configuration
+
+Open WebUI is pre-configured to connect to your llama-server via:
+```
+Base URL: http://llama-server:8000/v1
+API Key: sk-open-webui-local (dummy key)
+```
+
+This configuration is set in `compose.yml` and `.env`. The URL uses the Docker container name `llama-server` for inter-container communication.
+
+#### Customizing Open WebUI Port
+
+Edit `.env`:
+```bash
+OPENWEBUI_PORT=3000    # Change to different port if needed
+```
+
+Then restart:
+```bash
+make down-all
+make up-all
+```
+
+#### Persisting Data
+
+Open WebUI data (chats, settings, files) is stored in a Docker named volume `open-webui-data` and persists across container restarts.
+
 ---
 
 ## Makefile Commands
@@ -148,13 +203,15 @@ make restart
 
 ```bash
 make build              # Build container (10-20 min)
-make up                 # Start llama-server
-make down               # Stop llama-server
-make restart            # Restart service
-make logs               # Show logs (follow)
+make up                 # Start llama-server only
+make up-all             # Start llama-server + Open WebUI
+make down               # Stop all containers
+make down-all           # Alias for 'down'
+make restart            # Restart all containers
+make logs               # Show logs from all services (follow)
 make health             # Check health endpoint
 make status             # Container status
-make shell              # Bash shell in container
+make shell              # Bash shell in llama-server container
 ```
 
 ### CLI Utilities
@@ -205,7 +262,7 @@ make clean                           # Remove everything
 ```
 strieber-gpt-3/
 ├── Dockerfile.llamacpp      # Multi-stage build (all utilities)
-├── compose.llama.yml        # Docker Compose config
+├── compose.yml              # Docker Compose config (llama-server + Open WebUI)
 ├── Makefile                 # Development commands
 ├── README.md               # This file
 ├── .env.example            # Configuration template
