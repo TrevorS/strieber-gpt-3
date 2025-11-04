@@ -494,41 +494,6 @@ async def fetch_page(
 
 
 @mcp.tool()
-async def fetch_page_text(
-    url: str,
-    timeout: int = 10,
-    ctx: Context = None
-) -> str:
-    """Fetch just the main content text from a page (simplified, text-only result).
-
-    Useful when you only need the article content without metadata or structure.
-    Returns a plain string instead of structured data.
-
-    Args:
-        url: The URL to fetch
-        timeout: Maximum page load time in seconds (default: 10)
-        ctx: MCP context for progress/logging (auto-injected)
-
-    Returns:
-        Markdown-formatted content as a string, or error message
-
-    Example:
-        fetch_page_text("https://example.com/article")
-    """
-    result = await fetch_page(url, timeout, False, False, ctx)
-
-    if "error" in result:
-        return f"Error: {result['error']}"
-
-    # Return formatted text with title
-    metadata = result["metadata"]
-    title = metadata.get("title", "Untitled")
-    content = result["content"]
-
-    return f"# {title}\n\nSource: {url}\n\n---\n\n{content}"
-
-
-@mcp.tool()
 async def get_page_links(
     url: str,
     external_only: bool = False,
@@ -597,8 +562,7 @@ Page Reader MCP Server - Features and Configuration:
 
 **Available Tools**:
 1. fetch_page(url) - Full structured data with metadata
-2. fetch_page_text(url) - Simple text-only output
-3. get_page_links(url) - Extract all links from page
+2. get_page_links(url) - Extract all links from page
 
 **Processing Pipeline**:
 URL → Playwright (JS rendering) → Readability (clean extraction) →
@@ -620,11 +584,11 @@ ReaderLM-v2 (HTML→Markdown) → Structured output
 }}
 
 **Best Practices**:
-• Use fetch_page() for full analysis needs
-• Use fetch_page_text() for simple content extraction
+• Use fetch_page() for content extraction and analysis
 • Use get_page_links() to discover related content
 • Set timeout=20-30 for slow/large pages
-• Include_links=True for research and link analysis
+• include_links=True for research and link analysis
+• include_images=True when image context matters
 
 For more info: https://jina.ai/models/ReaderLM-v2/
 """

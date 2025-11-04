@@ -56,10 +56,9 @@ return {
 **Before** (single tool):
 - `jina_fetch_page(url, remove_images, gather_links, timeout, bypass_cache)`
 
-**After** (multiple focused tools):
+**After** (focused tools):
 - `fetch_page(url, include_links, include_images, timeout)` - Full structured output
-- `fetch_page_text(url, timeout)` - Simple text-only (backward compat)
-- `get_page_links(url, external_only, timeout)` - Just extract links
+- `get_page_links(url, external_only, timeout)` - Extract all links
 - `get_page_info()` - Tool capabilities
 
 **Benefit**: Each tool has a clear purpose, easier for LLM to choose
@@ -200,20 +199,20 @@ Instead of parsing markdown strings, LLM gets explicit fields:
 ### 3. **Flexible Usage**
 
 ```python
-# Full analysis
+# Full analysis with all data
 result = fetch_page(url, include_links=True, include_images=True)
-# Access: result['metadata']['author'], result['links'], etc.
+# Access: result['metadata']['author'], result['links'], result['images'], etc.
 
-# Quick summary
-text = fetch_page_text(url)
-# Access: Just markdown string
+# Content only (minimal metadata)
+result = fetch_page(url)
+# Access: result['content'], result['metadata']
 
 # Link discovery
 links = get_page_links(url, external_only=True)
 # Access: links['links']
 ```
 
-LLM can choose the right tool for the task.
+LLM can choose granularity through parameters.
 
 ### 4. **Reduced Token Usage**
 
@@ -248,7 +247,7 @@ Markdown is cleaner, images are optional structured data.
 | **Content Extraction** | ReaderLM only | Readability + ReaderLM |
 | **Ad Removal** | ReaderLM | Readability (better) |
 | **API Dependency** | Optional fallback | None (100% local) |
-| **Tool Count** | 3 tools | 4 tools (more focused) |
+| **Tool Count** | 3 tools | 3 tools (more focused) |
 
 ## Examples
 
@@ -275,21 +274,17 @@ print(f"Found {len(external_links)} external references")
 content = result['content']  # Clean markdown
 ```
 
-### Example 2: Quick Content Extraction
+### Example 2: Content Only (No Links/Images)
 
 ```python
-text = fetch_page_text("https://docs.python.org/3/tutorial/")
+result = fetch_page("https://docs.python.org/3/tutorial/")
 
-# Just markdown string, ready to use
-print(text)
-# Output:
-# # Python Tutorial
-#
-# Source: https://docs.python.org/3/tutorial/
-#
-# ---
-#
-# Python is an easy to learn...
+# Access just the content
+print(result['content'])
+# Clean markdown without extra metadata clutter
+
+# Or access metadata
+print(f"{result['metadata']['title']} - {result['metadata']['word_count']} words")
 ```
 
 ### Example 3: Link Discovery
@@ -309,19 +304,17 @@ for link in links['links'][:5]:
 **Old way** (jina_reader):
 ```python
 content = jina_fetch_page("https://example.com")
-# Returns: "# Title\n\nContent..."
+# Returns: "# Title\n\nContent..." (plain string)
 ```
 
 **New way** (page_reader):
 ```python
-# Option 1: Get structure
 result = fetch_page("https://example.com")
-content = result['content']
-title = result['metadata']['title']
-
-# Option 2: Get simple text (backward compat)
-content = fetch_page_text("https://example.com")
-# Returns: "# Title\n\nSource: ...\n\n---\n\nContent..."
+content = result['content']  # Clean markdown
+title = result['metadata']['title']  # Structured metadata
+author = result['metadata']['author']
+word_count = result['metadata']['word_count']
+# etc.
 ```
 
 ### Configuration Changes
