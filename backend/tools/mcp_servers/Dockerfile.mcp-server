@@ -1,0 +1,35 @@
+# ABOUTME: Generic MCP Server Dockerfile - Parameterized for all MCP servers (Streamable HTTP)
+# Usage: docker build -f Dockerfile.mcp-server --build-arg SERVER_MODULE=weather -t strieber-mcp-weather:latest .
+#
+# Build arguments:
+#   SERVER_MODULE: Python module name to run (weather, jina_reader, web_search, code_interpreter)
+
+ARG SERVER_MODULE=weather
+
+FROM python:3.11-slim
+
+WORKDIR /app
+
+# Install curl for health checks (minimal footprint)
+RUN apt-get update && apt-get install -y curl && rm -rf /var/lib/apt/lists/*
+
+# Install Python dependencies
+COPY requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt
+
+# Copy all server code files
+COPY *.py .
+
+# Create non-root user for security
+RUN useradd -m -u 1000 mcp-user && chown -R mcp-user:mcp-user /app
+USER mcp-user
+
+# Health check - verify Uvicorn is listening on port 8000
+HEALTHCHECK --interval=30s --timeout=10s --retries=3 --start-period=10s \
+    CMD curl -s http://localhost:8000/ 2>/dev/null | grep -q "Not Found" || exit 1
+
+# Run server (use ENTRYPOINT with shell to allow variable expansion)
+ENV PORT=8000
+ARG SERVER_MODULE=weather
+ENTRYPOINT ["/bin/bash", "-c", "python $SERVER_MODULE.py"]
+ENV SERVER_MODULE=${SERVER_MODULE}

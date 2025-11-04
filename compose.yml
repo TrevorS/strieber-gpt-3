@@ -57,9 +57,9 @@ services:
 
     # Volume mounts
     volumes:
-      # Models directory (read-only recommended for safety)
+      # Models directory (write access enabled for llama-cli downloads)
       # Mount actual models directory, not symlink
-      - /home/trevor/models:/models:ro
+      - /home/trevor/models:/models
       # Optional: cache directory for prompt caching
       # - ./cache:/cache
 
@@ -78,13 +78,13 @@ services:
     # Override MODEL_FILE, CONTEXT_SIZE, GPU_LAYERS in .env for different models
     command:
       - "-m"
-      - "/models/gpt-oss-20b-Q4_K_M.gguf"
+      - "/models/gpt-oss-120b-mxfp4-00001-of-00003.gguf"
       - "--port"
       - "8000"
       - "--host"
       - "0.0.0.0"
       - "-c"
-      - "${CONTEXT_SIZE:-8192}"       # Context window: 8k (reasonable for 20B model)
+      - "${CONTEXT_SIZE:-131072}"     # Context window: 128k for extended context
       - "--n-gpu-layers"
       - "${GPU_LAYERS:-999}"           # Auto-detect layers (works for both models)
       - "--jinja"                      # Enable chat template support
@@ -97,11 +97,11 @@ services:
       - "--cont-batching"              # Continuous batching: better throughput with multiple requests
       - "--parallel"
       - "1"                            # Concurrent requests: 1 for full context per request
-      # Optional: Advanced parameters (uncomment as needed)
-      # - "--cache-type-k"
-      # - "f16"                        # KV cache precision (can reduce VRAM at cost of speed)
-      # - "--cache-type-v"
-      # - "f16"
+      - "--no-mmap"                    # Disable mmap for better performance with unified memory
+      - "--cache-type-k"
+      - "f16"                          # KV cache precision: balance between speed and VRAM
+      - "--cache-type-v"
+      - "f16"
 
     # Health check configuration
     healthcheck:
@@ -128,8 +128,8 @@ services:
 
     # Volume for persistent data
     volumes:
-      # Open WebUI data directory (chats, settings, files, etc.)
-      - open-webui-data:/app/backend/data
+      # Host bind mount for direct filesystem access and backups
+      - ./open-webui-data:/app/backend/data
 
     # Environment variables
     environment:
@@ -150,7 +150,135 @@ services:
       retries: 3
       start_period: 30s
 
-# Named volume for persistent Open WebUI data
-volumes:
-  open-webui-data:
-    driver: local
+  # ==========================================================================
+  # code-executor: Sandboxed Python execution environment
+  # Used by code-interpreter MCP server for safe code execution
+  # ==========================================================================
+  code-executor:
+    build:
+      context: ./backend/tools/code-executor
+      dockerfile: Dockerfile
+    image: code-executor:latest
+    container_name: code-executor
+    restart: unless-stopped
+    networks:
+      - strieber-net
+
+  # ==========================================================================
+  # MCP Tool Servers (Phase 2)
+  # ==========================================================================
+
+  # mcp-weather: Weather forecast service
+  # Uses: Open-Meteo API (no API key required)
+  # Provides: Current weather, daily forecast, weekly forecast
+  mcp-weather:
+    build:
+      context: ./backend/tools/mcp_servers
+      dockerfile: Dockerfile.mcp-server
+      args:
+        SERVER_MODULE: weather
+    image: strieber-mcp-weather:latest
+    container_name: strieber-mcp-weather
+    restart: unless-stopped
+    ports:
+      - "8100:8000"
+    environment:
+      - PORT=8000
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+    networks:
+      - strieber-net
+
+  # mcp-jina-reader: Web page content extraction
+  # Uses: Jina Reader API (optional API key for higher rate limits)
+  # Provides: Clean markdown extraction from URLs, PDF support
+  mcp-jina-reader:
+    build:
+      context: ./backend/tools/mcp_servers
+      dockerfile: Dockerfile.mcp-server
+      args:
+        SERVER_MODULE: jina_reader
+    image: strieber-mcp-jina-reader:latest
+    container_name: strieber-mcp-jina-reader
+    restart: unless-stopped
+    ports:
+      - "8101:8000"
+    environment:
+      - PORT=8000
+      - JINA_API_KEY=${JINA_API_KEY:-}
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+    networks:
+      - strieber-net
+
+  # mcp-web-search: Brave Search integration
+  # Uses: Brave Search API (requires BRAVE_API_KEY)
+  # Provides: Web search, news search with query expansion
+  mcp-web-search:
+    build:
+      context: ./backend/tools/mcp_servers
+      dockerfile: Dockerfile.mcp-server
+      args:
+        SERVER_MODULE: web_search
+    image: strieber-mcp-web-search:latest
+    container_name: strieber-mcp-web-search
+    restart: unless-stopped
+    ports:
+      - "8102:8000"
+    environment:
+      - PORT=8000
+      - BRAVE_API_KEY=${BRAVE_API_KEY:-}
+      - LLAMA_BASE_URL=http://llama-server:8000
+      - MODEL_NAME=${MODEL_FILE:-gpt-oss-20b}
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+    depends_on:
+      llama-server:
+        condition: service_healthy
+    networks:
+      - strieber-net
+
+  # mcp-code-interpreter: Sandboxed Python execution
+  # Uses: Docker container isolation for safe code execution
+  # Provides: Python code execution with matplotlib figure capture
+  mcp-code-interpreter:
+    build:
+      context: ./backend/tools/mcp_servers
+      dockerfile: Dockerfile.mcp-server
+      args:
+        SERVER_MODULE: code_interpreter
+    image: strieber-mcp-code-interpreter:latest
+    container_name: strieber-mcp-code-interpreter
+    restart: unless-stopped
+    ports:
+      - "8103:8000"
+    environment:
+      - PORT=8000
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+    depends_on:
+      - code-executor
+    networks:
+      - strieber-net
+
+networks:
+  strieber-net:
+    driver: bridge
