@@ -193,26 +193,24 @@ services:
     networks:
       - strieber-net
 
-  # mcp-jina-reader: Web page content extraction
-  # Uses: Local ReaderLM-v2 + Playwright (with Jina API fallback)
-  # Provides: Clean markdown extraction from URLs, PDF support
-  mcp-jina-reader:
+  # mcp-page-reader: Local web page content extraction
+  # Uses: Local ReaderLM-v2 + Playwright + Mozilla Readability
+  # Provides: Structured page data (content, metadata, links, images)
+  mcp-page-reader:
     build:
       context: ./backend/tools/mcp_servers
       dockerfile: Dockerfile.mcp-server
       args:
-        SERVER_MODULE: jina_reader
-    image: strieber-mcp-jina-reader:latest
-    container_name: strieber-mcp-jina-reader
+        SERVER_MODULE: page_reader
+    image: strieber-mcp-page-reader:latest
+    container_name: strieber-mcp-page-reader
     restart: unless-stopped
     ports:
       - "8101:8000"
     environment:
       - PORT=8000
-      - JINA_API_KEY=${JINA_API_KEY:-}
       - READERLM_BASE_URL=http://llama-server-reader:8004
       - PLAYWRIGHT_BASE_URL=http://playwright-fetcher:8005
-      - USE_LOCAL_READER=${USE_LOCAL_READER:-true}
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
       interval: 30s
