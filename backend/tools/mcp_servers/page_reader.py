@@ -124,8 +124,8 @@ def extract_with_readability(html: str, url: str) -> Dict:
         Readability extraction result with title, content, etc.
     """
     try:
-        # Use pure-Python mode (no Node.js required)
-        result = simple_json_from_html_string(html, use_readability=False)
+        # Use Mozilla's Readability.js (requires Node.js, but much better quality)
+        result = simple_json_from_html_string(html, use_readability=True)
         return result
     except Exception as e:
         logger.error(f"Readability extraction failed: {e}")
@@ -491,108 +491,6 @@ async def fetch_page(
         if ctx:
             await ctx.error(error_msg)
         return {"error": error_msg}
-
-
-@mcp.tool()
-async def get_page_links(
-    url: str,
-    external_only: bool = False,
-    timeout: int = 10,
-    ctx: Context = None
-) -> dict:
-    """Extract all links from a web page.
-
-    Useful for discovering related content or building link graphs.
-
-    Args:
-        url: The URL to fetch
-        external_only: Only return external links (default: False)
-        timeout: Maximum page load time in seconds (default: 10)
-        ctx: MCP context for progress/logging (auto-injected)
-
-    Returns:
-        Dict with:
-        - url: Source page URL
-        - link_count: Total number of links found
-        - links: List of {text, url, is_external}
-
-    Example:
-        get_page_links("https://news.ycombinator.com")
-        get_page_links("https://example.com", external_only=True)
-    """
-    result = await fetch_page(url, timeout, include_links=True, include_images=False, ctx)
-
-    if "error" in result:
-        return {"error": result["error"]}
-
-    links = result["links"]
-
-    if external_only:
-        links = [link for link in links if link.get("is_external", False)]
-
-    return {
-        "url": url,
-        "link_count": len(links),
-        "links": links
-    }
-
-
-@mcp.tool()
-async def get_page_info(ctx: Context = None) -> str:
-    """Get information about page reader capabilities and configuration.
-
-    Returns:
-        Information about features, performance, and usage
-    """
-    info = f"""
-Page Reader MCP Server - Features and Configuration:
-
-**Configuration**:
-• ReaderLM-v2 Model: {READERLM_BASE_URL}
-• Playwright Browser: {PLAYWRIGHT_BASE_URL}
-• Processing: 100% local, unlimited, free
-
-**Features**:
-• Structured data output (like web_search tool)
-• Mozilla Readability content extraction
-• Metadata extraction (title, author, reading time, etc.)
-• Link and image extraction
-• Section heading structure
-• Markdown conversion via ReaderLM-v2
-
-**Available Tools**:
-1. fetch_page(url) - Full structured data with metadata
-2. get_page_links(url) - Extract all links from page
-
-**Processing Pipeline**:
-URL → Playwright (JS rendering) → Readability (clean extraction) →
-ReaderLM-v2 (HTML→Markdown) → Structured output
-
-**Performance**:
-• Speed: 2-5 seconds per page average
-• Rate Limit: Unlimited (local processing)
-• Cost: Free (no API fees)
-• JavaScript: Full support via headless browser
-
-**Returned Data Structure**:
-{{
-  "content": "Markdown text...",
-  "metadata": {{"title", "author", "word_count", "reading_time_minutes", ...}},
-  "links": [{{"text", "url", "is_external"}}, ...],
-  "images": [{{"url", "alt", "title"}}, ...],
-  "sections": ["Heading 1", "Heading 2", ...]
-}}
-
-**Best Practices**:
-• Use fetch_page() for content extraction and analysis
-• Use get_page_links() to discover related content
-• Set timeout=20-30 for slow/large pages
-• include_links=True for research and link analysis
-• include_images=True when image context matters
-
-For more info: https://jina.ai/models/ReaderLM-v2/
-"""
-    return info.strip()
 
 
 if __name__ == "__main__":
