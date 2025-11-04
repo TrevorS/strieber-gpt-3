@@ -56,6 +56,11 @@ class BraveSearchBackend(SearchBackend):
     async def _rate_limit(self) -> None:
         """Rate limit requests to 1 per second (free tier limit)."""
         async with self._rate_limit_lock:
+            if self.last_request_time is None:
+                # First request, no rate limiting needed
+                self.last_request_time = time.time()
+                return
+
             elapsed = time.time() - self.last_request_time
             if elapsed < 1.0:
                 wait_time = 1.0 - elapsed

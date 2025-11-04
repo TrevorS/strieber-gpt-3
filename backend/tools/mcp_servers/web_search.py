@@ -504,4 +504,4 @@ if __name__ == "__main__":
         logger.error(f"Failed to initialize backend: {e}")
         logger.error("Server will start but searches will fail until backend is configured")
 
-    mcp.run(transport="streamable-http")
+    server.run(transport="streamable-http")

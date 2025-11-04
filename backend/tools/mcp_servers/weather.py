@@ -499,4 +499,4 @@ async def get_weather(
 
 if __name__ == "__main__":
     logger.info("Starting Weather MCP server (Streamable HTTP)...")
-    mcp.run(transport="streamable-http")
+    server.run(transport="streamable-http")

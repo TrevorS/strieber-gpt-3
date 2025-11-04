@@ -55,9 +55,9 @@ services:
 
     # Volume mounts
     volumes:
-      # Models directory (read-only recommended for safety)
+      # Models directory (write access enabled for llama-cli downloads)
       # Mount actual models directory, not symlink
-      - /home/trevor/models:/models:ro
+      - /home/trevor/models:/models
       # Optional: cache directory for prompt caching
       # - ./cache:/cache
 

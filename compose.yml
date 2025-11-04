@@ -103,13 +103,9 @@ services:
       - "--cache-type-v"
       - "f16"
 
-    # Health check configuration
-    healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
-      interval: 30s
-      timeout: 10s
-      retries: 3
-      start_period: 60s  # Allow time for model loading
+    # Network configuration for MCP server communication
+    networks:
+      - strieber-net
 
   # ==========================================================================
   # open-webui: Web interface for llama-server
@@ -133,22 +129,23 @@ services:
 
     # Environment variables
     environment:
-      # Connect to llama-server using Docker network name
-      - OPENAI_API_BASE_URL=http://llama-server:8000/v1
+      # Connect to llama-server using Docker container name
+      - OPENAI_API_BASE_URL=http://strieber-llama-server:8000/v1
       - OPENAI_API_KEY=sk-open-webui-local  # Dummy key for local usage
+      # Enable direct MCP server connections (native tool discovery)
+      - ENABLE_DIRECT_CONNECTIONS=true
 
-    # Depends on llama-server being healthy before starting
+    # Depends on llama-server and MCP servers being started
     depends_on:
-      llama-server:
-        condition: service_healthy
+      - llama-server
+      - mcp-weather
+      - mcp-jina-reader
+      - mcp-web-search
+      - mcp-code-interpreter
 
-    # Health check configuration
-    healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
-      interval: 30s
-      timeout: 10s
-      retries: 3
-      start_period: 30s
+    # Network configuration for inter-service communication
+    networks:
+      - strieber-net
 
   # ==========================================================================
   # code-executor: Sandboxed Python execution environment
@@ -184,12 +181,6 @@ services:
       - "8100:8000"
     environment:
       - PORT=8000
-    healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
-      interval: 30s
-      timeout: 10s
-      retries: 3
-      start_period: 10s
     networks:
       - strieber-net
 
@@ -210,12 +201,6 @@ services:
     environment:
       - PORT=8000
       - JINA_API_KEY=${JINA_API_KEY:-}
-    healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
-      interval: 30s
-      timeout: 10s
-      retries: 3
-      start_period: 10s
     networks:
       - strieber-net
 
@@ -238,12 +223,6 @@ services:
       - BRAVE_API_KEY=${BRAVE_API_KEY:-}
       - LLAMA_BASE_URL=http://llama-server:8000
       - MODEL_NAME=${MODEL_FILE:-gpt-oss-20b}
-    healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
-      interval: 30s
-      timeout: 10s
-      retries: 3
-      start_period: 10s
     depends_on:
       llama-server:
         condition: service_healthy
@@ -268,12 +247,6 @@ services:
       - PORT=8000
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
-    healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
-      interval: 30s
-      timeout: 10s
-      retries: 3
-      start_period: 10s
     depends_on:
       - code-executor
     networks:

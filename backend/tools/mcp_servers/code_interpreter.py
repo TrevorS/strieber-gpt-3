@@ -311,4 +311,4 @@ async def get_available_libraries(ctx: Context = None) -> str:
 
 if __name__ == "__main__":
     logger.info("Starting Code Interpreter MCP server (Streamable HTTP)...")
-    mcp.run(transport="streamable-http")
+    server.run(transport="streamable-http")
