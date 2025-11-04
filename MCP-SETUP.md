@@ -223,26 +223,63 @@ plt.show()
 
 ## File Structure
 
+The MCP server codebase is organized for maintainability and code reuse:
+
 ```
 strieber-gpt-3/
 ├── backend/
 │   └── tools/
 │       ├── mcp_servers/
-│       │   ├── weather.py              # Weather forecast tool
-│       │   ├── web_search.py           # Web search tool
-│       │   ├── jina_reader.py          # Web content extraction
-│       │   ├── code_interpreter.py     # Sandboxed code execution
-│       │   ├── brave_backend.py        # Brave Search API backend
-│       │   ├── search_backend.py       # Abstract search interface
-│       │   ├── search_utils.py         # Utility functions
-│       │   ├── requirements.txt        # MCP server dependencies
-│       │   └── Dockerfile.mcp-server   # Generic MCP server Dockerfile
+│       │   ├── common/                      # Shared infrastructure
+│       │   │   ├── __init__.py
+│       │   │   ├── mcp_base.py              # MCPServerBase class (health check, logging)
+│       │   │   └── search/                  # Search-specific utilities
+│       │   │       ├── __init__.py
+│       │   │       ├── backend.py           # SearchBackend interface
+│       │   │       ├── brave.py             # BraveSearchBackend implementation
+│       │   │       ├── utils.py             # Search filtering & formatting
+│       │   │       └── factory.py           # Backend factory pattern
+│       │   ├── tests/                       # Test suite with pytest
+│       │   │   ├── conftest.py              # Pytest fixtures & mocks
+│       │   │   ├── test_search_backend.py   # Backend factory & data class tests
+│       │   │   ├── test_search_utils.py     # Utility function tests
+│       │   │   └── README.md                # Testing documentation
+│       │   ├── weather.py                   # Weather forecast MCP server
+│       │   ├── web_search.py                # Web search MCP server (uses factory)
+│       │   ├── jina_reader.py               # Web content extraction server
+│       │   ├── code_interpreter.py          # Sandboxed code execution server
+│       │   ├── requirements.txt             # Dependencies (includes pytest for dev)
+│       │   └── Dockerfile.mcp-server        # Parameterized Dockerfile (builds all servers)
 │       └── code-executor/
-│           ├── Dockerfile              # Code executor container
-│           └── requirements.txt        # Python dependencies
-├── compose.yml                         # Docker Compose configuration
-└── MCP-SETUP.md                        # This file
+│           ├── Dockerfile                   # Code executor container
+│           └── requirements.txt             # Python dependencies (numpy, pandas, etc)
+├── compose.yml                              # Docker Compose configuration
+└── MCP-SETUP.md                             # This file
 ```
+
+### Architecture Highlights
+
+- **common/mcp_base.py**: Eliminates boilerplate by providing MCPServerBase class with:
+  - Standard FastMCP server initialization
+  - Health check endpoint (`/health`)
+  - Consistent logging setup
+
+- **common/search/**: Pluggable search backend infrastructure:
+  - `backend.py`: Abstract interface defining what all backends must implement
+  - `brave.py`: Brave Search API implementation
+  - `factory.py`: Factory pattern for runtime backend selection
+  - `utils.py`: Shared filtering, formatting, deduplication utilities
+
+- **tests/**: Comprehensive test suite:
+  - Fixtures for mocking external APIs (no real API keys needed)
+  - Tests for data validation, filtering, formatting
+  - Backend factory and interface tests
+  - Documentation for adding new tests
+
+- **MCP Servers**: All 4 servers inherit patterns from common:
+  - Use MCPServerBase for consistent initialization
+  - Import shared utilities from common/
+  - No duplicated boilerplate code
 
 ## Troubleshooting
 

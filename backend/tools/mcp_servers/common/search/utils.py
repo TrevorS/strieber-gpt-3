@@ -1,11 +1,9 @@
-"""
-Shared utilities for web search: filtering, formatting, and deep search orchestration.
+"""ABOUTME: Shared utilities for web search - filtering, formatting, and result orchestration.
 
 Provides filtering functions used by both quick and deep modes,
-formatting utilities, and the SearchAgent for multi-step research.
+formatting utilities, and result condensing for token budgets.
 """
 
-import asyncio
 import json
 import logging
 import os
@@ -14,8 +12,7 @@ from urllib.parse import urlparse
 
 from openai import AsyncOpenAI
 
-from search_backend import SearchBackend, SearchResult, SearchResponse
-from tool_progress import ToolProgress, NullProgress
+from .backend import SearchBackend, SearchResult, SearchResponse
 
 # Configure logging
 logger = logging.getLogger(__name__)

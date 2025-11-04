@@ -12,22 +12,14 @@ from typing import Optional, Dict, Any
 from datetime import datetime, timedelta
 
 import httpx
-from mcp.server.fastmcp import FastMCP, Context
-from starlette.requests import Request
-from starlette.responses import JSONResponse
+from mcp.server.fastmcp import Context
 
-# Configure logging
-logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger(__name__)
+from common.mcp_base import MCPServerBase
 
-# Initialize MCP server
-mcp = FastMCP("weather")
-
-# Health check endpoint for Docker container orchestration
-@mcp.custom_route("/health", methods=["GET"])
-async def health_check(request: Request) -> JSONResponse:
-    """Health check endpoint for Docker container orchestration."""
-    return JSONResponse({"status": "ok"})
+# Initialize MCP server with base class
+server = MCPServerBase("weather")
+mcp = server.get_mcp()
+logger = server.get_logger()
 
 # Open-Meteo API endpoints
 GEOCODING_API = "https://geocoding-api.open-meteo.com/v1/search"

@@ -1,5 +1,4 @@
-"""
-Jina Reader MCP Server
+"""ABOUTME: Jina Reader MCP Server - Web content extraction and markdown conversion.
 
 Provides web page content retrieval via Jina Reader API.
 Converts URLs to clean, LLM-friendly markdown format.
@@ -13,22 +12,14 @@ from typing import Optional
 from urllib.parse import quote
 
 import httpx
-from mcp.server.fastmcp import FastMCP, Context
-from starlette.requests import Request
-from starlette.responses import JSONResponse
+from mcp.server.fastmcp import Context
 
-# Configure logging
-logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger(__name__)
+from common.mcp_base import MCPServerBase
 
-# Initialize MCP server
-mcp = FastMCP("jina-reader")
-
-# Health check endpoint for Docker container orchestration
-@mcp.custom_route("/health", methods=["GET"])
-async def health_check(request: Request) -> JSONResponse:
-    """Health check endpoint for Docker container orchestration."""
-    return JSONResponse({"status": "ok"})
+# Initialize MCP server with base class
+server = MCPServerBase("jina-reader")
+mcp = server.get_mcp()
+logger = server.get_logger()
 
 # Get API key from environment
 JINA_API_KEY = os.getenv("JINA_API_KEY")

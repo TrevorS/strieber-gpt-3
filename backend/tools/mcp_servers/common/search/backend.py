@@ -1,5 +1,4 @@
-"""
-Abstract interface for web search backends.
+"""ABOUTME: Abstract interface for web search backends.
 
 Defines the SearchBackend interface that all search implementations must follow,
 along with standardized data classes for search results.

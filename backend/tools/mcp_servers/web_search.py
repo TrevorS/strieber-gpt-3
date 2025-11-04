@@ -1,5 +1,4 @@
-"""
-Web Search MCP Server
+"""ABOUTME: Web Search MCP Server - Intelligent web search with pluggable backends.
 
 Provides intelligent web search with pluggable backends and dual modes:
 - Quick mode: Fast search with garbage filtering
@@ -16,28 +15,17 @@ import os
 import re
 from typing import Optional
 
-from mcp.server.fastmcp import FastMCP, Context
-from starlette.requests import Request
-from starlette.responses import JSONResponse
-
+from mcp.server.fastmcp import Context
 from openai import AsyncOpenAI
 
-from brave_backend import BraveSearchBackend
-from search_backend import SearchBackend, SearchResult, SearchResponse
-from search_utils import apply_quality_filters, format_as_markdown, deduplicate_by_url, condense_results
+from common.mcp_base import MCPServerBase
+from common.search import SearchBackend, SearchResult, SearchResponse, get_search_backend
+from common.search.utils import apply_quality_filters, format_as_markdown, deduplicate_by_url, condense_results
 
-# Configure logging
-logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger(__name__)
-
-# Initialize MCP server
-mcp = FastMCP("web-search")
-
-# Health check endpoint for Docker container orchestration
-@mcp.custom_route("/health", methods=["GET"])
-async def health_check(request: Request) -> JSONResponse:
-    """Health check endpoint for Docker container orchestration."""
-    return JSONResponse({"status": "ok"})
+# Initialize MCP server with base class
+server = MCPServerBase("web-search")
+mcp = server.get_mcp()
+logger = server.get_logger()
 
 # Global backend instance (initialized on first use)
 _backend: Optional[SearchBackend] = None
@@ -55,15 +43,8 @@ def get_backend() -> SearchBackend:
     global _backend
 
     if _backend is None:
-        # Get configuration from environment
-        backend_type = os.getenv("SEARCH_BACKEND", "brave").lower()
-
-        logger.info(f"Initializing search backend: {backend_type}")
-
-        if backend_type == "brave":
-            _backend = BraveSearchBackend()
-        else:
-            raise ValueError(f"Unknown search backend: {backend_type}")
+        # Use factory for pluggable backend selection
+        _backend = get_search_backend()
 
     return _backend
 

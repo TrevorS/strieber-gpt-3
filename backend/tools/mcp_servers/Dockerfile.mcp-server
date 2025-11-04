@@ -17,8 +17,10 @@ RUN apt-get update && apt-get install -y curl && rm -rf /var/lib/apt/lists/*
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Copy all server code files
-COPY *.py .
+# Copy all server code files and directories
+COPY *.py ./
+COPY common ./common/
+COPY tests ./tests/
 
 # Create non-root user for security
 RUN useradd -m -u 1000 mcp-user && chown -R mcp-user:mcp-user /app

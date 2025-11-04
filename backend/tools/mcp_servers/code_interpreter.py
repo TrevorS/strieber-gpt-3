@@ -1,5 +1,4 @@
-"""
-Code Interpreter MCP Server
+"""ABOUTME: Code Interpreter MCP Server - Sandboxed Python code execution.
 
 Provides sandboxed Python code execution via Docker containers.
 Enforces security constraints: network disabled, resource limits, timeout.
@@ -14,22 +13,14 @@ import json
 import logging
 import os
 import sys
-from mcp.server.fastmcp import FastMCP, Context
-from starlette.requests import Request
-from starlette.responses import JSONResponse
+from mcp.server.fastmcp import Context
 
-# Configure logging
-logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger(__name__)
+from common.mcp_base import MCPServerBase
 
-# Initialize MCP server
-mcp = FastMCP("code-interpreter")
-
-# Health check endpoint for Docker container orchestration
-@mcp.custom_route("/health", methods=["GET"])
-async def health_check(request: Request) -> JSONResponse:
-    """Health check endpoint for Docker container orchestration."""
-    return JSONResponse({"status": "ok"})
+# Initialize MCP server with base class
+server = MCPServerBase("code-interpreter")
+mcp = server.get_mcp()
+logger = server.get_logger()
 
 # Initialize Docker client
 try:

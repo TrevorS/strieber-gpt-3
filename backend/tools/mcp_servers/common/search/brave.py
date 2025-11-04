@@ -1,5 +1,4 @@
-"""
-Brave Search API backend implementation.
+"""ABOUTME: Brave Search API backend implementation.
 
 Implements the SearchBackend interface for Brave Search API with rate limiting,
 error handling, and result formatting.
@@ -13,7 +12,7 @@ from typing import Optional
 
 import httpx
 
-from search_backend import SearchBackend, SearchResponse, SearchResult
+from .backend import SearchBackend, SearchResponse, SearchResult
 
 # Configure logging
 logger = logging.getLogger(__name__)
