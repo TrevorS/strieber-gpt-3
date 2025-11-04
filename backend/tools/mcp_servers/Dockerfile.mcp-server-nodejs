@@ -1,25 +1,31 @@
-# ABOUTME: Generic MCP Server Dockerfile - Parameterized for all MCP servers (Streamable HTTP)
-# Usage: docker build -f Dockerfile.mcp-server --build-arg SERVER_MODULE=weather -t strieber-mcp-weather:latest .
+# ABOUTME: MCP Server Dockerfile with Node.js - For page_reader (Streamable HTTP)
+# Usage: docker build -f Dockerfile.mcp-server-nodejs --build-arg SERVER_MODULE=page_reader -t strieber-mcp-page-reader:latest .
 #
 # Build arguments:
-#   SERVER_MODULE: Python module name to run (weather, web_search, code_interpreter)
+#   SERVER_MODULE: Python module name to run (page_reader)
 #
-# Note: For page_reader which requires Node.js, use Dockerfile.mcp-server-nodejs instead
+# This Dockerfile extends the base MCP server setup with Node.js and Mozilla Readability
+# for high-quality HTML content extraction.
 
-ARG SERVER_MODULE=weather
+ARG SERVER_MODULE=page_reader
 
 FROM python:3.11-slim
 
 WORKDIR /app
 
-# Install curl for health checks
+# Install curl for health checks + Node.js for Mozilla Readability
 RUN apt-get update && apt-get install -y \
     curl \
+    nodejs \
+    npm \
     && rm -rf /var/lib/apt/lists/*
 
 # Install Python dependencies
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
+
+# Install Mozilla Readability for better quality extraction than pure-python
+RUN npm install -g @mozilla/readability
 
 # Copy all server code files and directories
 COPY *.py ./
@@ -41,6 +47,6 @@ RUN useradd -m -u 1000 mcp-user && chown -R mcp-user:mcp-user /app
 # Run server via launcher.py (handles proper 0.0.0.0 binding for Docker)
 ENV PORT=8000
 ENV HOST=0.0.0.0
-ARG SERVER_MODULE=weather
+ARG SERVER_MODULE=page_reader
 ENV SERVER_MODULE=${SERVER_MODULE}
 ENTRYPOINT ["python", "launcher.py"]

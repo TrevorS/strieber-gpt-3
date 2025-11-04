@@ -190,7 +190,7 @@ services:
   mcp-page-reader:
     build:
       context: ./backend/tools/mcp_servers
-      dockerfile: Dockerfile.mcp-server
+      dockerfile: Dockerfile.mcp-server-nodejs
       args:
         SERVER_MODULE: page_reader
     image: strieber-mcp-page-reader:latest
