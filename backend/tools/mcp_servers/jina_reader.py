@@ -65,13 +65,13 @@ async def jina_fetch_page(
     if not url:
         if ctx:
             await ctx.error("URL is required")
-        return {"content": "Error: URL is required", "error": True}
+        return "Error: URL is required"
 
     # Validate URL format
     if not url.startswith(("http://", "https://")):
         if ctx:
             await ctx.error("URL must start with http:// or https://")
-        return {"content": "Error: URL must start with http:// or https://", "error": True}
+        return "Error: URL must start with http:// or https://"
 
     try:
         url_preview = url[:50] + ("..." if len(url) > 50 else "")
@@ -113,7 +113,7 @@ async def jina_fetch_page(
         if not content or len(content.strip()) == 0:
             if ctx:
                 await ctx.error("No content retrieved")
-            return {"content": f"Error: No content retrieved from URL: {url}", "error": True}
+            return f"Error: No content retrieved from URL: {url}"
 
         # Strip image tags from content to avoid empty src errors
         # Remove markdown images: ![alt text](url)
@@ -155,28 +155,28 @@ async def jina_fetch_page(
 
         if ctx:
             await ctx.error(error_msg)
-        return {"content": f"Error: {error_msg}", "error": True}
+        return f"Error: {error_msg}"
 
     except httpx.TimeoutException:
         logger.error(f"Request timeout after {timeout}s for {url}")
         error_msg = f"Request timed out after {timeout} seconds. Page may be very large or slow to load."
         if ctx:
             await ctx.error(error_msg)
-        return {"content": f"Error: {error_msg}", "error": True}
+        return f"Error: {error_msg}"
 
     except httpx.RequestError as e:
         logger.error(f"Request error: {e}")
         error_msg = f"Failed to connect to Jina Reader API - {str(e)}"
         if ctx:
             await ctx.error(error_msg)
-        return {"content": f"Error: {error_msg}", "error": True}
+        return f"Error: {error_msg}"
 
     except Exception as e:
         logger.error(f"Unexpected error fetching page: {e}", exc_info=True)
         error_msg = str(e)
         if ctx:
             await ctx.error(error_msg)
-        return {"content": f"Error: {error_msg}", "error": True}
+        return f"Error: {error_msg}"
 
 
 @mcp.tool()
@@ -207,12 +207,12 @@ async def jina_fetch_page_with_selector(
     if not url or not css_selector:
         if ctx:
             await ctx.error("Both URL and CSS selector are required")
-        return {"content": "Error: Both URL and CSS selector are required", "error": True}
+        return "Error: Both URL and CSS selector are required"
 
     if not url.startswith(("http://", "https://")):
         if ctx:
             await ctx.error("URL must start with http:// or https://")
-        return {"content": "Error: URL must start with http:// or https://", "error": True}
+        return "Error: URL must start with http:// or https://"
 
     try:
         if ctx:
@@ -239,7 +239,7 @@ async def jina_fetch_page_with_selector(
             error_msg = f"No content found matching selector '{css_selector}' at {url}"
             if ctx:
                 await ctx.error(error_msg)
-            return {"content": f"Error: {error_msg}", "error": True}
+            return f"Error: {error_msg}"
 
         if ctx:
             await ctx.report_progress(2, 3, "Processing selected content...")
@@ -253,21 +253,21 @@ async def jina_fetch_page_with_selector(
         error_msg = f"HTTP {e.response.status_code} - {e.response.text[:200]}"
         if ctx:
             await ctx.error(error_msg)
-        return {"content": f"Error: {error_msg}", "error": True}
+        return f"Error: {error_msg}"
 
     except httpx.TimeoutException:
         logger.error(f"Request timeout for {url}")
         error_msg = f"Request timed out after {timeout} seconds"
         if ctx:
             await ctx.error(error_msg)
-        return {"content": f"Error: {error_msg}", "error": True}
+        return f"Error: {error_msg}"
 
     except Exception as e:
         logger.error(f"Error fetching with selector: {e}", exc_info=True)
         error_msg = str(e)
         if ctx:
             await ctx.error(error_msg)
-        return {"content": f"Error: {error_msg}", "error": True}
+        return f"Error: {error_msg}"
 
 
 @mcp.tool()
@@ -324,4 +324,4 @@ if __name__ == "__main__":
             "JINA_API_KEY not set. Running with free tier limits (20 RPM). "
             "Set JINA_API_KEY environment variable for higher limits (500 RPM)."
         )
-    mcp.run(transport="streamable-http")
+    server.run(transport="streamable-http")
