@@ -295,26 +295,30 @@ def extract_sections(soup: BeautifulSoup) -> List[str]:
 # Markdown Conversion
 # ============================================================================
 
-async def convert_html_to_markdown(html: str, url: str) -> str:
+async def convert_html_to_markdown(html: str, url: str, instruction: Optional[str] = None) -> str:
     """Convert HTML to Markdown using local ReaderLM-v2 model.
 
     Args:
         html: HTML content to convert
         url: Original URL (for context)
+        instruction: Optional custom extraction instruction. If not provided, uses default.
 
     Returns:
         Markdown content
     """
     try:
-        # Prepare messages for ReaderLM-v2 (uses ChatML format)
+        # Default instruction for ReaderLM-v2
+        if instruction is None:
+            instruction = "Extract the main content from the given HTML and convert it to Markdown format."
+
+        # Proper ReaderLM-v2 prompt format: instruction + HTML in code fence
+        prompt = f"{instruction}\n```html\n{html[:500000]}\n```"
+
+        # ChatML format with single user message (ReaderLM-v2 doesn't use system messages)
         messages = [
             {
-                "role": "system",
-                "content": "Convert the HTML to Markdown. Preserve structure, headings, links, and formatting. Remove ads and navigation."
-            },
-            {
                 "role": "user",
-                "content": html[:500000]  # Limit to ~500k chars
+                "content": prompt
             }
         ]
 
@@ -345,7 +349,7 @@ async def convert_html_to_markdown(html: str, url: str) -> str:
 # Main Processing Pipeline
 # ============================================================================
 
-async def process_page(url: str, timeout: int = 10, include_links: bool = False, include_images: bool = False) -> Optional[PageContent]:
+async def process_page(url: str, timeout: int = 10, include_links: bool = False, include_images: bool = False, extraction_prompt: Optional[str] = None) -> Optional[PageContent]:
     """Complete pipeline: Fetch → Extract → Convert → Structure
 
     Args:
@@ -353,6 +357,7 @@ async def process_page(url: str, timeout: int = 10, include_links: bool = False,
         timeout: Fetch timeout in seconds
         include_links: Extract all links from page
         include_images: Extract all images from page
+        extraction_prompt: Optional custom instruction for focused content extraction
 
     Returns:
         PageContent object with structured data or None if failed
@@ -386,8 +391,8 @@ async def process_page(url: str, timeout: int = 10, include_links: bool = False,
     # Step 7: Get clean HTML from readability
     clean_html = readability_data.get("content", "") or html
 
-    # Step 8: Convert to Markdown with ReaderLM
-    markdown = await convert_html_to_markdown(clean_html, url)
+    # Step 8: Convert to Markdown with ReaderLM (with optional focused extraction)
+    markdown = await convert_html_to_markdown(clean_html, url, instruction=extraction_prompt)
     if not markdown:
         logger.error(f"Failed to convert HTML to Markdown for {url}")
         return None
@@ -413,6 +418,7 @@ async def fetch_page(
     timeout: int = 10,
     include_links: bool = False,
     include_images: bool = False,
+    extraction_prompt: Optional[str] = None,
     ctx: Context = None
 ) -> dict:
     """Fetch and convert a web page to clean markdown with structured metadata.
@@ -425,11 +431,14 @@ async def fetch_page(
         timeout: Maximum page load time in seconds (default: 10)
         include_links: Extract all links from the page (default: False)
         include_images: Extract all images from the page (default: False)
+        extraction_prompt: Optional custom instruction for focused content extraction.
+            Use this to extract specific information instead of full content.
+            Examples: "Extract only the pricing information", "Summarize the main technical details"
         ctx: MCP context for progress/logging (auto-injected)
 
     Returns:
         Dict with:
-        - content: Main page content in markdown format
+        - content: Main page content in markdown format (or focused extraction if extraction_prompt provided)
         - metadata: Page metadata (title, author, word count, etc.)
         - links: List of links (if include_links=True)
         - images: List of images (if include_images=True)
@@ -437,7 +446,7 @@ async def fetch_page(
 
     Processing Pipeline:
         URL → Playwright (JS rendering) → Readability (content extraction) →
-        ReaderLM-v2 (HTML→MD) → Structured output
+        ReaderLM-v2 (HTML→MD with optional focused extraction) → Structured output
 
     Performance:
         - Average: 2-5 seconds per page
@@ -447,7 +456,8 @@ async def fetch_page(
     Examples:
         fetch_page("https://example.com/article")
         fetch_page("https://docs.python.org/3/tutorial/", include_links=True)
-        fetch_page("https://blog.example.com", include_images=True, include_links=True)
+        fetch_page("https://api.example.com/docs", extraction_prompt="Extract only the authentication section")
+        fetch_page("https://shop.example.com/product", extraction_prompt="Extract pricing, features, and specs")
     """
     if not url:
         if ctx:
@@ -465,7 +475,7 @@ async def fetch_page(
         if ctx:
             await ctx.report_progress(1, 4, f"Fetching: {url_preview}")
 
-        result = await process_page(url, timeout, include_links, include_images)
+        result = await process_page(url, timeout, include_links, include_images, extraction_prompt)
 
         if not result:
             error_msg = "Failed to process page"
