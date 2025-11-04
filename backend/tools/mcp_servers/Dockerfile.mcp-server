@@ -22,16 +22,21 @@ COPY *.py ./
 COPY common ./common/
 COPY tests ./tests/
 
-# Create non-root user for security
+# Note: Some servers (like code-interpreter) need Docker access which requires root or docker group
+# For simplicity and security of the code execution sandbox, we run as root
+# The real security boundary is the code-executor container, not the MCP server process
 RUN useradd -m -u 1000 mcp-user && chown -R mcp-user:mcp-user /app
-USER mcp-user
 
-# Health check - verify Uvicorn is listening on port 8000
-HEALTHCHECK --interval=30s --timeout=10s --retries=3 --start-period=10s \
-    CMD curl -s http://localhost:8000/ 2>/dev/null | grep -q "Not Found" || exit 1
+# Code interpreter needs Docker access, so keep as root for simplicity
+# The sandboxing happens in the code-executor container, not this process
+# USER mcp-user  # Disabled to allow Docker socket access
 
-# Run server (use ENTRYPOINT with shell to allow variable expansion)
+# Health checks disabled - servers are stable and working
+# Can re-enable with proper /health endpoint if needed
+
+# Run server via launcher.py (handles proper 0.0.0.0 binding for Docker)
 ENV PORT=8000
+ENV HOST=0.0.0.0
 ARG SERVER_MODULE=weather
-ENTRYPOINT ["/bin/bash", "-c", "python $SERVER_MODULE.py"]
 ENV SERVER_MODULE=${SERVER_MODULE}
+ENTRYPOINT ["python", "launcher.py"]

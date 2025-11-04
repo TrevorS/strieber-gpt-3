@@ -1,9 +1,11 @@
-"""ABOUTME: Base class for MCP servers with common initialization, logging, and health check patterns."""
+"""ABOUTME: Base class for MCP servers with common initialization, logging, and health check patterns.
+
+Uses the official MCP SDK (modelcontextprotocol/python-sdk) instead of community FastMCP.
+"""
 
 import logging
+import os
 from mcp.server.fastmcp import FastMCP
-from starlette.requests import Request
-from starlette.responses import JSONResponse
 
 
 def setup_logging(logger_name: str, level: int = logging.INFO) -> logging.Logger:
@@ -25,9 +27,10 @@ class MCPServerBase:
 
     Provides:
     - Standard MCP server initialization
-    - Health check endpoint at /health
     - Consistent logging setup
     - Async request handling
+
+    Note: Health check endpoint is provided by launcher.py
     """
 
     def __init__(self, server_name: str):
@@ -39,21 +42,6 @@ class MCPServerBase:
         self.server_name = server_name
         self.mcp = FastMCP(server_name)
         self.logger = setup_logging(__name__)
-
-        # Register health check endpoint
-        self._register_health_check()
-
-    def _register_health_check(self) -> None:
-        """Register the standard /health endpoint."""
-        @self.mcp.custom_route("/health", methods=["GET"])
-        async def health_check(request: Request) -> JSONResponse:
-            """Health check endpoint for Docker container orchestration.
-
-            Returns:
-                JSON response with status="ok" and HTTP 200
-            """
-            self.logger.info(f"{self.server_name} health check passed")
-            return JSONResponse({"status": "ok"})
 
     def get_logger(self) -> logging.Logger:
         """Get the logger instance.
@@ -70,3 +58,24 @@ class MCPServerBase:
             FastMCP server for tool registration
         """
         return self.mcp
+
+    def run(self, transport: str = "streamable-http") -> None:
+        """Run the MCP server.
+
+        Note: For Docker deployment, use launcher.py instead which properly
+        binds to 0.0.0.0 using Starlette + Uvicorn.
+
+        Args:
+            transport: Transport protocol ("streamable-http", "stdio", "sse")
+        """
+        self.mcp.run(transport=transport)
+
+    def get_streamable_http_app(self):
+        """Get the Starlette ASGI app for streamable-http transport.
+
+        This is used by launcher.py for proper Docker networking.
+
+        Returns:
+            Starlette ASGI application instance
+        """
+        return self.mcp.streamable_http_app()
