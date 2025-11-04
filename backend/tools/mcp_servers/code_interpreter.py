@@ -14,6 +14,7 @@ import logging
 import os
 import sys
 from mcp.server.fastmcp import Context
+from mcp.types import TextContent, ImageContent
 
 from common.mcp_base import MCPServerBase
 
@@ -124,7 +125,7 @@ if _figures:
 
 
 @mcp.tool()
-async def execute_python(code: str, ctx: Context = None) -> dict:
+async def execute_python(code: str, ctx: Context = None) -> list:
     """Execute Python code in a sandboxed Docker container.
 
     Security features:
@@ -139,20 +140,19 @@ async def execute_python(code: str, ctx: Context = None) -> dict:
       shown to the user - you don't need to do anything special
     - Do NOT try to manually capture or encode figures (the system handles this)
 
-    Returns unified dict format:
-    {
-        "stdout": "text output",
-        "stderr": "error output if any",
-        "images": ["base64_png_1", "base64_png_2"],  # Internal use only - figures displayed separately
-        "success": true/false
-    }
+    Returns MCP content array format:
+    [
+        TextContent(type="text", text="stdout output"),
+        ImageContent(type="image", data="base64_png", mimeType="image/png"),
+        ...
+    ]
 
     Args:
         code: Python code to execute (string)
         ctx: MCP context for progress/logging (auto-injected)
 
     Returns:
-        Dict with stdout, stderr, images, and success flag
+        List of MCP content blocks (TextContent, ImageContent)
 
     Example:
         execute_python("print('Hello, world!')")
@@ -163,12 +163,10 @@ async def execute_python(code: str, ctx: Context = None) -> dict:
     if docker_client is None:
         if ctx:
             await ctx.error("Docker client not available")
-        return {
-            "stdout": "",
-            "stderr": "Docker client not available. Is Docker running?",
-            "images": [],
-            "success": False
-        }
+        return [TextContent(
+            type="text",
+            text="Error: Docker client not available. Is Docker running?"
+        )]
 
     try:
         logger.info(f"Executing Python code (length: {len(code)} chars)")
@@ -218,14 +216,25 @@ async def execute_python(code: str, ctx: Context = None) -> dict:
         if ctx:
             await ctx.report_progress(4, 4, "Complete")
 
-        # Return unified format
-        result_obj = {
-            "stdout": stdout,
-            "stderr": "",
-            "images": images,
-            "success": True
-        }
-        return result_obj
+        # Build MCP content array
+        content = []
+
+        # Add stdout if present
+        if stdout:
+            content.append(TextContent(
+                type="text",
+                text=stdout
+            ))
+
+        # Add images as ImageContent blocks
+        for img_base64 in images:
+            content.append(ImageContent(
+                type="image",
+                data=img_base64,
+                mimeType="image/png"
+            ))
+
+        return content if content else [TextContent(type="text", text="")]
 
     except docker.errors.ContainerError as e:
         # Container exited with non-zero code
@@ -236,13 +245,14 @@ async def execute_python(code: str, ctx: Context = None) -> dict:
         if ctx:
             await ctx.error(f"Execution error: {stderr[:100]}")
 
-        result_obj = {
-            "stdout": stdout,
-            "stderr": stderr,
-            "images": [],
-            "success": False
-        }
-        return result_obj
+        # Build error content
+        content = []
+        if stdout:
+            content.append(TextContent(type="text", text=stdout))
+        if stderr:
+            content.append(TextContent(type="text", text=f"Error:\n{stderr}"))
+
+        return content if content else [TextContent(type="text", text="Execution error")]
 
     except docker.errors.ImageNotFound:
         logger.error("code-executor:latest image not found")
@@ -250,13 +260,7 @@ async def execute_python(code: str, ctx: Context = None) -> dict:
         if ctx:
             await ctx.error("Docker image not found")
 
-        result_obj = {
-            "stdout": "",
-            "stderr": error_msg,
-            "images": [],
-            "success": False
-        }
-        return result_obj
+        return [TextContent(type="text", text=f"Error: {error_msg}")]
 
     except docker.errors.APIError as e:
         logger.error(f"Docker API error: {e}")
@@ -264,13 +268,7 @@ async def execute_python(code: str, ctx: Context = None) -> dict:
         if ctx:
             await ctx.error(error_msg)
 
-        result_obj = {
-            "stdout": "",
-            "stderr": error_msg,
-            "images": [],
-            "success": False
-        }
-        return result_obj
+        return [TextContent(type="text", text=f"Error: {error_msg}")]
 
     except Exception as e:
         logger.error(f"Unexpected error during code execution: {e}", exc_info=True)
@@ -278,13 +276,7 @@ async def execute_python(code: str, ctx: Context = None) -> dict:
         if ctx:
             await ctx.error(error_msg)
 
-        result_obj = {
-            "stdout": "",
-            "stderr": error_msg,
-            "images": [],
-            "success": False
-        }
-        return result_obj
+        return [TextContent(type="text", text=f"Error: {error_msg}")]
 
 
 @mcp.tool()

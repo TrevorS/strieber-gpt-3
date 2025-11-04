@@ -63,3 +63,6 @@ yarn-error.log
 tmp/
 temp/
 *.tmp
+
+# mounted data
+open-webui-data/
