@@ -149,36 +149,32 @@ async def web_search(
 ) -> dict:
     """Search the web with automatic query expansion and intelligent filtering.
 
-    Automatically generates 2 query variations, executes both searches in parallel,
-    combines and deduplicates results, condenses to fit token budget, and returns
-    formatted markdown with citations.
+    Processing Pipeline:
+        1. Generate 2 query variations using LLM
+        2. Execute both searches in parallel (Brave Search API)
+        3. Combine and filter results (min 50 char snippets, max 3 per domain)
+        4. Condense to fit token budget
+        5. Format as markdown with source citations
 
-    For multi-step research, the main LLM should call this tool multiple times
-    with different queries based on previous results.
+    For multi-step research, call this tool multiple times with different queries
+    based on previous results.
 
     Args:
         query: Search query
         count: Results per search query (default 10, so ~20 total from 2 queries)
         max_tokens: Maximum tokens for output (default 2000)
-        freshness: Optional time filter - "pd" (past day), "pw" (past week),
+        freshness: Time filter - "pd" (past day), "pw" (past week),
                   "pm" (past month), "py" (past year)
-        tool_call_id: Internal progress tracking ID
+        ctx: MCP context for progress/logging (auto-injected)
 
     Returns:
-        Dict with markdown-formatted search results, titles, URLs, and snippets
-
-    Raises:
-        ValueError: If backend initialization fails
-        Exception: If search fails (rate limit, API error, network error)
+        Dict with:
+        - text: Markdown-formatted search results
+        - sources: List of {title, url, snippet} for each result
 
     Examples:
-        # Basic search
         web_search("Python async programming", count=10)
-
-        # Recent news only
         web_search("AI developments", freshness="pw")
-
-        # Large result set
         web_search("transformer architecture", count=15, max_tokens=3000)
     """
     logger.info(f"Web search: {query}")
@@ -258,35 +254,35 @@ async def news_search(
     country: str = "US",
     ctx: Context = None
 ) -> dict:
-    """Search for recent news articles with source attribution and breaking news indicators.
+    """Search for recent news articles with breaking indicators and source attribution.
 
-    Optimized for news and current events - uses focused queries without expansion.
-    Returns news-specific metadata including source, publication time, and breaking status.
+    Optimized for news and current events. No query expansion (time-sensitive, focused).
+    Uses Brave News API with breaking news detection (🔴 indicator).
+
+    Processing Pipeline:
+        1. Execute focused news search (no query expansion)
+        2. Filter and deduplicate results
+        3. Mark breaking news with 🔴 indicator
+        4. Condense to fit token budget
+        5. Format with source attribution and timestamps
 
     Args:
         query: News search query (e.g., "AI developments", "tech industry news")
         count: Number of news articles to return (default 10, max 20)
         max_tokens: Maximum tokens for output (default 2000)
-        freshness: Optional time filter - "pd" (past day), "pw" (past week),
-                  "pm" (past month), "py" (past year). Defaults to None (all recent).
+        freshness: Time filter - "pd" (past day), "pw" (past week),
+                  "pm" (past month), "py" (past year). Default: None (all recent)
         country: Country code for localized news (default "US")
         ctx: MCP context for progress/logging (auto-injected)
 
     Returns:
-        Dict with markdown-formatted news results, breaking indicators, sources, and timestamps
-
-    Raises:
-        ValueError: If backend initialization fails
-        Exception: If search fails (rate limit, API error, network error)
+        Dict with:
+        - text: Markdown-formatted news results with 🔴 breaking indicators
+        - sources: List of {title, url, snippet} for each article
 
     Examples:
-        # Recent AI news (past week)
         news_search("artificial intelligence", freshness="pw")
-
-        # Breaking tech news
         news_search("technology industry")
-
-        # US election news from past day
         news_search("US elections", freshness="pd", country="US")
     """
     logger.info(f"News search: {query}")
@@ -440,57 +436,6 @@ def _format_news_markdown(results: list[SearchResult], query: str) -> str:
     lines.append("```")
 
     return "\n".join(lines).strip()
-
-
-@mcp.tool()
-async def get_search_info(ctx: Context = None) -> str:
-    """Get information about web search capabilities and configuration.
-
-    Returns:
-        Information about current backend and search behavior
-    """
-    try:
-        backend = get_backend()
-        backend_name = backend.name
-    except Exception:
-        backend_name = "not initialized"
-
-    info = f"""
-Web Search Configuration:
-- Backend: {backend_name}
-- Default results per query variation: 10 (total ~20 from 2 queries)
-- Automatic query expansion: 2 variations per search
-- Filtering: min 50 char snippets, max 3 results/domain, URL deduplication
-- Result condensing: ~2000 token default budget
-
-Search Process:
-1. Generate 2 query variations using LLM
-2. Execute both searches in parallel
-3. Combine and filter results (quality + deduplication)
-4. Condense to fit token budget
-5. Format with citations
-
-News Search (news_search tool):
-- Dedicated tool for news and current events
-- No query expansion (time-sensitive, focused queries)
-- Source attribution and breaking news indicators
-- Time filters: pd (day), pw (week), pm (month), py (year)
-- Country-specific news available
-- Breaking news marked with 🔴 indicator
-
-For Multi-Step Research:
-- Call web_search multiple times with different queries
-- Main LLM analyzes previous results and decides next search
-- Iterations are controlled by the orchestrating LLM
-- Each search call = 1 iteration
-
-Brave Search (current backend):
-- Free tier: 2,000 queries/month, 1 req/sec
-- Rate limiting enforced automatically
-- Up to 5 snippets per result for context
-- Dedicated news endpoint for current events
-"""
-    return info.strip()
 
 
 if __name__ == "__main__":
