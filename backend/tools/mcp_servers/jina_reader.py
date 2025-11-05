@@ -13,6 +13,7 @@ from urllib.parse import quote
 
 import httpx
 from mcp.server.fastmcp import Context
+from mcp.types import TextContent
 
 from common.mcp_base import MCPServerBase
 
@@ -35,7 +36,7 @@ async def jina_fetch_page(
     timeout: int = 10,
     bypass_cache: bool = False,
     ctx: Context = None
-) -> str:
+) -> list:
     """Fetch and convert a web page to clean, LLM-friendly markdown.
 
     Uses Jina Reader API to extract main content from URLs, removing ads,
@@ -50,7 +51,7 @@ async def jina_fetch_page(
         ctx: MCP context for progress/logging (auto-injected)
 
     Returns:
-        Clean markdown-formatted content including title, URL, and main text.
+        MCP content array format: [TextContent(type="text", text="markdown content")]
         Returns error message if fetch fails.
 
     Rate Limits:
@@ -65,13 +66,13 @@ async def jina_fetch_page(
     if not url:
         if ctx:
             await ctx.error("URL is required")
-        return "Error: URL is required"
+        return [TextContent(type="text", text="Error: URL is required")]
 
     # Validate URL format
     if not url.startswith(("http://", "https://")):
         if ctx:
             await ctx.error("URL must start with http:// or https://")
-        return "Error: URL must start with http:// or https://"
+        return [TextContent(type="text", text="Error: URL must start with http:// or https://")]
 
     try:
         url_preview = url[:50] + ("..." if len(url) > 50 else "")
@@ -113,7 +114,7 @@ async def jina_fetch_page(
         if not content or len(content.strip()) == 0:
             if ctx:
                 await ctx.error("No content retrieved")
-            return f"Error: No content retrieved from URL: {url}"
+            return [TextContent(type="text", text=f"Error: No content retrieved from URL: {url}")]
 
         # Strip image tags from content to avoid empty src errors
         # Remove markdown images: ![alt text](url)
@@ -129,7 +130,7 @@ async def jina_fetch_page(
         if ctx:
             await ctx.report_progress(3, 3, f"Fetched {len(content)} chars")
 
-        return content
+        return [TextContent(type="text", text=content)]
 
     except httpx.HTTPStatusError as e:
         status_code = e.response.status_code
@@ -155,28 +156,28 @@ async def jina_fetch_page(
 
         if ctx:
             await ctx.error(error_msg)
-        return f"Error: {error_msg}"
+        return [TextContent(type="text", text=f"Error: {error_msg}")]
 
     except httpx.TimeoutException:
         logger.error(f"Request timeout after {timeout}s for {url}")
         error_msg = f"Request timed out after {timeout} seconds. Page may be very large or slow to load."
         if ctx:
             await ctx.error(error_msg)
-        return f"Error: {error_msg}"
+        return [TextContent(type="text", text=f"Error: {error_msg}")]
 
     except httpx.RequestError as e:
         logger.error(f"Request error: {e}")
         error_msg = f"Failed to connect to Jina Reader API - {str(e)}"
         if ctx:
             await ctx.error(error_msg)
-        return f"Error: {error_msg}"
+        return [TextContent(type="text", text=f"Error: {error_msg}")]
 
     except Exception as e:
         logger.error(f"Unexpected error fetching page: {e}", exc_info=True)
         error_msg = str(e)
         if ctx:
             await ctx.error(error_msg)
-        return f"Error: {error_msg}"
+        return [TextContent(type="text", text=f"Error: {error_msg}")]
 
 
 @mcp.tool()
@@ -185,7 +186,7 @@ async def jina_fetch_page_with_selector(
     css_selector: str,
     timeout: int = 10,
     ctx: Context = None
-) -> str:
+) -> list:
     """Fetch specific content from a page using CSS selector.
 
     Useful for extracting only relevant sections from large pages
@@ -198,7 +199,7 @@ async def jina_fetch_page_with_selector(
         ctx: MCP context for progress/logging (auto-injected)
 
     Returns:
-        Markdown content of only the selected elements
+        MCP content array format: [TextContent(type="text", text="markdown content")]
 
     Example:
         jina_fetch_page_with_selector("https://news.site.com/article", "article.main-content")
@@ -207,12 +208,12 @@ async def jina_fetch_page_with_selector(
     if not url or not css_selector:
         if ctx:
             await ctx.error("Both URL and CSS selector are required")
-        return "Error: Both URL and CSS selector are required"
+        return [TextContent(type="text", text="Error: Both URL and CSS selector are required")]
 
     if not url.startswith(("http://", "https://")):
         if ctx:
             await ctx.error("URL must start with http:// or https://")
-        return "Error: URL must start with http:// or https://"
+        return [TextContent(type="text", text="Error: URL must start with http:// or https://")]
 
     try:
         if ctx:
@@ -239,43 +240,43 @@ async def jina_fetch_page_with_selector(
             error_msg = f"No content found matching selector '{css_selector}' at {url}"
             if ctx:
                 await ctx.error(error_msg)
-            return f"Error: {error_msg}"
+            return [TextContent(type="text", text=f"Error: {error_msg}")]
 
         if ctx:
             await ctx.report_progress(2, 3, "Processing selected content...")
         logger.info(f"Successfully fetched {len(content)} chars with selector from '{url}'")
         if ctx:
             await ctx.report_progress(3, 3, f"Fetched {len(content)} chars with selector")
-        return content
+        return [TextContent(type="text", text=content)]
 
     except httpx.HTTPStatusError as e:
         logger.error(f"HTTP error: {e}")
         error_msg = f"HTTP {e.response.status_code} - {e.response.text[:200]}"
         if ctx:
             await ctx.error(error_msg)
-        return f"Error: {error_msg}"
+        return [TextContent(type="text", text=f"Error: {error_msg}")]
 
     except httpx.TimeoutException:
         logger.error(f"Request timeout for {url}")
         error_msg = f"Request timed out after {timeout} seconds"
         if ctx:
             await ctx.error(error_msg)
-        return f"Error: {error_msg}"
+        return [TextContent(type="text", text=f"Error: {error_msg}")]
 
     except Exception as e:
         logger.error(f"Error fetching with selector: {e}", exc_info=True)
         error_msg = str(e)
         if ctx:
             await ctx.error(error_msg)
-        return f"Error: {error_msg}"
+        return [TextContent(type="text", text=f"Error: {error_msg}")]
 
 
 @mcp.tool()
-async def get_jina_reader_info(ctx: Context = None) -> str:
+async def get_jina_reader_info(ctx: Context = None) -> list:
     """Get information about Jina Reader API capabilities and limits.
 
     Returns:
-        Information about features, rate limits, and usage guidelines
+        MCP content array format: [TextContent(type="text", text="info text")]
     """
     info = f"""
 Jina Reader API - Features and Limits:
@@ -314,7 +315,7 @@ Jina Reader API - Features and Limits:
 
 For more info, see: https://jina.ai/reader/
 """
-    return info.strip()
+    return [TextContent(type="text", text=info.strip())]
 
 
 if __name__ == "__main__":

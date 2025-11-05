@@ -13,6 +13,7 @@ from datetime import datetime, timedelta
 
 import httpx
 from mcp.server.fastmcp import Context
+from mcp.types import TextContent, CallToolResult
 
 from common.mcp_base import MCPServerBase
 
@@ -379,7 +380,7 @@ async def get_weather(
     forecast_type: str = "current",
     units: str = "fahrenheit",
     ctx: Context = None
-) -> dict:
+) -> CallToolResult:
     """Get weather information for a location.
 
     Supports current weather and forecasts using Open-Meteo (no API key required).
@@ -401,7 +402,7 @@ async def get_weather(
         ctx: MCP context for progress/logging (auto-injected)
 
     Returns:
-        Dict with weather data and structured format for UI rendering
+        MCP CallToolResult with formatted weather text and structured weather data for UI
 
     Examples:
         # Current weather
@@ -454,47 +455,54 @@ async def get_weather(
                 await ctx.report_progress(2, 5, "Fetching weekly forecast...")
             weather_data = await fetch_weekly_forecast(lat, lon, units)
 
-        # Build response with simplified data for LLM + structured data for UI
-        response = {
+        # Format weather text for LLM
+        if forecast_type == "current":
+            formatted_text = format_current_weather_text(location_name, weather_data)
+        elif forecast_type == "daily":
+            formatted_text = format_daily_forecast_text(location_name, weather_data)
+        else:  # weekly
+            formatted_text = format_weekly_forecast_text(location_name, weather_data)
+
+        # Build structured data for UI rendering
+        weather_ui_data = {
             "location": location_name,
+            "latitude": lat,
+            "longitude": lon,
             "type": forecast_type,
             "units": units,
-            "data": weather_data,
-            # Structured format for WeatherCard UI component
-            "weather_data": {
-                "location": location_name,
-                "latitude": lat,
-                "longitude": lon,
-                "type": forecast_type,
-                "units": units,
-                "data": weather_data
-            }
+            "data": weather_data
         }
 
         if ctx:
             await ctx.report_progress(5, 5, "Complete")
 
         logger.info(f"Successfully retrieved {forecast_type} weather for {location_name}")
-        return response
+
+        return CallToolResult(
+            content=[TextContent(type="text", text=formatted_text)],
+            structuredContent=weather_ui_data
+        )
 
     except ValueError as e:
         logger.warning(f"Invalid input: {e}")
         if ctx:
             await ctx.warning(f"Invalid input: {e}")
-        error_response = {
-            "content": f"Error: {str(e)}",
-            "weather_data": None
-        }
-        return error_response
+        error_text = f"Error: {str(e)}"
+        return CallToolResult(
+            content=[TextContent(type="text", text=error_text)],
+            structuredContent=None,
+            isError=True
+        )
     except Exception as e:
         logger.error(f"Failed to get weather: {e}", exc_info=True)
         if ctx:
             await ctx.error(f"Failed to get weather: {str(e)}")
-        error_response = {
-            "content": f"Error fetching weather: {str(e)}",
-            "weather_data": None
-        }
-        return error_response
+        error_text = f"Error fetching weather: {str(e)}"
+        return CallToolResult(
+            content=[TextContent(type="text", text=error_text)],
+            structuredContent=None,
+            isError=True
+        )
 
 
 if __name__ == "__main__":

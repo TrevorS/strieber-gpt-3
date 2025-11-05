@@ -16,6 +16,7 @@ import re
 from typing import Optional
 
 from mcp.server.fastmcp import Context
+from mcp.types import TextContent, CallToolResult
 from openai import AsyncOpenAI
 
 from common.mcp_base import MCPServerBase
@@ -146,7 +147,7 @@ async def web_search(
     max_tokens: int = 2000,
     freshness: Optional[str] = None,
     ctx: Context = None
-) -> dict:
+) -> CallToolResult:
     """Search the web with automatic query expansion and intelligent filtering.
 
     Automatically generates 2 query variations, executes both searches in parallel,
@@ -165,7 +166,7 @@ async def web_search(
         tool_call_id: Internal progress tracking ID
 
     Returns:
-        Dict with markdown-formatted search results, titles, URLs, and snippets
+        MCP CallToolResult with TextContent and structured sources metadata
 
     Raises:
         ValueError: If backend initialization fails
@@ -235,12 +236,10 @@ async def web_search(
             for result in condensed
         ]
 
-        response_data = {
-            "text": markdown,
-            "sources": sources
-        }
-
-        return response_data
+        return CallToolResult(
+            content=[TextContent(type="text", text=markdown)],
+            structuredContent={"sources": sources}
+        )
 
     except Exception as e:
         logger.error(f"Search failed: {e}", exc_info=True)
@@ -257,7 +256,7 @@ async def news_search(
     freshness: Optional[str] = None,
     country: str = "US",
     ctx: Context = None
-) -> dict:
+) -> CallToolResult:
     """Search for recent news articles with source attribution and breaking news indicators.
 
     Optimized for news and current events - uses focused queries without expansion.
@@ -273,7 +272,7 @@ async def news_search(
         ctx: MCP context for progress/logging (auto-injected)
 
     Returns:
-        Dict with markdown-formatted news results, breaking indicators, sources, and timestamps
+        MCP CallToolResult with TextContent and structured sources metadata
 
     Raises:
         ValueError: If backend initialization fails
@@ -347,12 +346,10 @@ async def news_search(
             for result in condensed
         ]
 
-        response_data = {
-            "text": markdown,
-            "sources": sources
-        }
-
-        return response_data
+        return CallToolResult(
+            content=[TextContent(type="text", text=markdown)],
+            structuredContent={"sources": sources}
+        )
 
     except Exception as e:
         logger.error(f"News search failed: {e}", exc_info=True)
@@ -443,11 +440,11 @@ def _format_news_markdown(results: list[SearchResult], query: str) -> str:
 
 
 @mcp.tool()
-async def get_search_info(ctx: Context = None) -> str:
+async def get_search_info(ctx: Context = None) -> list:
     """Get information about web search capabilities and configuration.
 
     Returns:
-        Information about current backend and search behavior
+        MCP content array format: [TextContent(type="text", text="info text")]
     """
     try:
         backend = get_backend()
@@ -490,7 +487,7 @@ Brave Search (current backend):
 - Up to 5 snippets per result for context
 - Dedicated news endpoint for current events
 """
-    return info.strip()
+    return [TextContent(type="text", text=info.strip())]
 
 
 if __name__ == "__main__":
