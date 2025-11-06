@@ -112,7 +112,7 @@ services:
   # Connects to llama-server OpenAI-compatible API endpoint
   # ==========================================================================
   open-webui:
-    image: ghcr.io/open-webui/open-webui:main
+    image: ghcr.io/open-webui/open-webui:v0.6.35
     container_name: strieber-open-webui
 
     # Restart policy
