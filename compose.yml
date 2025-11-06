@@ -106,8 +106,6 @@ services:
       - "f16"                          # KV cache precision: balance between speed and VRAM
       - "--cache-type-v"
       - "f16"
-      # Verbose prompt logging (set LLAMA_VERBOSE_PROMPT=1 in .env to enable)
-      - "${LLAMA_VERBOSE_PROMPT:+--verbose-prompt}"
 
     # Network configuration for MCP server communication
     networks:
