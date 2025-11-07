@@ -37,6 +37,9 @@ def run_server(server_module: str, host: str = "0.0.0.0", port: int = 8000) -> N
         elif server_module == "code_interpreter":
             from code_interpreter import server as code_interpreter_server
             mcp_instance = code_interpreter_server.get_mcp()
+        elif server_module == "local_reader":
+            from local_reader import server as local_reader_server
+            mcp_instance = local_reader_server.get_mcp()
         else:
             raise ValueError(f"Unknown MCP server module: {server_module}")
     except ImportError as e:

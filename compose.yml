@@ -112,6 +112,89 @@ services:
       - strieber-net
 
   # ==========================================================================
+  # llama-server-readerlm: Inference engine for ReaderLM-v2 model
+  # ABOUTME: Local HTML-to-Markdown conversion without external API calls
+  # Dedicated instance for privacy: URLs and content never leave this server
+  # ==========================================================================
+  llama-server-readerlm:
+    build:
+      context: .
+      dockerfile: Dockerfile.llamacpp
+      args:
+        CUDA_VERSION: "13.0.1"
+        UBUNTU_VERSION: "22.04"
+        CUDA_DOCKER_ARCH: "121"  # Blackwell GB10
+
+    image: strieber-llama-server:latest  # Reuse same image
+    container_name: strieber-llama-server-readerlm
+
+    # Restart policy
+    restart: unless-stopped
+
+    # GPU configuration (shares GPU 0 with main llama-server)
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1  # Request 1 GPU, will share with llama-server
+              capabilities: [gpu]
+
+    # Shared memory for CUDA operations
+    shm_size: 8g  # Less than main server (smaller model)
+
+    # IPC mode for better GPU communication
+    ipc: host
+
+    # Port mapping: host:container (8001 for ReaderLM vs 8000 for main)
+    ports:
+      - "8001:8000"
+
+    # Volume mounts
+    volumes:
+      # Models directory
+      - /home/trevor/models:/models
+
+    # Environment variables
+    environment:
+      - LLAMA_ARG_HOST=0.0.0.0
+      - LLAMA_ARG_PORT=8000
+      - LLAMA_LOG_VERBOSITY=0
+      - LLAMA_LOG_TIMESTAMPS=true
+      - LLAMA_LOG_PREFIX=true
+
+    # Server command optimized for ReaderLM-v2 (1.5B params)
+    # Smaller model = lower latency, lower VRAM requirements
+    command:
+      - "-m"
+      - "/models/ReaderLM-v2-Q4_K_M.gguf"
+      - "--port"
+      - "8000"
+      - "--host"
+      - "0.0.0.0"
+      - "-c"
+      - "32768"                           # Context: 32k tokens (sufficient for HTML)
+      - "--n-gpu-layers"
+      - "999"                             # Auto-detect layers for GPU offload
+      - "--jinja"                         # Enable chat template support
+      - "-b"
+      - "1024"                            # Batch size: smaller for smaller model
+      - "-ub"
+      - "1024"                            # Ubatch size: physical batch size
+      - "--flash-attn"
+      - "on"                              # Flash attention: efficiency
+      - "--cont-batching"                 # Continuous batching
+      - "--parallel"
+      - "2"                               # Allow up to 2 concurrent requests
+      - "-t"
+      - "0.1"                             # Temperature: near-zero for deterministic conversion
+      - "--no-mmap"                       # Disable mmap
+
+    # Network configuration for MCP server communication
+    networks:
+      - strieber-net
+
+  # ==========================================================================
   # open-webui: Web interface for llama-server
   # Connects to llama-server OpenAI-compatible API endpoint
   # ==========================================================================
@@ -146,6 +229,7 @@ services:
       - mcp-jina-reader
       - mcp-web-search
       - mcp-code-interpreter
+      - mcp-local-reader
 
     # Network configuration for inter-service communication
     networks:
@@ -255,6 +339,65 @@ services:
       - code-executor
     networks:
       - strieber-net
+
+  # ==========================================================================
+  # playwright-scraper: Web scraping service with JavaScript rendering
+  # ABOUTME: Provides REST API for fetching URLs with Playwright
+  # Used by local_reader MCP server for privacy-preserving web scraping
+  # ==========================================================================
+  playwright-scraper:
+    build:
+      context: ./backend/tools/playwright-scraper
+      dockerfile: Dockerfile
+    image: strieber-playwright-scraper:latest
+    container_name: strieber-playwright-scraper
+    restart: unless-stopped
+    environment:
+      - HEADLESS=true
+    # No ports exposed - internal only
+    networks:
+      - strieber-net
+    ipc: host  # Critical for Chromium stability
+    healthcheck:
+      test: ["CMD", "python", "-c", "import httpx; httpx.get('http://localhost:8000/health', timeout=5.0)"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+
+  # ==========================================================================
+  # mcp-local-reader: Privacy-first web content extraction
+  # ABOUTME: Local HTML-to-Markdown conversion using ReaderLM-v2 (no external APIs)
+  # Uses: Playwright scraper + llama-server-readerlm for complete private pipeline
+  # ==========================================================================
+  mcp-local-reader:
+    build:
+      context: ./backend/tools/mcp_servers
+      dockerfile: Dockerfile.mcp-server
+      args:
+        SERVER_MODULE: local_reader
+    image: strieber-mcp-local-reader:latest
+    container_name: strieber-mcp-local-reader
+    restart: unless-stopped
+    ports:
+      - "8104:8000"
+    environment:
+      - PORT=8000
+      - SCRAPER_ENDPOINT=http://playwright-scraper:8000
+      - LLAMA_ENDPOINT=http://llama-server-readerlm:8001
+    depends_on:
+      playwright-scraper:
+        condition: service_healthy
+      llama-server-readerlm:
+        condition: service_healthy
+    networks:
+      - strieber-net
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
 
 networks:
   strieber-net:
