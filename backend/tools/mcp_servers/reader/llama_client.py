@@ -1,7 +1,8 @@
 """ABOUTME: HTTP client for llama-server ReaderLM-v2 inference.
 
 Communicates with the dedicated llama-server instance running
-ReaderLM-v2 model for HTML-to-Markdown conversion.
+ReaderLM-v2 model for HTML-to-Markdown conversion with optional
+instruction-based extraction.
 """
 
 import logging
@@ -15,12 +16,12 @@ logger = logging.getLogger(__name__)
 class LlamaReaderClient:
     """Client for communicating with llama-server-readerlm inference service."""
 
-    def __init__(self, endpoint: str = "http://llama-server-readerlm:8001"):
+    def __init__(self, endpoint: str = "http://llama-server-readerlm:8000"):
         """
         Initialize llama-server client.
 
         Args:
-            endpoint: URL to the llama-server-readerlm service
+            endpoint: URL to the llama-server-readerlm service (internal Docker port 8000)
         """
         self.endpoint = endpoint
         self.model = "ReaderLM-v2"
@@ -29,14 +30,17 @@ class LlamaReaderClient:
     async def html_to_markdown(
         self,
         html_content: str,
+        instruction: Optional[str] = None,
         max_tokens: int = 8192,
         temperature: float = 0.1
     ) -> tuple[str, bool]:
         """
-        Convert HTML to Markdown using ReaderLM-v2.
+        Convert HTML to Markdown using ReaderLM-v2 with optional instruction.
 
         Args:
             html_content: Raw HTML to convert
+            instruction: Optional instruction for extraction (e.g., "Extract the price")
+                        If None, uses default: "Extract the main content from the given HTML and convert it to Markdown format."
             max_tokens: Maximum tokens in output (default 8192)
             temperature: Temperature for generation (default 0.1, near-deterministic)
 
@@ -44,23 +48,37 @@ class LlamaReaderClient:
             (markdown_content, success)
         """
         try:
-            # Use OpenAI-compatible /v1/completions endpoint
+            # Use default instruction if none provided
+            if instruction is None:
+                instruction = "Extract the main content from the given HTML and convert it to Markdown format."
+
+            # Use chat completions endpoint with proper message format for ReaderLM-v2
             response = await self.client.post(
-                f"{self.endpoint}/v1/completions",
+                f"{self.endpoint}/v1/chat/completions",
                 json={
                     "model": self.model,
-                    "prompt": html_content,
+                    "messages": [
+                        {
+                            "role": "system",
+                            "content": instruction
+                        },
+                        {
+                            "role": "user",
+                            "content": html_content
+                        }
+                    ],
                     "max_tokens": max_tokens,
                     "temperature": temperature,
-                    "top_p": 0.95,
-                    "stop": None
+                    "top_p": 0.95
                 }
             )
             response.raise_for_status()
 
             result = response.json()
             if result.get("choices") and len(result["choices"]) > 0:
-                markdown = result["choices"][0].get("text", "")
+                # Extract message content from chat completion response
+                message = result["choices"][0].get("message", {})
+                markdown = message.get("content", "")
                 return markdown, True
             else:
                 logger.error("No choices in response from llama-server")

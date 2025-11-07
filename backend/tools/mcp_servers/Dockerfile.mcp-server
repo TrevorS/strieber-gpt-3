@@ -21,6 +21,7 @@ RUN pip install --no-cache-dir -r requirements.txt
 COPY *.py ./
 COPY common ./common/
 COPY tests ./tests/
+COPY reader ./reader/
 
 # Note: Some servers (like code-interpreter) need Docker access which requires root or docker group
 # For simplicity and security of the code execution sandbox, we run as root

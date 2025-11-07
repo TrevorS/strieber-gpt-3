@@ -229,7 +229,7 @@ services:
       - mcp-jina-reader
       - mcp-web-search
       - mcp-code-interpreter
-      - mcp-local-reader
+      - mcp-reader
 
     # Network configuration for inter-service communication
     networks:
@@ -366,25 +366,25 @@ services:
       start_period: 30s
 
   # ==========================================================================
-  # mcp-local-reader: Privacy-first web content extraction
-  # ABOUTME: Local HTML-to-Markdown conversion using ReaderLM-v2 (no external APIs)
-  # Uses: Playwright scraper + llama-server-readerlm for complete private pipeline
+  # mcp-reader: Privacy-first web content extraction
+  # ABOUTME: Local HTML-to-Markdown conversion with instruction-based extraction
+  # Uses: Playwright scraper + ReaderLM-v2 for complete private pipeline
   # ==========================================================================
-  mcp-local-reader:
+  mcp-reader:
     build:
       context: ./backend/tools/mcp_servers
       dockerfile: Dockerfile.mcp-server
       args:
-        SERVER_MODULE: local_reader
-    image: strieber-mcp-local-reader:latest
-    container_name: strieber-mcp-local-reader
+        SERVER_MODULE: reader
+    image: strieber-mcp-reader:latest
+    container_name: strieber-mcp-reader
     restart: unless-stopped
     ports:
       - "8104:8000"
     environment:
       - PORT=8000
       - SCRAPER_ENDPOINT=http://playwright-scraper:8000
-      - LLAMA_ENDPOINT=http://llama-server-readerlm:8001
+      - LLAMA_ENDPOINT=http://llama-server-readerlm:8000
     depends_on:
       playwright-scraper:
         condition: service_healthy
@@ -392,12 +392,6 @@ services:
         condition: service_healthy
     networks:
       - strieber-net
-    healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
-      interval: 30s
-      timeout: 10s
-      retries: 3
-      start_period: 30s
 
 networks:
   strieber-net:
