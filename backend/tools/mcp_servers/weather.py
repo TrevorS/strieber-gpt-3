@@ -1,7 +1,8 @@
-"""ABOUTME: Weather MCP Server - Open-Meteo based weather tool with current, daily, and weekly forecasts.
+"""ABOUTME: Weather MCP Server - Open-Meteo weather data with Nominatim geocoding.
 
-Provides unified weather data via Open-Meteo (no API key required). Returns dual-format
-responses: human-readable text for LLM context + structured JSON for frontend rendering.
+Provides weather data via Open-Meteo API (no API key required). Uses OSM Nominatim for
+geocoding to handle location names like "Savannah, GA". Returns dual-format responses:
+human-readable text for LLM context + structured JSON for frontend rendering.
 """
 
 import asyncio
@@ -40,9 +41,12 @@ logger = server.get_logger()
 # CONSTANTS
 # ============================================================================
 
-# Open-Meteo API endpoints
-GEOCODING_API = "https://geocoding-api.open-meteo.com/v1/search"
+# Geocoding and weather API endpoints
+GEOCODING_API = "https://nominatim.openstreetmap.org/search"
 WEATHER_API = "https://api.open-meteo.com/v1/forecast"
+
+# Nominatim User-Agent (required by OSM policy)
+USER_AGENT = "WeatherMCP/1.0 (https://github.com/anthropics/strieber-gpt-3)"
 
 # API configuration
 API_TIMEOUT_SECONDS = 10.0
@@ -237,10 +241,13 @@ def get_unit_symbol(units: str) -> str:
 
 
 async def geocode_location(location: str) -> Dict[str, Any]:
-    """Convert location name to coordinates using Open-Meteo Geocoding API.
+    """Convert location name to coordinates using OSM Nominatim Geocoding API.
+
+    Nominatim handles all query formats reliably (e.g., "Savannah, GA", "Paris", etc).
+    Requires User-Agent header per OSM usage policy.
 
     Args:
-        location: Location name (e.g., "Paris", "New York", "Tokyo")
+        location: Location name (e.g., "Paris", "New York", "Savannah, GA")
 
     Returns:
         Dict with 'name', 'latitude', 'longitude', 'country', 'timezone'
@@ -253,35 +260,49 @@ async def geocode_location(location: str) -> Dict[str, Any]:
 
     try:
         params = {
-            "name": location,
-            "count": GEOCODING_MAX_RESULTS,
-            "language": GEOCODING_LANGUAGE,
-            "format": "json"
+            "q": location,
+            "format": "json",
+            "limit": GEOCODING_MAX_RESULTS,
+            "addressdetails": 0
         }
-        resp = await safe_http_get(GEOCODING_API, params=params, timeout=API_TIMEOUT_SECONDS)
+        headers = {
+            "User-Agent": USER_AGENT
+        }
+        resp = await safe_http_get(
+            GEOCODING_API,
+            params=params,
+            headers=headers,
+            timeout=API_TIMEOUT_SECONDS
+        )
 
         data = resp.json()
-        results = data.get("results", [])
 
-        if not results:
+        # Nominatim returns results array directly (not wrapped in "results" key)
+        if not data:
             logger.warning(f"Location not found: '{location}'")
             raise ValueError(
                 f"Location not found: {location}",
                 {"error_code": ERROR_CODE_LOCATION_NOT_FOUND, "location": location}
             )
 
-        result = results[0]
-        location_name = f"{result.get('name', location)}, {result.get('country', '')}".strip(", ")
+        result = data[0]
+
+        # Extract location name from display_name or fallback to query
+        location_name = result.get("display_name", location)
+
+        # Nominatim returns lat/lon as strings, must convert to float
+        lat = float(result.get("lat"))
+        lon = float(result.get("lon"))
 
         geocoded = {
             "name": location_name,
-            "latitude": result.get("latitude"),
-            "longitude": result.get("longitude"),
-            "country": result.get("country"),
-            "timezone": result.get("timezone")
+            "latitude": lat,
+            "longitude": lon,
+            "country": result.get("address", {}).get("country"),
+            "timezone": None  # Nominatim doesn't provide timezone
         }
 
-        logger.info(f"Geocoded '{location}' to {location_name} ({geocoded['latitude']}, {geocoded['longitude']})")
+        logger.info(f"Geocoded '{location}' to {location_name} ({lat}, {lon})")
         return geocoded
 
     except httpx.TimeoutException as e:
@@ -614,7 +635,7 @@ async def get_weather(
 ) -> CallToolResult:
     """Get weather information for a location.
 
-    Supports current weather and forecasts using Open-Meteo (no API key required).
+    Uses Nominatim for geocoding and Open-Meteo for weather (no API keys required).
 
     IMPORTANT RESPONSE GUIDANCE:
     After receiving the result, provide a brief, conversational weather summary:
