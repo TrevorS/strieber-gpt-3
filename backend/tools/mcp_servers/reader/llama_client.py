@@ -86,7 +86,7 @@ class LlamaReaderClient:
         """
         self.endpoint = endpoint
         self.model = "ReaderLM-v2"
-        self.client = httpx.AsyncClient(timeout=120.0)  # Long timeout for inference
+        self.client = httpx.AsyncClient(timeout=300.0)  # Long timeout for large content inference (5 minutes)
 
     async def html_to_markdown(
         self,
