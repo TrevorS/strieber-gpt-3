@@ -544,15 +544,24 @@ async def web_search(
             await ctx.report_progress(5, 5, f"Found {len(condensed)} results (~{final_tokens} tokens)")
         logger.info(f"Web search completed: {len(condensed)} results, ~{final_tokens} tokens")
 
-        # Build sources metadata
-        sources = [
-            {
+        # Build sources metadata with rich result information
+        sources = []
+        for result in condensed:
+            source_entry = {
                 "title": result.title,
                 "url": result.url,
-                "snippet": result.snippet[:MAX_SNIPPET_METADATA_LENGTH] if result.snippet else ""
+                "snippet": result.snippet[:MAX_SNIPPET_METADATA_LENGTH] if result.snippet else "",
+                # Rich metadata for UI
+                "source_name": result.source_name,
+                "source_favicon": result.source_favicon,
+                "content_type": result.content_type,
+                "thumbnail_url": result.thumbnail_url,
+                "thumbnail_is_logo": result.thumbnail_is_logo,
+                "language": result.language,
+                "page_timestamp": result.page_timestamp,
+                "is_live": result.is_live
             }
-            for result in condensed
-        ]
+            sources.append(source_entry)
 
         # Build structured metadata
         metadata = {
@@ -564,7 +573,8 @@ async def web_search(
             "results_filtered_count": len(filtered),
             "freshness_filter_used": freshness,
             "estimated_tokens": final_tokens,
-            "max_tokens_requested": max_tokens
+            "max_tokens_requested": max_tokens,
+            "sources": sources  # Include rich source metadata for UI consumption
         }
 
         return CallToolResult(
@@ -766,18 +776,24 @@ async def news_search(
             await ctx.report_progress(4, 4, f"Found {len(condensed)} news articles (~{final_tokens} tokens)")
         logger.info(f"News search completed: {len(condensed)} results, {breaking_count} breaking, ~{final_tokens} tokens")
 
-        # Build sources metadata with breaking status
-        sources = [
-            {
+        # Build sources metadata with rich news result information
+        sources = []
+        for result in condensed:
+            source_entry = {
                 "title": result.title,
                 "url": result.url,
                 "snippet": result.snippet[:MAX_SNIPPET_METADATA_LENGTH] if result.snippet else "",
+                # News-specific metadata
                 "is_breaking": result.metadata.get("is_breaking", False),
-                "source": result.metadata.get("source", "Unknown source"),
-                "published": result.date if result.date else "Recent"
+                "source": result.source_name or result.metadata.get("source", "Unknown source"),
+                "published": result.date if result.date else "Recent",
+                # Rich metadata for UI
+                "source_name": result.source_name,
+                "thumbnail_url": result.thumbnail_url,
+                "language": result.language,
+                "page_timestamp": result.page_timestamp
             }
-            for result in condensed
-        ]
+            sources.append(source_entry)
 
         # Build structured metadata
         metadata = {
@@ -790,7 +806,8 @@ async def news_search(
             "country": country,
             "breaking_count": breaking_count,
             "estimated_tokens": final_tokens,
-            "max_tokens_requested": max_tokens
+            "max_tokens_requested": max_tokens,
+            "sources": sources  # Include rich source metadata for UI consumption
         }
 
         return CallToolResult(

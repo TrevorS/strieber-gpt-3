@@ -303,6 +303,20 @@ class BraveSearchBackend(SearchBackend):
             age = result.get("age", "")
             extra_snippets = result.get("extra_snippets", [])
 
+            # Extract rich metadata
+            profile = result.get("profile", {})
+            source_name = profile.get("name")
+            source_favicon = profile.get("img")
+
+            thumbnail = result.get("thumbnail", {})
+            thumbnail_url = thumbnail.get("src")
+            thumbnail_is_logo = thumbnail.get("logo")
+
+            content_type = result.get("subtype")  # "generic", "article", etc.
+            language = result.get("language")
+            page_timestamp = result.get("page_age")
+            is_live = result.get("is_live")
+
             # Convert to SearchResult
             formatted_results.append(SearchResult(
                 title=title,
@@ -312,7 +326,15 @@ class BraveSearchBackend(SearchBackend):
                 extra_snippets=extra_snippets if extra_snippets else [],
                 metadata={
                     "backend": "brave"
-                }
+                },
+                source_name=source_name,
+                source_favicon=source_favicon,
+                content_type=content_type,
+                thumbnail_url=thumbnail_url,
+                thumbnail_is_logo=thumbnail_is_logo,
+                language=language,
+                page_timestamp=page_timestamp,
+                is_live=is_live
             ))
 
         return formatted_results
@@ -339,6 +361,7 @@ class BraveSearchBackend(SearchBackend):
             breaking = result.get("breaking", False)
             thumbnail = result.get("thumbnail", {})
             thumbnail_url = thumbnail.get("src", "") if isinstance(thumbnail, dict) else ""
+            page_timestamp = result.get("page_age")
 
             # Build metadata with news-specific info
             metadata = {
@@ -350,14 +373,18 @@ class BraveSearchBackend(SearchBackend):
             if thumbnail_url:
                 metadata["thumbnail_url"] = thumbnail_url
 
-            # Convert to SearchResult
+            # Convert to SearchResult with rich metadata
             formatted_results.append(SearchResult(
                 title=title,
                 url=url,
                 snippet=description,
                 date=age if age else None,
                 extra_snippets=[],  # News results typically don't have extra snippets
-                metadata=metadata
+                metadata=metadata,
+                source_name=source,  # Use source field as source_name for news
+                thumbnail_url=thumbnail_url if thumbnail_url else None,
+                page_timestamp=page_timestamp,
+                is_live=False  # News articles aren't live
             ))
 
         return formatted_results

@@ -17,9 +17,17 @@ class SearchResult:
         title: Page title
         url: Page URL
         snippet: Main content snippet/description
-        date: Publication or discovery date (ISO format or human-readable)
+        date: Publication or discovery date (human-readable age, e.g., "2 days ago")
         extra_snippets: Additional contextual snippets (optional)
         metadata: Backend-specific metadata (optional)
+        source_name: Clean source name (e.g., "W3Schools", "React") (optional)
+        source_favicon: Favicon URL for source (optional)
+        content_type: Content type classification ("article", "generic", "video") (optional)
+        thumbnail_url: Preview image URL (optional)
+        thumbnail_is_logo: Whether thumbnail is a logo vs content image (optional)
+        language: Content language code (e.g., "en") (optional)
+        page_timestamp: ISO 8601 timestamp for precise date sorting (optional)
+        is_live: Whether content is live/streaming (optional)
     """
     title: str
     url: str
@@ -27,6 +35,14 @@ class SearchResult:
     date: Optional[str] = None
     extra_snippets: list[str] = field(default_factory=list)
     metadata: dict = field(default_factory=dict)
+    source_name: Optional[str] = None
+    source_favicon: Optional[str] = None
+    content_type: Optional[str] = None
+    thumbnail_url: Optional[str] = None
+    thumbnail_is_logo: Optional[bool] = None
+    language: Optional[str] = None
+    page_timestamp: Optional[str] = None
+    is_live: Optional[bool] = None
 
     def get_all_text(self) -> str:
         """Get all text content (snippet + extra_snippets combined)."""

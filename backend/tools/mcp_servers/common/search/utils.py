@@ -157,6 +157,8 @@ def format_as_markdown(
 ) -> str:
     """Format search results as markdown.
 
+    Shows source names and content type information to help LLM assess result quality.
+
     Args:
         results: List of search results
         query: Original search query
@@ -176,13 +178,25 @@ def format_as_markdown(
         output.append("---\n")
 
     for idx, result in enumerate(results, 1):
-        # Title and URL
-        output.append(f"## {idx}. {result.title}\n")
-        output.append(f"**URL**: {result.url}\n")
+        # Build title with content type badge if available
+        title = result.title
+        if result.content_type == "article":
+            title = f"[Article] {title}"
 
-        # Date if available
+        output.append(f"## {idx}. {title}\n")
+
+        # Build attribution line: Source | Date
+        attribution_parts = []
+        if result.source_name:
+            attribution_parts.append(f"**Source:** {result.source_name}")
         if result.date:
-            output.append(f"**Date**: {result.date}\n")
+            attribution_parts.append(f"**Published:** {result.date}")
+
+        if attribution_parts:
+            output.append(" | ".join(attribution_parts) + "\n")
+
+        # URL
+        output.append(f"**URL:** {result.url}\n")
 
         # Snippet (combine main + extra snippets)
         full_text = result.get_all_text()
@@ -292,13 +306,22 @@ def condense_results(
         # Trim snippet
         if len(current_snippet) > target_length:
             trimmed_snippet = current_snippet[:target_length] + "..."
-            # Create new result with trimmed snippet
+            # Create new result with trimmed snippet, preserving metadata
             condensed_result = SearchResult(
                 title=result.title,
                 url=result.url,
                 snippet=trimmed_snippet,
                 date=result.date,
-                extra_snippets=[]  # Drop extra snippets to save space
+                extra_snippets=[],  # Drop extra snippets to save space
+                metadata=result.metadata,
+                source_name=result.source_name,
+                source_favicon=result.source_favicon,
+                content_type=result.content_type,
+                thumbnail_url=result.thumbnail_url,
+                thumbnail_is_logo=result.thumbnail_is_logo,
+                language=result.language,
+                page_timestamp=result.page_timestamp,
+                is_live=result.is_live
             )
             condensed.append(condensed_result)
         else:
