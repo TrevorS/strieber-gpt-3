@@ -237,7 +237,8 @@ async def fetch_page(
             url,
             instruction=None,  # Always use default extraction - custom instructions reduce quality
             timeout=timeout,
-            force_playwright=force_js_rendering
+            force_playwright=force_js_rendering,
+            use_readability=True  # Always enabled: extract main content, remove ads/navigation
         )
 
         total_time_ms = int((time.time() - start_time) * 1000)

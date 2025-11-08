@@ -17,6 +17,9 @@ openai>=1.0.0
 # Code interpreter sandbox
 docker>=7.0.0
 
+# HTML content extraction (pure Python mode, no Node.js needed)
+readabilipy>=0.2.0
+
 # Testing (optional, only needed for development)
 pytest>=7.4.0
 pytest-asyncio>=0.21.0

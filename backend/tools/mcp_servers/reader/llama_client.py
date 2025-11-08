@@ -77,23 +77,26 @@ def truncate_html(html: str, max_bytes: int = 300000) -> tuple[str, bool]:
 class LlamaReaderClient:
     """Client for communicating with llama-server-readerlm inference service."""
 
-    def __init__(self, endpoint: str = "http://llama-server-readerlm:8000"):
+    def __init__(self, endpoint: str = "http://llama-server-readerlm:8000", default_timeout: float = 180.0):
         """
         Initialize llama-server client.
 
         Args:
             endpoint: URL to the llama-server-readerlm service (internal Docker port 8000)
+            default_timeout: Default timeout for inference requests in seconds (default 180s)
         """
         self.endpoint = endpoint
         self.model = "ReaderLM-v2"
-        self.client = httpx.AsyncClient(timeout=300.0)  # Long timeout for large content inference (5 minutes)
+        self.default_timeout = default_timeout
+        self.client = httpx.AsyncClient(timeout=default_timeout)
 
     async def html_to_markdown(
         self,
         html_content: str,
         instruction: Optional[str] = None,
         max_tokens: int = 8192,
-        temperature: float = 0.1
+        temperature: float = 0.1,
+        timeout: Optional[float] = None
     ) -> tuple[str, bool]:
         """
         Convert HTML to Markdown using ReaderLM-v2 with optimal default extraction.
@@ -104,6 +107,7 @@ class LlamaReaderClient:
                         ReaderLM-v2 performs 24.6% better than GPT-4o with default extraction
             max_tokens: Maximum tokens in output (default 8192)
             temperature: Temperature for generation (default 0.1, near-deterministic)
+            timeout: Optional timeout override in seconds (uses default_timeout if None)
 
         Returns:
             (markdown_content, success)
@@ -124,6 +128,9 @@ class LlamaReaderClient:
             # ReaderLM-v2 is optimized for main content extraction
             instruction = "Extract the main content from the given HTML and convert it to Markdown format."
 
+            # Use the provided timeout or fall back to default
+            request_timeout = timeout if timeout is not None else self.default_timeout
+
             # Use chat completions endpoint with proper message format for ReaderLM-v2
             response = await self.client.post(
                 f"{self.endpoint}/v1/chat/completions",
@@ -142,7 +149,8 @@ class LlamaReaderClient:
                     "max_tokens": max_tokens,
                     "temperature": temperature,
                     "top_p": 0.95
-                }
+                },
+                timeout=request_timeout
             )
             response.raise_for_status()
 
