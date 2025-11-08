@@ -386,12 +386,22 @@ async def web_search(
 ) -> CallToolResult:
     """Search the web with automatic query expansion and intelligent filtering.
 
-    Automatically generates query variations, executes searches in parallel,
+    Automatically generates 3 query variations, executes searches in parallel,
     combines and deduplicates results, condenses to fit token budget, and returns
     formatted markdown with citations.
 
+    **Process**:
+    1. Generate 3 query variations using LLM
+    2. Execute searches in parallel
+    3. Combine and filter (min 50 char snippets, max 2 results/domain)
+    4. Condense results to fit token budget
+    5. Format with citations
+
     For multi-step research, call this tool multiple times with different queries
-    based on previous results.
+    based on previous results. Each call is one research iteration controlled by the LLM.
+
+    **Freshness Options**: pd (day), pw (week), pm (month), py (year)
+    **Rate Limit**: 2000 queries/month, 1 request/second
 
     Args:
         query: Search query (3-256 characters)
@@ -591,8 +601,15 @@ async def news_search(
 ) -> CallToolResult:
     """Search for recent news articles with source attribution and breaking news indicators.
 
-    Optimized for news and current events - uses focused queries without expansion.
-    Returns news-specific metadata including source, publication time, and breaking status.
+    Optimized for news and current events - uses focused queries without expansion (no query variations).
+    Returns news-specific metadata including source, publication time, and breaking news status.
+
+    **Features**:
+    • Time filters: pd (day), pw (week), pm (month), py (year)
+    • Country-specific news available
+    • Breaking news indicator in metadata (is_breaking field)
+    • Dedicated news endpoint for current events
+    • Min 50 char snippets, max 2 results/domain
 
     Args:
         query: News search query (3-256 characters)
@@ -845,89 +862,6 @@ def _format_news_markdown(results: list[SearchResult], query: str) -> tuple[str,
         lines.append("")
 
     return "\n".join(lines).strip(), breaking_count
-
-
-@mcp.tool()
-async def get_search_info(ctx: Context = None) -> CallToolResult:
-    """Get information about web search capabilities and configuration.
-
-    Returns:
-        CallToolResult with capabilities information and structured metadata
-    """
-    logger.debug("Getting search capabilities info")
-
-    try:
-        backend = get_backend()
-        backend_name = backend.name
-        backend_initialized = True
-    except Exception as e:
-        backend_name = "not initialized"
-        backend_initialized = False
-        logger.warning(f"Backend not initialized: {e}")
-
-    info = f"""Web Search Configuration:
-- Backend: {backend_name}
-- Default results per query variation: {DEFAULT_RESULT_COUNT} (total ~{DEFAULT_RESULT_COUNT * QUERY_VARIANTS_COUNT} from {QUERY_VARIANTS_COUNT} queries)
-- Automatic query expansion: {QUERY_VARIANTS_COUNT} variations per search
-- Filtering: min {MIN_SNIPPET_LENGTH_WEB} char snippets, max {MAX_PER_DOMAIN_WEB} results/domain, URL deduplication
-- Result condensing: ~{DEFAULT_MAX_TOKENS} token default budget
-
-Search Process:
-1. Generate {QUERY_VARIANTS_COUNT} query variations using LLM
-2. Execute both searches in parallel
-3. Combine and filter results (quality + deduplication)
-4. Condense to fit token budget
-5. Format with citations
-
-News Search (news_search tool):
-- Dedicated tool for news and current events
-- No query expansion (time-sensitive, focused queries)
-- Source attribution and breaking news indicators (in metadata)
-- Time filters: pd (day), pw (week), pm (month), py (year)
-- Country-specific news available
-- Breaking news status in metadata (is_breaking field)
-
-For Multi-Step Research:
-- Call web_search multiple times with different queries
-- Main LLM analyzes previous results and decides next search
-- Iterations are controlled by the orchestrating LLM
-- Each search call = 1 iteration
-
-Constraints:
-- Query length: {MIN_QUERY_LENGTH}-{MAX_QUERY_LENGTH} characters
-- Result count: {MIN_RESULT_COUNT}-{MAX_RESULT_COUNT} per query
-- Max tokens: {MIN_MAX_TOKENS}-{MAX_MAX_TOKENS} per result set
-- Freshness values: {', '.join(sorted(VALID_FRESHNESS_VALUES))}
-
-Backend: {backend_name}
-- Free tier: 2,000 queries/month, 1 req/sec
-- Rate limiting enforced automatically
-- Up to 5 snippets per result for context
-- Dedicated news endpoint for current events"""
-
-    metadata = {
-        "backend": backend_name,
-        "backend_initialized": backend_initialized,
-        "default_result_count": DEFAULT_RESULT_COUNT,
-        "query_variants_count": QUERY_VARIANTS_COUNT,
-        "default_max_tokens": DEFAULT_MAX_TOKENS,
-        "min_snippet_length_web": MIN_SNIPPET_LENGTH_WEB,
-        "max_per_domain_web": MAX_PER_DOMAIN_WEB,
-        "min_snippet_length_news": MIN_SNIPPET_LENGTH_NEWS,
-        "max_per_domain_news": MAX_PER_DOMAIN_NEWS,
-        "valid_freshness_values": sorted(VALID_FRESHNESS_VALUES),
-        "query_length_min": MIN_QUERY_LENGTH,
-        "query_length_max": MAX_QUERY_LENGTH,
-        "result_count_min": MIN_RESULT_COUNT,
-        "result_count_max": MAX_RESULT_COUNT,
-        "max_tokens_min": MIN_MAX_TOKENS,
-        "max_tokens_max": MAX_MAX_TOKENS
-    }
-
-    return CallToolResult(
-        content=[TextContent(type="text", text=info)],
-        metadata=metadata
-    )
 
 
 if __name__ == "__main__":

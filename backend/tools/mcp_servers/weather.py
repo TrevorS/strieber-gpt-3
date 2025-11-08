@@ -605,10 +605,7 @@ def format_weekly_forecast_text(location: str, data: Dict[str, Any]) -> str:
 # ============================================================================
 
 
-@mcp.tool(
-    input_schema=WeatherInputSchema,
-    description="Get weather information for a location with current, daily, or weekly forecasts"
-)
+@mcp.tool()
 async def get_weather(
     location: str,
     forecast_type: Literal["current", "daily", "weekly"] = "current",

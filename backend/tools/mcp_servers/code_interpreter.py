@@ -199,13 +199,17 @@ if _figures:
 async def execute_python(code: str, ctx: Context = None) -> CallToolResult:
     """Execute Python code in a sandboxed Docker container.
 
-    Security features:
+    **Security Features**:
     - Runs as non-root user
     - Network disabled
     - Resource limits: 1GB RAM, 1 CPU
     - Container removed after execution
+    - Max code size: 50KB
 
-    Visualization Support:
+    **Available Libraries**:
+    numpy, pandas, matplotlib, seaborn, requests, scipy, sympy
+
+    **Visualization Support**:
     - Matplotlib and seaborn figures are AUTOMATICALLY CAPTURED and DISPLAYED
     - Any figures you create via plt.plot(), sns.histplot(), etc. will be automatically
       shown to the user - you don't need to do anything special
@@ -215,7 +219,7 @@ async def execute_python(code: str, ctx: Context = None) -> CallToolResult:
         code: Python code to execute (max 50KB)
 
     Returns:
-        CallToolResult with TextContent/ImageContent and execution metadata:
+        CallToolResult with TextContent/ImageContent and metadata:
         - execution_time_ms: Time spent executing in milliseconds
         - code_length: Length of submitted code in bytes
         - output_length: Length of stdout output in bytes
@@ -446,44 +450,6 @@ async def execute_python(code: str, ctx: Context = None) -> CallToolResult:
             error_type="execution_error",
             additional_metadata={"exception": str(e)}
         )
-
-
-@mcp.tool()
-async def get_available_libraries(ctx: Context = None) -> CallToolResult:
-    """Get list of pre-installed Python libraries in the code executor.
-
-    Returns:
-        CallToolResult with TextContent listing available libraries and metadata:
-        - library_count: Number of available libraries
-        - categories: List of library categories available
-
-    Examples:
-        get_available_libraries()
-    """
-    # Library catalog (kept in sync with Docker image)
-    libraries = [
-        "numpy - Numerical computing",
-        "pandas - Data analysis",
-        "matplotlib - Plotting",
-        "seaborn - Statistical visualization",
-        "requests - HTTP client",
-        "scipy - Scientific computing",
-        "sympy - Symbolic mathematics",
-    ]
-
-    logger.debug("Retrieved available libraries list")
-
-    formatted_list = "Available Python libraries:\n" + "\n".join(f"  • {lib}" for lib in libraries)
-
-    return CallToolResult(
-        content=[TextContent(type="text", text=formatted_list)],
-        isError=False,
-        metadata={
-            "library_count": len(libraries),
-            "categories": ["numerical", "data-analysis", "visualization", "scientific", "http"],
-            "docker_image": DOCKER_IMAGE_NAME,
-        }
-    )
 
 
 # ============================================================================

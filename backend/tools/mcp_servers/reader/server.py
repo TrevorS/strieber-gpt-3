@@ -162,61 +162,64 @@ def get_mcp():
 # MCP Tools
 # =============================================================================
 
-@mcp.tool(inputSchema=FetchPageInput, outputSchema=FetchPageOutput)
+@mcp.tool()
 async def fetch_page(
     url: str,
-    prompt: Optional[str] = None,
     timeout: int = TIMEOUT_DEFAULT,
     force_js_rendering: bool = False,
     ctx: Context = None
 ) -> CallToolResult:
-    """Fetch and convert web page to clean Markdown with optional instruction-based extraction.
+    """Fetch and convert web page to clean, optimized Markdown.
 
     Completely private: URLs and content never leave your infrastructure.
-    Uses Playwright for web scraping + ReaderLM-v2 for conversion/extraction.
+    Uses Playwright for web scraping + ReaderLM-v2 (1.5B params) for optimal HTML-to-Markdown conversion.
+
+    **How it works**:
+    - Automatically extracts main content (removes navigation, ads, sidebars)
+    - Preserves structure: headings, lists, tables, code blocks, LaTeX
+    - Handles documents up to 128K tokens (512K extrapolation capability)
+    - No instruction parameter needed - model performs best with default extraction
 
     Args:
         url: The URL to fetch (must include http:// or https://)
-        prompt: Optional extraction instruction (e.g., "Extract the main headline and price").
-               If not provided, returns full markdown. ReaderLM-v2 supports custom instructions.
         timeout: Maximum page load time in seconds (range: 5-300, default: 30)
         force_js_rendering: Force Playwright even for simple pages (default: False).
-                          Use True for JavaScript-heavy SPAs like Twitter, Reddit, etc.
+                          Use True for JavaScript-heavy sites: Twitter, Reddit, Medium, etc.
 
     Returns:
-        CallToolResult with extracted Markdown content and comprehensive metadata including:
+        CallToolResult with clean Markdown content and metadata:
         - method: Scraping method used (http or playwright)
-        - html_size: Size of fetched HTML in bytes
-        - content_size: Size of extracted/markdown content in bytes
-        - scrape_time_ms: Time spent scraping in milliseconds
-        - inference_time_ms: Time spent in ReaderLM-v2 in milliseconds
-        - total_time_ms: Total processing time in milliseconds
-        - extraction_mode: Whether prompt-based extraction was used
-        - instruction_used: The instruction/prompt that was used, if any
+        - html_size: Size of raw HTML fetched
+        - scrape_time_ms: Time to scrape the page
+        - inference_time_ms: Time for HTML→Markdown conversion
 
-    Features:
-        • Smart HTTP/Playwright fallback (fast for static pages)
-        • Full JavaScript rendering for SPAs
-        • Optional instruction-based extraction (prompt parameter)
-        • 20% better quality than previous ReaderLM (v2)
-        • No rate limits, unlimited usage
-        • Complete privacy (all processing local)
+    **Performance**:
+    • Static pages (HTTP): ~1-2 seconds
+    • JS-heavy pages (Playwright): ~4-5 seconds
+    • Conversion (ReaderLM-v2): ~1-2 seconds
+    • No rate limits, unlimited concurrent requests (GPU limited)
+
+    **Design Note**:
+    ReaderLM-v2 performs 24.6% better than GPT-4o at its default extraction task.
+    Custom instructions reduce quality - the model is optimized for automatic main content extraction.
+    For targeted data extraction, parse the returned Markdown yourself.
 
     Examples:
-        # Full page content
+        # Fetch full article
         fetch_page("https://example.com")
 
-        # Extract specific information
-        fetch_page("https://example.com", prompt="Extract the main headline and author")
+        # Fetch documentation page
+        fetch_page("https://docs.example.com/guide")
 
-        # Force JavaScript rendering
+        # Fetch SPA with JavaScript rendering
         fetch_page("https://github.com/anthropics/claude-code", force_js_rendering=True)
 
-        # Extract with custom instruction
-        fetch_page("https://store.example.com/product", prompt="Extract the price and availability")
+        # Parse returned markdown for specific info
+        result = fetch_page("https://store.example.com/product")
+        # Then extract price/availability from the markdown yourself
     """
     # Step 1: Log request details (Pydantic validation already done by framework)
-    logger.debug(f"fetch_page called with url={url}, prompt={prompt}, timeout={timeout}, force_js_rendering={force_js_rendering}")
+    logger.debug(f"fetch_page called with url={url}, timeout={timeout}, force_js_rendering={force_js_rendering}")
 
     # Step 2: Process request
     try:
@@ -225,17 +228,14 @@ async def fetch_page(
         if ctx:
             await ctx.report_progress(1, 4, f"Scraping: {url_preview}")
 
-        logger.info(
-            f"Processing URL: {url}" +
-            (f" (extraction: {prompt[:50]}{'...' if len(prompt) > 50 else ''})" if prompt else " (full content)")
-        )
+        logger.info(f"Processing URL: {url}")
 
         start_time = time.time()
 
-        # Process URL through pipeline with optional instruction
+        # Process URL through pipeline with default ReaderLM-v2 extraction
         content, success, metadata = await pipeline.process_url(
             url,
-            instruction=prompt,
+            instruction=None,  # Always use default extraction - custom instructions reduce quality
             timeout=timeout,
             force_playwright=force_js_rendering
         )
@@ -287,8 +287,7 @@ async def fetch_page(
         if ctx:
             method = metadata.get('method_used', 'unknown')
             await ctx.report_progress(2, 4, f"Scraped ({method})")
-            mode_label = "Extracting" if prompt else "Converting"
-            await ctx.report_progress(3, 4, f"{mode_label} with ReaderLM-v2...")
+            await ctx.report_progress(3, 4, f"Converting with ReaderLM-v2...")
             await ctx.report_progress(4, 4, f"Complete: {len(content)} chars")
 
         # Log warning for very large content
@@ -317,8 +316,6 @@ async def fetch_page(
                 "scrape_time_ms": metadata.get('scrape_time_ms', 0),
                 "inference_time_ms": metadata.get('inference_time_ms', 0),
                 "total_time_ms": total_time_ms,
-                "extraction_mode": prompt is not None,
-                "instruction_used": prompt if prompt else None,
                 "url": url,
                 "timeout": timeout,
                 "force_js_rendering": force_js_rendering
@@ -341,126 +338,6 @@ async def fetch_page(
                 "timeout": timeout,
                 "force_js_rendering": force_js_rendering
             }
-        )
-
-
-@mcp.tool(outputSchema=GetReaderInfoOutput)
-async def get_reader_info(ctx: Context = None) -> CallToolResult:
-    """Get information about Reader capabilities and configuration.
-
-    Returns:
-        CallToolResult with comprehensive information about Reader capabilities,
-        configuration, service health status, and usage guidelines.
-    """
-    logger.debug("get_reader_info called")
-
-    try:
-        # Check service health
-        scraper_health = await pipeline.scraper.health_check()
-        llama_health = await pipeline.llama.health_check()
-
-        logger.info(
-            f"Reader info requested - "
-            f"Scraper: {'healthy' if scraper_health else 'unavailable'}, "
-            f"ReaderLM: {'healthy' if llama_health else 'unavailable'}"
-        )
-
-        info = f"""
-Reader - Privacy-First Web Content Extraction
-
-**Architecture**:
-✓ Playwright: Web scraping with JavaScript rendering
-✓ ReaderLM-v2: HTML→Markdown/extraction via llama-server (1.5B params, Q4_K_M quantized)
-✓ llama.cpp: Optimized inference engine on GPU
-
-**Service Status**:
-• Playwright Scraper: {"🟢 Healthy" if scraper_health else "🔴 Unavailable"}
-• ReaderLM-v2 Inference: {"🟢 Healthy" if llama_health else "🔴 Unavailable"}
-
-**Features**:
-• Complete privacy: All processing on-premises
-• Smart fallback: HTTP first, Playwright for JS-heavy sites
-• Superior quality: ReaderLM-v2 outperforms prior versions
-• Instruction-based extraction: Pass a prompt to extract specific information
-• Configurable timeouts for slow pages (range: {TIMEOUT_MIN}-{TIMEOUT_MAX}s)
-• Streaming progress reporting
-
-**Modes**:
-1. Full Content Mode (no prompt):
-   - Returns complete page content as Markdown
-   - Useful for knowledge bases, documentation, full articles
-
-2. Extraction Mode (with prompt):
-   - Pass custom instruction to ReaderLM-v2
-   - Examples:
-     - "Extract the main headline and author"
-     - "Extract price and availability"
-     - "List all links on this page"
-   - Faster, more focused results
-   - Uses ReaderLM-v2's native instruction support
-   - Max prompt length: {PROMPT_MAX_LENGTH} characters
-
-**Supported Content**:
-• Web pages (HTML, JavaScript-rendered SPAs)
-• News articles and blogs
-• Documentation sites
-• Academic papers and research
-• Twitter threads, Reddit discussions (fully rendered)
-• Medium articles and similar platforms
-
-**Performance Characteristics**:
-• Typical latency: 2-5 seconds per page
-  - Static page (HTTP): ~1-2 seconds
-  - JS-heavy page (Playwright): ~4-5 seconds
-  - Inference: ~1-2 seconds
-• No rate limits
-• Unlimited concurrent requests (GPU limited)
-• Local GPU acceleration via llama.cpp
-
-**Best Practices**:
-• Use force_js_rendering=true for known SPAs (Twitter, Reddit, etc.)
-• Use prompt for targeted extraction from large pages
-• Set appropriate timeout for very large documents (30s+ for 100MB+ pages)
-• Combine with web_search: search for snippets, then fetch_page for full content
-
-**Cost**:
-• Infrastructure: Zero per-request (uses owned GPU)
-• Token usage: Zero (local inference)
-• Data privacy: Maximum (no external API calls)
-
-**Always Privacy-First**: Unlike cloud-based APIs, this reader keeps all your data local.
-No third-party APIs, no rate limits, no usage costs. Complete control.
-"""
-
-        return CallToolResult(
-            content=[TextContent(type="text", text=info.strip())],
-            isError=False,
-            metadata={
-                "scraper_healthy": scraper_health,
-                "llama_healthy": llama_health,
-                "all_services_healthy": scraper_health and llama_health,
-                "timeout_min": TIMEOUT_MIN,
-                "timeout_max": TIMEOUT_MAX,
-                "timeout_default": TIMEOUT_DEFAULT,
-                "prompt_max_length": PROMPT_MAX_LENGTH,
-                "url_max_length": URL_MAX_LENGTH,
-                "scraper_endpoint": os.getenv("SCRAPER_ENDPOINT", "http://playwright-scraper:8000"),
-                "llama_endpoint": os.getenv("LLAMA_ENDPOINT", "http://llama-server-readerlm:8000")
-            }
-        )
-
-    except Exception as e:
-        logger.error(f"Error getting reader info: {e}", exc_info=True)
-        error_msg = f"Failed to retrieve reader information: {str(e)}"
-
-        if ctx:
-            await ctx.error(error_msg)
-
-        return create_error_result(
-            error_message=error_msg,
-            error_code=ERROR_UNEXPECTED,
-            error_type="UnexpectedError",
-            additional_metadata={"exception_type": type(e).__name__}
         )
 
 

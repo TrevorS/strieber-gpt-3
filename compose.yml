@@ -165,6 +165,7 @@ services:
 
     # Server command optimized for ReaderLM-v2 (1.5B params)
     # Smaller model = lower latency, lower VRAM requirements
+    # Extended context: Model trained to 256K, can extrapolate to 512K tokens
     command:
       - "-m"
       - "/models/ReaderLM-v2-Q4_K_M.gguf"
@@ -173,7 +174,7 @@ services:
       - "--host"
       - "0.0.0.0"
       - "-c"
-      - "32768"                           # Context: 32k tokens (sufficient for HTML)
+      - "131072"                          # Context: 128k tokens (max safe, matches main server)
       - "--n-gpu-layers"
       - "999"                             # Auto-detect layers for GPU offload
       - "--jinja"                         # Enable chat template support

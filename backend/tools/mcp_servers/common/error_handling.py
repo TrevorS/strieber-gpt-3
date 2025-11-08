@@ -23,6 +23,10 @@ ERROR_TIMEOUT: str = "timeout"
 ERROR_FETCH_FAILED: str = "fetch_failed"
 ERROR_NETWORK_ERROR: str = "network_error"
 
+# Processing and extraction errors
+ERROR_EXTRACTION_FAILED: str = "extraction_failed"
+ERROR_JS_RENDERING_FAILED: str = "js_rendering_failed"
+
 # Resource errors
 ERROR_NOT_FOUND: str = "not_found"
 ERROR_RATE_LIMITED: str = "rate_limited"
