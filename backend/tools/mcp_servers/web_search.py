@@ -13,13 +13,21 @@ import json
 import logging
 import os
 import re
-from typing import Optional
+from typing import Optional, Any
 
 from mcp.server.fastmcp import Context
 from mcp.types import TextContent, CallToolResult
 from openai import AsyncOpenAI
+from pydantic import BaseModel, Field
 
 from common.mcp_base import MCPServerBase
+from common.error_handling import (
+    ERROR_INVALID_INPUT,
+    ERROR_RATE_LIMITED,
+    create_error_result,
+    create_validation_error,
+    create_rate_limit_error
+)
 from common.search import SearchBackend, SearchResult, SearchResponse, get_search_backend
 from common.search.utils import apply_quality_filters, format_as_markdown, deduplicate_by_url, condense_results
 
@@ -28,9 +36,227 @@ server = MCPServerBase("web-search")
 mcp = server.get_mcp()
 logger = server.get_logger()
 
+# ============================================================================
+# MODULE-LEVEL CONSTANTS
+# ============================================================================
+
+# Query validation constraints
+MIN_QUERY_LENGTH: int = 3
+MAX_QUERY_LENGTH: int = 256
+
+# Result count constraints
+MIN_RESULT_COUNT: int = 1
+MAX_RESULT_COUNT: int = 50
+DEFAULT_RESULT_COUNT: int = 10
+
+# Token budget constraints
+DEFAULT_MAX_TOKENS: int = 2000
+MIN_MAX_TOKENS: int = 500
+MAX_MAX_TOKENS: int = 10000
+
+# Quality filter parameters
+MIN_SNIPPET_LENGTH_WEB: int = 50
+MAX_PER_DOMAIN_WEB: int = 3
+MIN_SNIPPET_LENGTH_NEWS: int = 30
+MAX_PER_DOMAIN_NEWS: int = 5
+
+# Query expansion parameters
+QUERY_VARIANTS_COUNT: int = 2
+QUERY_VARIANTS_MAX_TOKENS: int = 150
+QUERY_VARIANTS_TEMPERATURE: float = 0.7
+
+# Metadata truncation
+MAX_SNIPPET_METADATA_LENGTH: int = 200
+
+# Valid freshness values
+VALID_FRESHNESS_VALUES: set[str] = {"pd", "pw", "pm", "py"}
+
+# Web search-specific error codes
+ERROR_SEARCH_FAILED: str = "search_failed"
+ERROR_BACKEND_INIT: str = "backend_init_failed"
+ERROR_VARIANT_GENERATION: str = "variant_generation_failed"
+ERROR_NEWS_UNSUPPORTED: str = "news_unsupported"
+
+# ============================================================================
+# PYDANTIC SCHEMAS
+# ============================================================================
+
+class WebSearchInput(BaseModel):
+    """Input schema for web_search tool."""
+    query: str = Field(
+        ...,
+        description="Search query string",
+        min_length=MIN_QUERY_LENGTH,
+        max_length=MAX_QUERY_LENGTH
+    )
+    count: int = Field(
+        default=DEFAULT_RESULT_COUNT,
+        description="Results per search query variation",
+        ge=MIN_RESULT_COUNT,
+        le=MAX_RESULT_COUNT
+    )
+    max_tokens: int = Field(
+        default=DEFAULT_MAX_TOKENS,
+        description="Maximum tokens for output",
+        ge=MIN_MAX_TOKENS,
+        le=MAX_MAX_TOKENS
+    )
+    freshness: Optional[str] = Field(
+        default=None,
+        description="Time filter: 'pd' (past day), 'pw' (past week), 'pm' (past month), 'py' (past year)"
+    )
+
+
+class NewsSearchInput(BaseModel):
+    """Input schema for news_search tool."""
+    query: str = Field(
+        ...,
+        description="News search query string",
+        min_length=MIN_QUERY_LENGTH,
+        max_length=MAX_QUERY_LENGTH
+    )
+    count: int = Field(
+        default=DEFAULT_RESULT_COUNT,
+        description="Number of news articles to return",
+        ge=MIN_RESULT_COUNT,
+        le=MAX_RESULT_COUNT
+    )
+    max_tokens: int = Field(
+        default=DEFAULT_MAX_TOKENS,
+        description="Maximum tokens for output",
+        ge=MIN_MAX_TOKENS,
+        le=MAX_MAX_TOKENS
+    )
+    freshness: Optional[str] = Field(
+        default=None,
+        description="Time filter: 'pd' (past day), 'pw' (past week), 'pm' (past month), 'py' (past year)"
+    )
+    country: str = Field(
+        default="US",
+        description="Country code for localized news",
+        min_length=2,
+        max_length=2
+    )
+
+
+class SearchSourceMetadata(BaseModel):
+    """Metadata for a single search result source."""
+    title: str
+    url: str
+    snippet: str
+
+
+class WebSearchOutput(BaseModel):
+    """Output schema for web_search tool."""
+    markdown: str = Field(description="Formatted markdown with citations")
+    sources: list[SearchSourceMetadata] = Field(description="List of source metadata")
+    metadata: dict[str, Any] = Field(description="Structured search metadata")
+
+
+class NewsSearchOutput(BaseModel):
+    """Output schema for news_search tool."""
+    markdown: str = Field(description="Formatted news markdown with breaking indicators")
+    sources: list[SearchSourceMetadata] = Field(description="List of news source metadata")
+    metadata: dict[str, Any] = Field(description="Structured news search metadata")
+
+
+class SearchInfoOutput(BaseModel):
+    """Output schema for get_search_info tool."""
+    capabilities: str = Field(description="Search capabilities and configuration text")
+    metadata: dict[str, Any] = Field(description="Structured capabilities metadata")
+
+
+# ============================================================================
+# GLOBAL STATE
+# ============================================================================
+
 # Global backend instance (initialized on first use)
 _backend: Optional[SearchBackend] = None
 
+
+# ============================================================================
+# VALIDATION FUNCTIONS
+# ============================================================================
+
+def validate_query(query: str) -> tuple[bool, Optional[str]]:
+    """Validate search query.
+
+    Args:
+        query: Search query string
+
+    Returns:
+        Tuple of (is_valid, error_message)
+    """
+    if not query or not query.strip():
+        return False, "Query cannot be empty"
+
+    if len(query) < MIN_QUERY_LENGTH:
+        return False, f"Query must be at least {MIN_QUERY_LENGTH} characters"
+
+    if len(query) > MAX_QUERY_LENGTH:
+        return False, f"Query must not exceed {MAX_QUERY_LENGTH} characters"
+
+    return True, None
+
+
+def validate_freshness(freshness: Optional[str]) -> tuple[bool, Optional[str]]:
+    """Validate freshness parameter.
+
+    Args:
+        freshness: Freshness filter value
+
+    Returns:
+        Tuple of (is_valid, error_message)
+    """
+    if freshness is None:
+        return True, None
+
+    if freshness not in VALID_FRESHNESS_VALUES:
+        valid_values = ", ".join(sorted(VALID_FRESHNESS_VALUES))
+        return False, f"Invalid freshness value '{freshness}'. Must be one of: {valid_values}"
+
+    return True, None
+
+
+def validate_count(count: int) -> tuple[bool, Optional[str]]:
+    """Validate result count parameter.
+
+    Args:
+        count: Number of results
+
+    Returns:
+        Tuple of (is_valid, error_message)
+    """
+    if count < MIN_RESULT_COUNT:
+        return False, f"Count must be at least {MIN_RESULT_COUNT}"
+
+    if count > MAX_RESULT_COUNT:
+        return False, f"Count must not exceed {MAX_RESULT_COUNT}"
+
+    return True, None
+
+
+def validate_max_tokens(max_tokens: int) -> tuple[bool, Optional[str]]:
+    """Validate max_tokens parameter.
+
+    Args:
+        max_tokens: Maximum token budget
+
+    Returns:
+        Tuple of (is_valid, error_message)
+    """
+    if max_tokens < MIN_MAX_TOKENS:
+        return False, f"max_tokens must be at least {MIN_MAX_TOKENS}"
+
+    if max_tokens > MAX_MAX_TOKENS:
+        return False, f"max_tokens must not exceed {MAX_MAX_TOKENS}"
+
+    return True, None
+
+
+# ============================================================================
+# BACKEND MANAGEMENT
+# ============================================================================
 
 def get_backend() -> SearchBackend:
     """Get or initialize the search backend.
@@ -50,8 +276,12 @@ def get_backend() -> SearchBackend:
     return _backend
 
 
+# ============================================================================
+# QUERY EXPANSION AND SEARCH EXECUTION
+# ============================================================================
+
 async def generate_query_variants(query: str) -> list[str]:
-    """Generate 2 search query variations using LLM.
+    """Generate search query variations using LLM.
 
     Creates complementary search angles to get broader coverage.
     Falls back to original query if generation fails.
@@ -60,7 +290,7 @@ async def generate_query_variants(query: str) -> list[str]:
         query: Original search query
 
     Returns:
-        List of 2 query variations
+        List of query variations (length=QUERY_VARIANTS_COUNT)
     """
     try:
         llm_client = AsyncOpenAI(
@@ -68,7 +298,7 @@ async def generate_query_variants(query: str) -> list[str]:
             api_key="not-needed"
         )
 
-        prompt = f"""Generate 2 different search query variations for the topic below. Cover different angles or aspects. Return ONLY a JSON array of 2 strings, no other text.
+        prompt = f"""Generate {QUERY_VARIANTS_COUNT} different search query variations for the topic below. Cover different angles or aspects. Return ONLY a JSON array of {QUERY_VARIANTS_COUNT} strings, no other text.
 
 Topic: {query}
 
@@ -77,8 +307,8 @@ Format: ["variant 1", "variant 2"]"""
         response = await llm_client.chat.completions.create(
             model=os.getenv("MODEL_NAME", "gpt-oss-20b"),
             messages=[{"role": "user", "content": prompt}],
-            temperature=0.7,
-            max_tokens=150
+            temperature=QUERY_VARIANTS_TEMPERATURE,
+            max_tokens=QUERY_VARIANTS_MAX_TOKENS
         )
 
         content = response.choices[0].message.content.strip()
@@ -88,17 +318,17 @@ Format: ["variant 1", "variant 2"]"""
         json_match = re.search(r'\[.*?\]', content, re.DOTALL)
         if json_match:
             variants = json.loads(json_match.group())
-            if isinstance(variants, list) and len(variants) >= 2:
-                logger.info(f"Generated query variants: {variants[:2]}")
-                return variants[:2]
+            if isinstance(variants, list) and len(variants) >= QUERY_VARIANTS_COUNT:
+                logger.info(f"Generated query variants: {variants[:QUERY_VARIANTS_COUNT]}")
+                return variants[:QUERY_VARIANTS_COUNT]
 
-        # Fallback: use original query twice
+        # Fallback: use original query multiple times
         logger.warning("Could not parse query variants, using original query")
-        return [query, query]
+        return [query] * QUERY_VARIANTS_COUNT
 
     except Exception as e:
         logger.warning(f"Query variant generation failed: {e}, using original query")
-        return [query, query]
+        return [query] * QUERY_VARIANTS_COUNT
 
 
 async def execute_parallel_searches(
@@ -118,6 +348,8 @@ async def execute_parallel_searches(
     Returns:
         Combined list of search results from all queries
     """
+    logger.debug(f"Executing {len(queries)} parallel searches with count={count}, freshness={freshness}")
+
     # Create search tasks
     tasks = [
         backend.search(q, count=count, freshness=freshness)
@@ -140,79 +372,155 @@ async def execute_parallel_searches(
     return all_results
 
 
+# ============================================================================
+# MCP TOOL IMPLEMENTATIONS
+# ============================================================================
+
 @mcp.tool()
 async def web_search(
     query: str,
-    count: int = 10,
-    max_tokens: int = 2000,
+    count: int = DEFAULT_RESULT_COUNT,
+    max_tokens: int = DEFAULT_MAX_TOKENS,
     freshness: Optional[str] = None,
     ctx: Context = None
 ) -> CallToolResult:
     """Search the web with automatic query expansion and intelligent filtering.
 
-    Automatically generates 2 query variations, executes both searches in parallel,
+    Automatically generates query variations, executes searches in parallel,
     combines and deduplicates results, condenses to fit token budget, and returns
     formatted markdown with citations.
 
-    For multi-step research, the main LLM should call this tool multiple times
-    with different queries based on previous results.
+    For multi-step research, call this tool multiple times with different queries
+    based on previous results.
 
     Args:
-        query: Search query
-        count: Results per search query (default 10, so ~20 total from 2 queries)
-        max_tokens: Maximum tokens for output (default 2000)
-        freshness: Optional time filter - "pd" (past day), "pw" (past week),
-                  "pm" (past month), "py" (past year)
-        tool_call_id: Internal progress tracking ID
+        query: Search query (3-256 characters)
+        count: Results per search query variation (1-50, default 10)
+        max_tokens: Maximum tokens for output (500-10000, default 2000)
+        freshness: Time filter - "pd" (day), "pw" (week), "pm" (month), "py" (year)
 
     Returns:
-        MCP CallToolResult with TextContent and structured sources metadata
-
-    Raises:
-        ValueError: If backend initialization fails
-        Exception: If search fails (rate limit, API error, network error)
-
-    Examples:
-        # Basic search
-        web_search("Python async programming", count=10)
-
-        # Recent news only
-        web_search("AI developments", freshness="pw")
-
-        # Large result set
-        web_search("transformer architecture", count=15, max_tokens=3000)
+        CallToolResult with markdown content, sources metadata, and search metadata
     """
-    logger.info(f"Web search: {query}")
+    logger.info(f"Web search: query='{query}', count={count}, max_tokens={max_tokens}, freshness={freshness}")
+
+    # ========================================================================
+    # INPUT VALIDATION
+    # ========================================================================
+
+    # Validate query
+    is_valid, error_msg = validate_query(query)
+    if not is_valid:
+        logger.warning(f"Invalid query: {error_msg}")
+        if ctx:
+            await ctx.error(f"Invalid query: {error_msg}")
+        return create_validation_error(
+            field_name="query",
+            error_message=error_msg,
+            field_value=query
+        )
+
+    # Validate count
+    is_valid, error_msg = validate_count(count)
+    if not is_valid:
+        logger.warning(f"Invalid count: {error_msg}")
+        if ctx:
+            await ctx.error(f"Invalid count: {error_msg}")
+        return create_validation_error(
+            field_name="count",
+            error_message=error_msg,
+            field_value=count
+        )
+
+    # Validate max_tokens
+    is_valid, error_msg = validate_max_tokens(max_tokens)
+    if not is_valid:
+        logger.warning(f"Invalid max_tokens: {error_msg}")
+        if ctx:
+            await ctx.error(f"Invalid max_tokens: {error_msg}")
+        return create_validation_error(
+            field_name="max_tokens",
+            error_message=error_msg,
+            field_value=max_tokens
+        )
+
+    # Validate freshness
+    is_valid, error_msg = validate_freshness(freshness)
+    if not is_valid:
+        logger.warning(f"Invalid freshness: {error_msg}")
+        if ctx:
+            await ctx.error(f"Invalid freshness: {error_msg}")
+        return create_validation_error(
+            field_name="freshness",
+            error_message=error_msg,
+            field_value=freshness
+        )
+
+    # ========================================================================
+    # BACKEND INITIALIZATION
+    # ========================================================================
+
+    try:
+        backend = get_backend()
+    except Exception as e:
+        error_msg = f"Failed to initialize search backend: {str(e)}"
+        logger.error(error_msg, exc_info=True)
+        if ctx:
+            await ctx.error(error_msg)
+        return create_error_result(
+            error_message=error_msg,
+            error_code=ERROR_BACKEND_INIT,
+            error_type="backend_error"
+        )
+
+    # ========================================================================
+    # SEARCH EXECUTION
+    # ========================================================================
+
     if ctx:
         await ctx.info(f"Searching: {query}")
 
-    backend = get_backend()
-
     try:
-        # Step 1: Generate 2 query variations
+        # Step 1: Generate query variations
         if ctx:
             await ctx.report_progress(1, 5, "Generating search query variations...")
         queries = await generate_query_variants(query)
+        logger.debug(f"Query variants: {queries}")
 
-        # Step 2: Execute both searches in parallel
+        # Step 2: Execute searches in parallel
         if ctx:
             await ctx.report_progress(2, 5, f"Searching: '{queries[0]}' & '{queries[1]}'")
         all_results = await execute_parallel_searches(backend, queries, count, freshness)
+
+        if not all_results:
+            logger.info("No search results returned")
+            return CallToolResult(
+                content=[TextContent(type="text", text=f"No results found for: {query}")],
+                metadata={
+                    "search_backend": backend.name,
+                    "query_used": query,
+                    "query_variants": queries,
+                    "results_count": 0,
+                    "freshness_filter_used": freshness
+                }
+            )
 
         # Step 3: Combine and filter
         if ctx:
             await ctx.report_progress(3, 5, f"Filtering {len(all_results)} combined results...")
         filtered = apply_quality_filters(
             all_results,
-            min_snippet_length=50,
-            max_per_domain=3
+            min_snippet_length=MIN_SNIPPET_LENGTH_WEB,
+            max_per_domain=MAX_PER_DOMAIN_WEB
         )
         filtered = deduplicate_by_url(filtered)
+        logger.debug(f"After filtering: {len(filtered)} results")
 
         # Step 4: Condense to fit token budget
         if ctx:
             await ctx.report_progress(4, 5, f"Condensing {len(filtered)} results to ~{max_tokens} tokens...")
         condensed = condense_results(filtered, max_tokens)
+        logger.debug(f"After condensing: {len(condensed)} results")
 
         # Step 5: Format with citations
         if ctx:
@@ -226,33 +534,57 @@ async def web_search(
             await ctx.report_progress(5, 5, f"Found {len(condensed)} results (~{final_tokens} tokens)")
         logger.info(f"Web search completed: {len(condensed)} results, ~{final_tokens} tokens")
 
-        # Return structured response with sources for annotation creation
+        # Build sources metadata
         sources = [
             {
                 "title": result.title,
                 "url": result.url,
-                "snippet": result.snippet[:200] if result.snippet else ""  # Truncate for metadata
+                "snippet": result.snippet[:MAX_SNIPPET_METADATA_LENGTH] if result.snippet else ""
             }
             for result in condensed
         ]
 
+        # Build structured metadata
+        metadata = {
+            "search_backend": backend.name,
+            "query_used": query,
+            "query_variants": queries,
+            "results_count": len(condensed),
+            "results_raw_count": len(all_results),
+            "results_filtered_count": len(filtered),
+            "freshness_filter_used": freshness,
+            "estimated_tokens": final_tokens,
+            "max_tokens_requested": max_tokens
+        }
+
         return CallToolResult(
             content=[TextContent(type="text", text=markdown)],
-            structuredContent={"sources": sources}
+            metadata=metadata
         )
 
     except Exception as e:
-        logger.error(f"Search failed: {e}", exc_info=True)
+        error_msg = f"Search failed: {str(e)}"
+        logger.error(error_msg, exc_info=True)
         if ctx:
-            await ctx.error(f"Search failed: {str(e)}")
-        raise
+            await ctx.error(error_msg)
+
+        # Check for rate limiting
+        if "rate limit" in str(e).lower() or "429" in str(e):
+            return create_rate_limit_error(limit_description="Web search rate limit")
+
+        return create_error_result(
+            error_message=error_msg,
+            error_code=ERROR_SEARCH_FAILED,
+            error_type="search_error",
+            additional_metadata={"query": query}
+        )
 
 
 @mcp.tool()
 async def news_search(
     query: str,
-    count: int = 10,
-    max_tokens: int = 2000,
+    count: int = DEFAULT_RESULT_COUNT,
+    max_tokens: int = DEFAULT_MAX_TOKENS,
     freshness: Optional[str] = None,
     country: str = "US",
     ctx: Context = None
@@ -263,42 +595,107 @@ async def news_search(
     Returns news-specific metadata including source, publication time, and breaking status.
 
     Args:
-        query: News search query (e.g., "AI developments", "tech industry news")
-        count: Number of news articles to return (default 10, max 20)
-        max_tokens: Maximum tokens for output (default 2000)
-        freshness: Optional time filter - "pd" (past day), "pw" (past week),
-                  "pm" (past month), "py" (past year). Defaults to None (all recent).
+        query: News search query (3-256 characters)
+        count: Number of news articles to return (1-50, default 10)
+        max_tokens: Maximum tokens for output (500-10000, default 2000)
+        freshness: Time filter - "pd" (day), "pw" (week), "pm" (month), "py" (year)
         country: Country code for localized news (default "US")
-        ctx: MCP context for progress/logging (auto-injected)
 
     Returns:
-        MCP CallToolResult with TextContent and structured sources metadata
-
-    Raises:
-        ValueError: If backend initialization fails
-        Exception: If search fails (rate limit, API error, network error)
-
-    Examples:
-        # Recent AI news (past week)
-        news_search("artificial intelligence", freshness="pw")
-
-        # Breaking tech news
-        news_search("technology industry")
-
-        # US election news from past day
-        news_search("US elections", freshness="pd", country="US")
+        CallToolResult with markdown content, sources metadata, and news metadata
     """
-    logger.info(f"News search: {query}")
+    logger.info(f"News search: query='{query}', count={count}, max_tokens={max_tokens}, freshness={freshness}, country={country}")
+
+    # ========================================================================
+    # INPUT VALIDATION
+    # ========================================================================
+
+    # Validate query
+    is_valid, error_msg = validate_query(query)
+    if not is_valid:
+        logger.warning(f"Invalid query: {error_msg}")
+        if ctx:
+            await ctx.error(f"Invalid query: {error_msg}")
+        return create_validation_error(
+            field_name="query",
+            error_message=error_msg,
+            field_value=query
+        )
+
+    # Validate count
+    is_valid, error_msg = validate_count(count)
+    if not is_valid:
+        logger.warning(f"Invalid count: {error_msg}")
+        if ctx:
+            await ctx.error(f"Invalid count: {error_msg}")
+        return create_validation_error(
+            field_name="count",
+            error_message=error_msg,
+            field_value=count
+        )
+
+    # Validate max_tokens
+    is_valid, error_msg = validate_max_tokens(max_tokens)
+    if not is_valid:
+        logger.warning(f"Invalid max_tokens: {error_msg}")
+        if ctx:
+            await ctx.error(f"Invalid max_tokens: {error_msg}")
+        return create_validation_error(
+            field_name="max_tokens",
+            error_message=error_msg,
+            field_value=max_tokens
+        )
+
+    # Validate freshness
+    is_valid, error_msg = validate_freshness(freshness)
+    if not is_valid:
+        logger.warning(f"Invalid freshness: {error_msg}")
+        if ctx:
+            await ctx.error(f"Invalid freshness: {error_msg}")
+        return create_validation_error(
+            field_name="freshness",
+            error_message=error_msg,
+            field_value=freshness
+        )
+
+    # ========================================================================
+    # BACKEND INITIALIZATION
+    # ========================================================================
+
+    try:
+        backend = get_backend()
+    except Exception as e:
+        error_msg = f"Failed to initialize search backend: {str(e)}"
+        logger.error(error_msg, exc_info=True)
+        if ctx:
+            await ctx.error(error_msg)
+        return create_error_result(
+            error_message=error_msg,
+            error_code=ERROR_BACKEND_INIT,
+            error_type="backend_error"
+        )
+
+    # Validate backend supports news search
+    if not hasattr(backend, 'search_news'):
+        error_msg = f"Backend '{backend.name}' does not support news search"
+        logger.error(error_msg)
+        if ctx:
+            await ctx.error(error_msg)
+        return create_error_result(
+            error_message=error_msg,
+            error_code=ERROR_NEWS_UNSUPPORTED,
+            error_type="feature_error",
+            additional_metadata={"backend": backend.name}
+        )
+
+    # ========================================================================
+    # NEWS SEARCH EXECUTION
+    # ========================================================================
+
     if ctx:
         await ctx.info(f"Searching news: {query}")
 
-    backend = get_backend()
-
     try:
-        # Validate backend supports news search
-        if not hasattr(backend, 'search_news'):
-            raise ValueError(f"Backend '{backend.name}' does not support news search")
-
         # Step 1: Execute news search (no query expansion for news)
         if ctx:
             await ctx.report_progress(1, 4, f"Searching news: '{query}'")
@@ -309,74 +706,127 @@ async def news_search(
             country=country
         )
 
+        if not response.results:
+            logger.info("No news results returned")
+            return CallToolResult(
+                content=[TextContent(type="text", text=f"No news articles found for: {query}")],
+                metadata={
+                    "search_backend": backend.name,
+                    "query_used": query,
+                    "results_count": 0,
+                    "freshness_filter_used": freshness,
+                    "country": country,
+                    "breaking_count": 0
+                }
+            )
+
         # Step 2: Filter results
         if ctx:
             await ctx.report_progress(2, 4, f"Filtering {len(response.results)} news results...")
         filtered = apply_quality_filters(
             response.results,
-            min_snippet_length=30,  # News snippets are often shorter
-            max_per_domain=5  # Allow more from news sources
+            min_snippet_length=MIN_SNIPPET_LENGTH_NEWS,
+            max_per_domain=MAX_PER_DOMAIN_NEWS
         )
         filtered = deduplicate_by_url(filtered)
+        logger.debug(f"After filtering: {len(filtered)} news results")
 
         # Step 3: Condense to fit token budget
         if ctx:
             await ctx.report_progress(3, 4, f"Condensing {len(filtered)} results to ~{max_tokens} tokens...")
         condensed = condense_results(filtered, max_tokens)
+        logger.debug(f"After condensing: {len(condensed)} news results")
 
         # Step 4: Format with news-specific styling
         if ctx:
             await ctx.report_progress(4, 4, "Formatting news results with source attribution...")
-        markdown = _format_news_markdown(condensed, query)
+        markdown, breaking_count = _format_news_markdown(condensed, query)
 
         # Estimate final size
         final_tokens = len(markdown) // 4  # Rough estimate
 
         if ctx:
             await ctx.report_progress(4, 4, f"Found {len(condensed)} news articles (~{final_tokens} tokens)")
-        logger.info(f"News search completed: {len(condensed)} results, ~{final_tokens} tokens")
+        logger.info(f"News search completed: {len(condensed)} results, {breaking_count} breaking, ~{final_tokens} tokens")
 
-        # Return structured response with sources for annotation creation
+        # Build sources metadata with breaking status
         sources = [
             {
                 "title": result.title,
                 "url": result.url,
-                "snippet": result.snippet[:200] if result.snippet else ""  # Truncate for metadata
+                "snippet": result.snippet[:MAX_SNIPPET_METADATA_LENGTH] if result.snippet else "",
+                "is_breaking": result.metadata.get("is_breaking", False),
+                "source": result.metadata.get("source", "Unknown source"),
+                "published": result.date if result.date else "Recent"
             }
             for result in condensed
         ]
 
+        # Build structured metadata
+        metadata = {
+            "search_backend": backend.name,
+            "query_used": query,
+            "results_count": len(condensed),
+            "results_raw_count": len(response.results),
+            "results_filtered_count": len(filtered),
+            "freshness_filter_used": freshness,
+            "country": country,
+            "breaking_count": breaking_count,
+            "estimated_tokens": final_tokens,
+            "max_tokens_requested": max_tokens
+        }
+
         return CallToolResult(
             content=[TextContent(type="text", text=markdown)],
-            structuredContent={"sources": sources}
+            metadata=metadata
         )
 
     except Exception as e:
-        logger.error(f"News search failed: {e}", exc_info=True)
+        error_msg = f"News search failed: {str(e)}"
+        logger.error(error_msg, exc_info=True)
         if ctx:
-            await ctx.error(f"News search failed: {str(e)}")
-        raise
+            await ctx.error(error_msg)
+
+        # Check for rate limiting
+        if "rate limit" in str(e).lower() or "429" in str(e):
+            return create_rate_limit_error(limit_description="News search rate limit")
+
+        return create_error_result(
+            error_message=error_msg,
+            error_code=ERROR_SEARCH_FAILED,
+            error_type="search_error",
+            additional_metadata={"query": query, "country": country}
+        )
 
 
-def _format_news_markdown(results: list[SearchResult], query: str) -> str:
-    """Format news results with breaking indicators and source attribution.
+# ============================================================================
+# NEWS FORMATTING
+# ============================================================================
+
+def _format_news_markdown(results: list[SearchResult], query: str) -> tuple[str, int]:
+    """Format news results with source attribution.
+
+    Breaking news indicator is moved to metadata for UI consumption.
+    Does NOT include emoji in markdown text - UI should render based on metadata.
 
     Args:
         results: List of news SearchResult objects
         query: Original search query
 
     Returns:
-        Markdown-formatted news results with presentation instructions
+        Tuple of (markdown_text, breaking_count)
     """
     if not results:
-        return f"No news articles found for: {query}"
+        return f"No news articles found for: {query}", 0
 
     lines = [f"# News: {query}", ""]
+    breaking_count = 0
 
     for i, result in enumerate(results, 1):
-        # Breaking news indicator
+        # Count breaking news (metadata only, not displayed in markdown)
         breaking = result.metadata.get("is_breaking", False)
-        breaking_indicator = "🔴 " if breaking else ""
+        if breaking:
+            breaking_count += 1
 
         # Source attribution
         source = result.metadata.get("source", "Unknown source")
@@ -384,8 +834,8 @@ def _format_news_markdown(results: list[SearchResult], query: str) -> str:
         # Date/age
         age = result.date if result.date else "Recent"
 
-        # Format result
-        lines.append(f"## {i}. {breaking_indicator}{result.title}")
+        # Format result (NO emoji - UI renders based on metadata)
+        lines.append(f"## {i}. {result.title}")
         lines.append(f"**Source:** {source} | **Published:** {age}")
         lines.append(f"**URL:** {result.url}")
         lines.append("")
@@ -394,74 +844,36 @@ def _format_news_markdown(results: list[SearchResult], query: str) -> str:
         lines.append("---")
         lines.append("")
 
-    # Add UI implementation instructions for the orchestrator LLM
-    lines.append("")
-    lines.append("---")
-    lines.append("")
-    lines.append("**UI Implementation Guide:**")
-    lines.append("")
-    lines.append("Transform the above news data into a user-friendly presentation:")
-    lines.append("")
-    lines.append("**Breaking News Indicator:**")
-    lines.append("- Each article has metadata field `is_breaking` (set by Brave News API)")
-    lines.append("- If true: Display 🔴 emoji + \"Breaking:\" label before the title")
-    lines.append("- If false: Display title without indicator")
-    lines.append("- Note: Most articles will NOT be breaking news - API determines this")
-    lines.append("")
-    lines.append("**Article Rendering Structure:**")
-    lines.append("- Title: Clickable link format `[Title](URL)` or bold text with URL below")
-    lines.append("- Source: Display in italics or secondary color (e.g., *Source Name*)")
-    lines.append("- Published: Show timestamp next to source (e.g., \"2 hours ago\")")
-    lines.append("- Description: Render as paragraph text below metadata")
-    lines.append("")
-    lines.append("**Layout Requirements:**")
-    lines.append("- Use list format (NOT tables) for better readability on all devices")
-    lines.append("- Each article = one list item or card")
-    lines.append("- Breaking news articles should appear first")
-    lines.append("- Then sort remaining by publication time (newest first)")
-    lines.append("")
-    lines.append("**Example Transformations:**")
-    lines.append("")
-    lines.append("Breaking article (is_breaking = true):")
-    lines.append("```")
-    lines.append("🔴 Breaking: [Article Title](URL)")
-    lines.append("*Source Name* • 2 hours ago")
-    lines.append("Article description text here")
-    lines.append("```")
-    lines.append("")
-    lines.append("Regular article (is_breaking = false):")
-    lines.append("```")
-    lines.append("[Article Title](URL)")
-    lines.append("*Source Name* • 1 day ago")
-    lines.append("Article description text here")
-    lines.append("```")
-
-    return "\n".join(lines).strip()
+    return "\n".join(lines).strip(), breaking_count
 
 
 @mcp.tool()
-async def get_search_info(ctx: Context = None) -> list:
+async def get_search_info(ctx: Context = None) -> CallToolResult:
     """Get information about web search capabilities and configuration.
 
     Returns:
-        MCP content array format: [TextContent(type="text", text="info text")]
+        CallToolResult with capabilities information and structured metadata
     """
+    logger.debug("Getting search capabilities info")
+
     try:
         backend = get_backend()
         backend_name = backend.name
-    except Exception:
+        backend_initialized = True
+    except Exception as e:
         backend_name = "not initialized"
+        backend_initialized = False
+        logger.warning(f"Backend not initialized: {e}")
 
-    info = f"""
-Web Search Configuration:
+    info = f"""Web Search Configuration:
 - Backend: {backend_name}
-- Default results per query variation: 10 (total ~20 from 2 queries)
-- Automatic query expansion: 2 variations per search
-- Filtering: min 50 char snippets, max 3 results/domain, URL deduplication
-- Result condensing: ~2000 token default budget
+- Default results per query variation: {DEFAULT_RESULT_COUNT} (total ~{DEFAULT_RESULT_COUNT * QUERY_VARIANTS_COUNT} from {QUERY_VARIANTS_COUNT} queries)
+- Automatic query expansion: {QUERY_VARIANTS_COUNT} variations per search
+- Filtering: min {MIN_SNIPPET_LENGTH_WEB} char snippets, max {MAX_PER_DOMAIN_WEB} results/domain, URL deduplication
+- Result condensing: ~{DEFAULT_MAX_TOKENS} token default budget
 
 Search Process:
-1. Generate 2 query variations using LLM
+1. Generate {QUERY_VARIANTS_COUNT} query variations using LLM
 2. Execute both searches in parallel
 3. Combine and filter results (quality + deduplication)
 4. Condense to fit token budget
@@ -470,10 +882,10 @@ Search Process:
 News Search (news_search tool):
 - Dedicated tool for news and current events
 - No query expansion (time-sensitive, focused queries)
-- Source attribution and breaking news indicators
+- Source attribution and breaking news indicators (in metadata)
 - Time filters: pd (day), pw (week), pm (month), py (year)
 - Country-specific news available
-- Breaking news marked with 🔴 indicator
+- Breaking news status in metadata (is_breaking field)
 
 For Multi-Step Research:
 - Call web_search multiple times with different queries
@@ -481,13 +893,41 @@ For Multi-Step Research:
 - Iterations are controlled by the orchestrating LLM
 - Each search call = 1 iteration
 
-Brave Search (current backend):
+Constraints:
+- Query length: {MIN_QUERY_LENGTH}-{MAX_QUERY_LENGTH} characters
+- Result count: {MIN_RESULT_COUNT}-{MAX_RESULT_COUNT} per query
+- Max tokens: {MIN_MAX_TOKENS}-{MAX_MAX_TOKENS} per result set
+- Freshness values: {', '.join(sorted(VALID_FRESHNESS_VALUES))}
+
+Backend: {backend_name}
 - Free tier: 2,000 queries/month, 1 req/sec
 - Rate limiting enforced automatically
 - Up to 5 snippets per result for context
-- Dedicated news endpoint for current events
-"""
-    return [TextContent(type="text", text=info.strip())]
+- Dedicated news endpoint for current events"""
+
+    metadata = {
+        "backend": backend_name,
+        "backend_initialized": backend_initialized,
+        "default_result_count": DEFAULT_RESULT_COUNT,
+        "query_variants_count": QUERY_VARIANTS_COUNT,
+        "default_max_tokens": DEFAULT_MAX_TOKENS,
+        "min_snippet_length_web": MIN_SNIPPET_LENGTH_WEB,
+        "max_per_domain_web": MAX_PER_DOMAIN_WEB,
+        "min_snippet_length_news": MIN_SNIPPET_LENGTH_NEWS,
+        "max_per_domain_news": MAX_PER_DOMAIN_NEWS,
+        "valid_freshness_values": sorted(VALID_FRESHNESS_VALUES),
+        "query_length_min": MIN_QUERY_LENGTH,
+        "query_length_max": MAX_QUERY_LENGTH,
+        "result_count_min": MIN_RESULT_COUNT,
+        "result_count_max": MAX_RESULT_COUNT,
+        "max_tokens_min": MIN_MAX_TOKENS,
+        "max_tokens_max": MAX_MAX_TOKENS
+    }
+
+    return CallToolResult(
+        content=[TextContent(type="text", text=info)],
+        metadata=metadata
+    )
 
 
 if __name__ == "__main__":

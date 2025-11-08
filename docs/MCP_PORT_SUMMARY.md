@@ -36,19 +36,20 @@ This enables:
 
 ---
 
-### **2. jina_reader.py** ✅
-**Location**: `backend/tools/mcp_servers/jina_reader.py`
+### **2. reader/server.py** ✅
+**Location**: `backend/tools/mcp_servers/reader/server.py`
 
 **Changes**:
-- ✅ Transport: `stdio` → `streamable-http`
-- ✅ Removed `tool_progress.py` dependency entirely
-- ✅ Both tools converted: `jina_fetch_page()` + `jina_fetch_page_with_selector()`
-- ✅ Clean error handling via `ctx.error()`
+- ✅ Transport: `stdio` → `streamable-http` (port 8000, path `/mcp`)
+- ✅ Privacy-first: Playwright + ReaderLM-v2 for complete local processing
+- ✅ Tool: `fetch_page()` with optional extraction instructions
+- ✅ Supports JavaScript rendering and instruction-based extraction
 
-**Progress Steps** (both tools):
-1. Fetching page (10%)
-2. Processing content (80%)
-3. Complete (100%)
+**Progress Steps**:
+1. Scraping page (25%)
+2. Scraped via method (50%)
+3. Extracting/converting with ReaderLM (75%)
+4. Complete (100%)
 
 ---
 
@@ -96,9 +97,9 @@ Added 4 new MCP server services:
 | Service | Port | Image | Purpose |
 |---------|------|-------|---------|
 | mcp-weather | 8100 | strieber-mcp-weather:latest | Open-Meteo weather API |
-| mcp-jina-reader | 8101 | strieber-mcp-jina-reader:latest | Web page content extraction |
 | mcp-web-search | 8102 | strieber-mcp-web-search:latest | Brave Search backend |
 | mcp-code-interpreter | 8103 | strieber-mcp-code-interpreter:latest | Sandboxed Python execution |
+| mcp-reader | 8104 | strieber-mcp-reader:latest | Privacy-first web reader (local) |
 
 **Key Features**:
 - All on bridge network `strieber-net`
@@ -289,17 +290,17 @@ Repeat for:
 │ MCP Servers (Streamable HTTP Transport)                          │
 │                                                                   │
 │ ┌──────────────┐ ┌──────────────┐ ┌──────────────┐ ┌──────────┐│
-│ │   Weather    │ │ Jina Reader  │ │ Web Search   │ │  Code    ││
-│ │  (8100)      │ │  (8101)      │ │  (8102)      │ │  Int     ││
-│ │              │ │              │ │              │ │ (8103)   ││
+│ │   Weather    │ │ Web Search   │ │  Code Int.   │ │  Reader  ││
+│ │  (8100)      │ │  (8102)      │ │  (8103)      │ │ (8104)   ││
+│ │              │ │              │ │              │ │          ││
 │ │ - FastMCP    │ │ - FastMCP    │ │ - FastMCP    │ │- FastMCP ││
 │ │ - Context    │ │ - Context    │ │ - Context    │ │- Context ││
 │ │ - Progress   │ │ - Progress   │ │ - Progress   │ │- Progress││
 │ └──────────────┘ └──────────────┘ └──────────────┘ └──────────┘│
 └──────────────────────────────────────────────────────────────────┘
        ↓                  ↓                  ↓              ↓
-  Open-Meteo API     Jina API          Brave API      Docker Socket
-                                                       code-executor
+  Open-Meteo API     Brave API         Docker Socket   Playwright +
+                                       code-executor   ReaderLM-v2
 ```
 
 ---
@@ -307,17 +308,15 @@ Repeat for:
 ## Files Modified/Created
 
 ### Created
-- ✅ `Dockerfile.weather`
-- ✅ `Dockerfile.jina-reader`
-- ✅ `Dockerfile.web-search`
-- ✅ `Dockerfile.code-interpreter`
+- ✅ Dockerfile.mcp-server (parameterized for all tools)
+- ✅ Dockerfile.llamacpp (for inference engines)
 - ✅ `MCP_PORT_SUMMARY.md` (this file)
 
 ### Modified
 - ✅ `weather.py` (transport, Context, return type)
-- ✅ `jina_reader.py` (transport, Context, return type)
 - ✅ `web_search.py` (transport, Context, return type)
 - ✅ `code_interpreter.py` (transport, async, Context)
+- ✅ `reader/server.py` (privacy-first web reader)
 - ✅ `compose.yml` (4 new services, backend environment)
 - ✅ `mcp_client.py` (complete rewrite: stdio → HTTP)
 - ✅ `tool_registry.py` (added mcp_server field, documentation)

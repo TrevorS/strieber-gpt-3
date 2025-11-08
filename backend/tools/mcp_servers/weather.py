@@ -8,26 +8,148 @@ import asyncio
 import json
 import logging
 import os
-from typing import Optional, Dict, Any
+from typing import Optional, Dict, Any, Literal
 from datetime import datetime, timedelta
+from enum import Enum
 
 import httpx
+from pydantic import BaseModel, Field, field_validator
 from mcp.server.fastmcp import Context
 from mcp.types import TextContent, CallToolResult
 
 from common.mcp_base import MCPServerBase
+from common.validation import validate_string_length, validate_non_empty_string
+from common.error_handling import (
+    ERROR_INVALID_INPUT,
+    ERROR_TIMEOUT,
+    ERROR_NOT_FOUND,
+    ERROR_FETCH_FAILED,
+    create_error_result,
+    create_validation_error,
+    create_network_error,
+    create_timeout_error,
+)
+from common.http_utils import safe_http_get
 
 # Initialize MCP server with base class
 server = MCPServerBase("weather")
 mcp = server.get_mcp()
 logger = server.get_logger()
 
+# ============================================================================
+# CONSTANTS
+# ============================================================================
+
 # Open-Meteo API endpoints
 GEOCODING_API = "https://geocoding-api.open-meteo.com/v1/search"
 WEATHER_API = "https://api.open-meteo.com/v1/forecast"
 
+# API configuration
+API_TIMEOUT_SECONDS = 10.0
+GEOCODING_MAX_RESULTS = 1
+GEOCODING_LANGUAGE = "en"
+
+# Location validation
+MAX_LOCATION_LENGTH = 256
+MIN_LOCATION_LENGTH = 1
+
+# Forecast limits
+DAILY_FORECAST_HOURS = 24
+WEEKLY_FORECAST_DAYS = 7
+HOURLY_DISPLAY_INTERVAL = 3  # Show every 3rd hour in daily view
+
+# Unit conversions
+KMH_TO_MPH = 0.621371
+CELSIUS_DISPLAY_UNIT = "°C"
+FAHRENHEIT_DISPLAY_UNIT = "°F"
+
+# Tool-specific error codes (beyond shared constants)
+ERROR_CODE_INVALID_LOCATION = "invalid_location"
+ERROR_CODE_LOCATION_NOT_FOUND = "location_not_found"
+ERROR_CODE_AMBIGUOUS_LOCATION = "ambiguous_location"
+ERROR_CODE_GEOCODE_SERVICE_ERROR = "geocode_service_error"
+ERROR_CODE_INVALID_COORDINATES = "invalid_coordinates"
+ERROR_CODE_INVALID_FORECAST_TYPE = "invalid_forecast_type"
+ERROR_CODE_INVALID_UNITS = "invalid_units"
+
+# Forecast type and unit enums
+class ForecastType(str, Enum):
+    """Valid forecast types."""
+    CURRENT = "current"
+    DAILY = "daily"
+    WEEKLY = "weekly"
+
+class TemperatureUnits(str, Enum):
+    """Valid temperature units."""
+    CELSIUS = "celsius"
+    FAHRENHEIT = "fahrenheit"
+
+# ============================================================================
+# PYDANTIC MODELS
+# ============================================================================
+
+class WeatherInputSchema(BaseModel):
+    """Input schema for get_weather tool."""
+
+    location: str = Field(
+        ...,
+        description="Location name (e.g., 'Paris', 'New York', 'Tokyo')",
+        min_length=MIN_LOCATION_LENGTH,
+        max_length=MAX_LOCATION_LENGTH
+    )
+    forecast_type: Literal["current", "daily", "weekly"] = Field(
+        default="current",
+        description="Type of forecast - 'current' for current weather, 'daily' for 24h forecast, 'weekly' for 7d forecast"
+    )
+    units: Literal["celsius", "fahrenheit"] = Field(
+        default="fahrenheit",
+        description="Temperature units - 'celsius' or 'fahrenheit'"
+    )
+
+    @field_validator("location")
+    @classmethod
+    def validate_location(cls, v: str) -> str:
+        """Validate and normalize location string.
+
+        Args:
+            v: Location string to validate
+
+        Returns:
+            Normalized location string
+
+        Raises:
+            ValueError: If location is invalid
+        """
+        # Strip whitespace
+        v = v.strip()
+
+        # Check non-empty
+        if not v:
+            raise ValueError("Location cannot be empty")
+
+        # Check length
+        if len(v) > MAX_LOCATION_LENGTH:
+            raise ValueError(f"Location name too long (max {MAX_LOCATION_LENGTH} characters)")
+
+        return v
+
+class WeatherOutputSchema(BaseModel):
+    """Output schema for get_weather tool."""
+
+    location: str = Field(..., description="Resolved location name with country")
+    latitude: float = Field(..., description="Latitude coordinate")
+    longitude: float = Field(..., description="Longitude coordinate")
+    forecast_type: str = Field(..., description="Type of forecast returned")
+    units: str = Field(..., description="Temperature units used")
+    timestamp: str = Field(..., description="ISO8601 timestamp of when data was fetched")
+    data: Dict[str, Any] = Field(..., description="Structured weather data")
+
+# ============================================================================
+# WMO WEATHER CODES
+# ============================================================================
+
 # WMO Weather codes mapping
-WMO_CODES = {
+WMO_CODES: Dict[int, str] = {
     0: "Clear sky",
     1: "Mainly clear",
     2: "Partly cloudy",
@@ -54,6 +176,21 @@ WMO_CODES = {
     99: "Thunderstorm with heavy hail",
 }
 
+# Emoji mappings for weather codes
+EMOJI_CLEAR_SKY = "☀️"
+EMOJI_PARTLY_CLOUDY = "⛅"
+EMOJI_CLOUDY = "☁️"
+EMOJI_FOG = "🌫️"
+EMOJI_RAIN = "🌧️"
+EMOJI_SNOW = "❄️"
+EMOJI_THUNDERSTORM = "⛈️"
+EMOJI_DEFAULT = "🌤️"
+
+
+# ============================================================================
+# UTILITY FUNCTIONS
+# ============================================================================
+
 
 def get_weather_emoji(code: int) -> str:
     """Get emoji for WMO weather code.
@@ -65,229 +202,309 @@ def get_weather_emoji(code: int) -> str:
         Emoji representing the weather condition
     """
     if code == 0:
-        return "☀️"
+        return EMOJI_CLEAR_SKY
     elif code in [1, 2]:
-        return "⛅"
+        return EMOJI_PARTLY_CLOUDY
     elif code == 3:
-        return "☁️"
+        return EMOJI_CLOUDY
     elif code in [45, 48]:
-        return "🌫️"
+        return EMOJI_FOG
     elif code in [51, 53, 55, 80, 81, 82]:
-        return "🌧️"
+        return EMOJI_RAIN
     elif code in [61, 63, 65]:
-        return "🌧️"
+        return EMOJI_RAIN
     elif code in [71, 73, 75, 77, 85, 86]:
-        return "❄️"
+        return EMOJI_SNOW
     elif code in [95, 96, 99]:
-        return "⛈️"
+        return EMOJI_THUNDERSTORM
     else:
-        return "🌤️"
+        return EMOJI_DEFAULT
+
+def get_unit_symbol(units: str) -> str:
+    """Get temperature unit symbol.
+
+    Args:
+        units: Temperature units ("celsius" or "fahrenheit")
+
+    Returns:
+        Unit symbol string
+    """
+    return FAHRENHEIT_DISPLAY_UNIT if units == "fahrenheit" else CELSIUS_DISPLAY_UNIT
+
+# ============================================================================
+# GEOCODING FUNCTIONS
+# ============================================================================
 
 
-async def geocode_location(location: str) -> Optional[Dict[str, Any]]:
+async def geocode_location(location: str) -> Dict[str, Any]:
     """Convert location name to coordinates using Open-Meteo Geocoding API.
 
     Args:
         location: Location name (e.g., "Paris", "New York", "Tokyo")
 
     Returns:
-        Dict with 'name', 'latitude', 'longitude', 'country' or None if not found
+        Dict with 'name', 'latitude', 'longitude', 'country', 'timezone'
 
     Raises:
+        ValueError: If location not found or invalid
         Exception: If API request fails
     """
+    logger.debug(f"Geocoding location: '{location}'")
+
     try:
-        async with httpx.AsyncClient(timeout=10.0) as client:
-            params = {
-                "name": location,
-                "count": 1,
-                "language": "en",
-                "format": "json"
-            }
-            resp = await client.get(GEOCODING_API, params=params)
-            if resp.status_code != 200:
-                raise Exception(f"Geocoding API returned {resp.status_code}")
+        params = {
+            "name": location,
+            "count": GEOCODING_MAX_RESULTS,
+            "language": GEOCODING_LANGUAGE,
+            "format": "json"
+        }
+        resp = await safe_http_get(GEOCODING_API, params=params, timeout=API_TIMEOUT_SECONDS)
 
-            data = resp.json()
-            results = data.get("results", [])
+        data = resp.json()
+        results = data.get("results", [])
 
-            if not results:
-                return None
+        if not results:
+            logger.warning(f"Location not found: '{location}'")
+            raise ValueError(
+                f"Location not found: {location}",
+                {"error_code": ERROR_CODE_LOCATION_NOT_FOUND, "location": location}
+            )
 
-            result = results[0]
-            return {
-                "name": f"{result.get('name', location)}, {result.get('country', '')}".strip(),
-                "latitude": result.get("latitude"),
-                "longitude": result.get("longitude"),
-                "country": result.get("country"),
-                "timezone": result.get("timezone")
-            }
+        result = results[0]
+        location_name = f"{result.get('name', location)}, {result.get('country', '')}".strip(", ")
+
+        geocoded = {
+            "name": location_name,
+            "latitude": result.get("latitude"),
+            "longitude": result.get("longitude"),
+            "country": result.get("country"),
+            "timezone": result.get("timezone")
+        }
+
+        logger.info(f"Geocoded '{location}' to {location_name} ({geocoded['latitude']}, {geocoded['longitude']})")
+        return geocoded
+
+    except httpx.TimeoutException as e:
+        logger.error(f"Geocoding timeout for '{location}': {e}")
+        raise Exception(
+            f"Geocoding request timed out for: {location}",
+            {"error_code": ERROR_TIMEOUT, "location": location}
+        )
+    except ValueError:
+        # Re-raise ValueError with original message
+        raise
     except Exception as e:
         logger.error(f"Geocoding failed for '{location}': {e}")
-        raise
+        raise Exception(
+            f"Geocoding service error: {str(e)}",
+            {"error_code": ERROR_CODE_GEOCODE_SERVICE_ERROR, "location": location}
+        )
+
+# ============================================================================
+# WEATHER FETCH FUNCTIONS
+# ============================================================================
 
 
 async def fetch_current_weather(lat: float, lon: float, units: str = "celsius") -> Dict[str, Any]:
     """Fetch current weather for given coordinates.
 
     Args:
-        lat: Latitude
-        lon: Longitude
-        units: "celsius" or "fahrenheit"
+        lat: Latitude coordinate
+        lon: Longitude coordinate
+        units: Temperature units ("celsius" or "fahrenheit")
 
     Returns:
-        Dict with current weather data
+        Dict with current weather data including temperature, condition, humidity, wind speed
+
+    Raises:
+        Exception: If API request fails
     """
+    logger.debug(f"Fetching current weather for ({lat}, {lon}) in {units}")
+
     try:
-        async with httpx.AsyncClient(timeout=10.0) as client:
-            params = {
-                "latitude": lat,
-                "longitude": lon,
-                "current": "temperature_2m,relative_humidity_2m,weather_code,wind_speed_10m,apparent_temperature",
-                "temperature_unit": "fahrenheit" if units == "fahrenheit" else "celsius",
-                "wind_speed_unit": "kmh",
-                "timezone": "auto"
-            }
-            resp = await client.get(WEATHER_API, params=params)
-            if resp.status_code != 200:
-                error_text = resp.text
-                logger.error(f"Weather API returned {resp.status_code}: {error_text}")
-                raise Exception(f"Weather API returned {resp.status_code}: {error_text}")
+        params = {
+            "latitude": lat,
+            "longitude": lon,
+            "current": "temperature_2m,relative_humidity_2m,weather_code,wind_speed_10m,apparent_temperature",
+            "temperature_unit": "fahrenheit" if units == "fahrenheit" else "celsius",
+            "wind_speed_unit": "kmh",
+            "timezone": "auto"
+        }
+        resp = await safe_http_get(WEATHER_API, params=params, timeout=API_TIMEOUT_SECONDS)
 
-            data = resp.json()
-            current = data.get("current", {})
+        data = resp.json()
+        current = data.get("current", {})
 
-            return {
-                "time": current.get("time"),
-                "temperature": current.get("temperature_2m"),
-                "feels_like": current.get("apparent_temperature"),
-                "humidity": current.get("relative_humidity_2m"),
-                "wind_speed": current.get("wind_speed_10m"),
-                "condition": WMO_CODES.get(current.get("weather_code", 0), "Unknown"),
-                "weather_code": current.get("weather_code"),
-                "units": units
-            }
+        weather_data = {
+            "time": current.get("time"),
+            "temperature": current.get("temperature_2m"),
+            "feels_like": current.get("apparent_temperature"),
+            "humidity": current.get("relative_humidity_2m"),
+            "wind_speed": current.get("wind_speed_10m"),
+            "condition": WMO_CODES.get(current.get("weather_code", 0), "Unknown"),
+            "weather_code": current.get("weather_code"),
+            "units": units
+        }
+
+        logger.debug(f"Successfully fetched current weather: {weather_data['temperature']}{get_unit_symbol(units)}, {weather_data['condition']}")
+        return weather_data
+
+    except httpx.TimeoutException as e:
+        logger.error(f"Weather fetch timeout for ({lat}, {lon}): {e}")
+        raise Exception(
+            f"Weather request timed out",
+            {"error_code": ERROR_TIMEOUT, "latitude": lat, "longitude": lon}
+        )
     except Exception as e:
         logger.error(f"Failed to fetch current weather: {e}")
-        raise
+        raise Exception(
+            f"Weather fetch failed: {str(e)}",
+            {"error_code": ERROR_FETCH_FAILED, "latitude": lat, "longitude": lon}
+        )
 
 
 async def fetch_daily_forecast(lat: float, lon: float, units: str = "celsius") -> Dict[str, Any]:
     """Fetch daily forecast (24 hours) for given coordinates.
 
     Args:
-        lat: Latitude
-        lon: Longitude
-        units: "celsius" or "fahrenheit"
+        lat: Latitude coordinate
+        lon: Longitude coordinate
+        units: Temperature units ("celsius" or "fahrenheit")
 
     Returns:
-        Dict with daily forecast data
+        Dict with hourly forecast data for next 24 hours
+
+    Raises:
+        Exception: If API request fails
     """
+    logger.debug(f"Fetching daily forecast for ({lat}, {lon}) in {units}")
+
     try:
-        async with httpx.AsyncClient(timeout=10.0) as client:
-            params = {
-                "latitude": lat,
-                "longitude": lon,
-                "hourly": "temperature_2m,relative_humidity_2m,weather_code,wind_speed_10m,precipitation",
-                "temperature_unit": "fahrenheit" if units == "fahrenheit" else "celsius",
-                "wind_speed_unit": "kmh",
-                "timezone": "auto"
-            }
-            resp = await client.get(WEATHER_API, params=params)
-            if resp.status_code != 200:
-                error_text = resp.text
-                logger.error(f"Weather API returned {resp.status_code}: {error_text}")
-                raise Exception(f"Weather API returned {resp.status_code}: {error_text}")
+        params = {
+            "latitude": lat,
+            "longitude": lon,
+            "hourly": "temperature_2m,relative_humidity_2m,weather_code,wind_speed_10m,precipitation",
+            "temperature_unit": "fahrenheit" if units == "fahrenheit" else "celsius",
+            "wind_speed_unit": "kmh",
+            "timezone": "auto"
+        }
+        resp = await safe_http_get(WEATHER_API, params=params, timeout=API_TIMEOUT_SECONDS)
 
-            data = resp.json()
-            hourly = data.get("hourly", {})
+        data = resp.json()
+        hourly = data.get("hourly", {})
 
-            # Get next 24 hours
-            times = hourly.get("time", [])[:24]
-            temps = hourly.get("temperature_2m", [])[:24]
-            humidity = hourly.get("relative_humidity_2m", [])[:24]
-            codes = hourly.get("weather_code", [])[:24]
-            wind = hourly.get("wind_speed_10m", [])[:24]
-            precip = hourly.get("precipitation", [])[:24]
+        # Get next 24 hours
+        times = hourly.get("time", [])[:DAILY_FORECAST_HOURS]
+        temps = hourly.get("temperature_2m", [])[:DAILY_FORECAST_HOURS]
+        humidity = hourly.get("relative_humidity_2m", [])[:DAILY_FORECAST_HOURS]
+        codes = hourly.get("weather_code", [])[:DAILY_FORECAST_HOURS]
+        wind = hourly.get("wind_speed_10m", [])[:DAILY_FORECAST_HOURS]
+        precip = hourly.get("precipitation", [])[:DAILY_FORECAST_HOURS]
 
-            forecast = []
-            for i, time_str in enumerate(times):
-                forecast.append({
-                    "time": time_str,
-                    "temperature": temps[i] if i < len(temps) else None,
-                    "humidity": humidity[i] if i < len(humidity) else None,
-                    "condition": WMO_CODES.get(codes[i] if i < len(codes) else 0, "Unknown"),
-                    "weather_code": codes[i] if i < len(codes) else None,
-                    "wind_speed": wind[i] if i < len(wind) else None,
-                    "precipitation": precip[i] if i < len(precip) else None,
-                })
+        forecast = []
+        for i, time_str in enumerate(times):
+            forecast.append({
+                "time": time_str,
+                "temperature": temps[i] if i < len(temps) else None,
+                "humidity": humidity[i] if i < len(humidity) else None,
+                "condition": WMO_CODES.get(codes[i] if i < len(codes) else 0, "Unknown"),
+                "weather_code": codes[i] if i < len(codes) else None,
+                "wind_speed": wind[i] if i < len(wind) else None,
+                "precipitation": precip[i] if i < len(precip) else None,
+            })
 
-            return {
-                "forecast": forecast,
-                "units": units
-            }
+        logger.debug(f"Successfully fetched daily forecast with {len(forecast)} hourly entries")
+        return {
+            "forecast": forecast,
+            "units": units
+        }
+
+    except httpx.TimeoutException as e:
+        logger.error(f"Daily forecast timeout for ({lat}, {lon}): {e}")
+        raise Exception(
+            f"Weather request timed out",
+            {"error_code": ERROR_TIMEOUT, "latitude": lat, "longitude": lon}
+        )
     except Exception as e:
         logger.error(f"Failed to fetch daily forecast: {e}")
-        raise
+        raise Exception(
+            f"Weather fetch failed: {str(e)}",
+            {"error_code": ERROR_FETCH_FAILED, "latitude": lat, "longitude": lon}
+        )
 
 
 async def fetch_weekly_forecast(lat: float, lon: float, units: str = "celsius") -> Dict[str, Any]:
     """Fetch weekly forecast (7 days) for given coordinates.
 
     Args:
-        lat: Latitude
-        lon: Longitude
-        units: "celsius" or "fahrenheit"
+        lat: Latitude coordinate
+        lon: Longitude coordinate
+        units: Temperature units ("celsius" or "fahrenheit")
 
     Returns:
-        Dict with weekly forecast data
+        Dict with daily forecast data for next 7 days
+
+    Raises:
+        Exception: If API request fails
     """
+    logger.debug(f"Fetching weekly forecast for ({lat}, {lon}) in {units}")
+
     try:
-        async with httpx.AsyncClient(timeout=10.0) as client:
-            params = {
-                "latitude": lat,
-                "longitude": lon,
-                "daily": "temperature_2m_max,temperature_2m_min,weather_code,wind_speed_10m_max,precipitation_sum",
-                "temperature_unit": "fahrenheit" if units == "fahrenheit" else "celsius",
-                "wind_speed_unit": "kmh",
-                "timezone": "auto"
-            }
-            resp = await client.get(WEATHER_API, params=params)
-            if resp.status_code != 200:
-                error_text = resp.text
-                logger.error(f"Weather API returned {resp.status_code}: {error_text}")
-                raise Exception(f"Weather API returned {resp.status_code}: {error_text}")
+        params = {
+            "latitude": lat,
+            "longitude": lon,
+            "daily": "temperature_2m_max,temperature_2m_min,weather_code,wind_speed_10m_max,precipitation_sum",
+            "temperature_unit": "fahrenheit" if units == "fahrenheit" else "celsius",
+            "wind_speed_unit": "kmh",
+            "timezone": "auto"
+        }
+        resp = await safe_http_get(WEATHER_API, params=params, timeout=API_TIMEOUT_SECONDS)
 
-            data = resp.json()
-            daily = data.get("daily", {})
+        data = resp.json()
+        daily = data.get("daily", {})
 
-            # Get next 7 days
-            times = daily.get("time", [])[:7]
-            temps_max = daily.get("temperature_2m_max", [])[:7]
-            temps_min = daily.get("temperature_2m_min", [])[:7]
-            codes = daily.get("weather_code", [])[:7]
-            wind = daily.get("wind_speed_10m_max", [])[:7]
-            precip = daily.get("precipitation_sum", [])[:7]
+        # Get next 7 days
+        times = daily.get("time", [])[:WEEKLY_FORECAST_DAYS]
+        temps_max = daily.get("temperature_2m_max", [])[:WEEKLY_FORECAST_DAYS]
+        temps_min = daily.get("temperature_2m_min", [])[:WEEKLY_FORECAST_DAYS]
+        codes = daily.get("weather_code", [])[:WEEKLY_FORECAST_DAYS]
+        wind = daily.get("wind_speed_10m_max", [])[:WEEKLY_FORECAST_DAYS]
+        precip = daily.get("precipitation_sum", [])[:WEEKLY_FORECAST_DAYS]
 
-            forecast = []
-            for i, time_str in enumerate(times):
-                forecast.append({
-                    "date": time_str,
-                    "temp_max": temps_max[i] if i < len(temps_max) else None,
-                    "temp_min": temps_min[i] if i < len(temps_min) else None,
-                    "condition": WMO_CODES.get(codes[i] if i < len(codes) else 0, "Unknown"),
-                    "weather_code": codes[i] if i < len(codes) else None,
-                    "wind_speed": wind[i] if i < len(wind) else None,
-                    "precipitation": precip[i] if i < len(precip) else None,
-                })
+        forecast = []
+        for i, time_str in enumerate(times):
+            forecast.append({
+                "date": time_str,
+                "temp_max": temps_max[i] if i < len(temps_max) else None,
+                "temp_min": temps_min[i] if i < len(temps_min) else None,
+                "condition": WMO_CODES.get(codes[i] if i < len(codes) else 0, "Unknown"),
+                "weather_code": codes[i] if i < len(codes) else None,
+                "wind_speed": wind[i] if i < len(wind) else None,
+                "precipitation": precip[i] if i < len(precip) else None,
+            })
 
-            return {
-                "forecast": forecast,
-                "units": units
-            }
+        logger.debug(f"Successfully fetched weekly forecast with {len(forecast)} daily entries")
+        return {
+            "forecast": forecast,
+            "units": units
+        }
+
+    except httpx.TimeoutException as e:
+        logger.error(f"Weekly forecast timeout for ({lat}, {lon}): {e}")
+        raise Exception(
+            f"Weather request timed out",
+            {"error_code": ERROR_TIMEOUT, "latitude": lat, "longitude": lon}
+        )
     except Exception as e:
         logger.error(f"Failed to fetch weekly forecast: {e}")
-        raise
+        raise Exception(
+            f"Weather fetch failed: {str(e)}",
+            {"error_code": ERROR_FETCH_FAILED, "latitude": lat, "longitude": lon}
+        )
+
+# ============================================================================
+# TEXT FORMATTING FUNCTIONS
+# ============================================================================
 
 
 def format_current_weather_text(location: str, data: Dict[str, Any]) -> str:
@@ -298,7 +515,7 @@ def format_current_weather_text(location: str, data: Dict[str, Any]) -> str:
         data: Current weather data dict
 
     Returns:
-        Formatted text for LLM
+        Formatted markdown text for LLM
     """
     emoji = get_weather_emoji(data.get("weather_code", 0))
     temp = data.get("temperature")
@@ -306,10 +523,12 @@ def format_current_weather_text(location: str, data: Dict[str, Any]) -> str:
     feels_like = data.get("feels_like")
     humidity = data.get("humidity")
     wind = data.get("wind_speed")
+    units = data.get("units", "celsius")
+    unit_symbol = get_unit_symbol(units)
 
     text = f"**Current weather in {location}:**\n\n"
     text += f"{emoji} **{condition}**\n"
-    text += f"Temperature: {temp}°C (feels like {feels_like}°C)\n"
+    text += f"Temperature: {temp}{unit_symbol} (feels like {feels_like}{unit_symbol})\n"
     text += f"Humidity: {humidity}%\n"
     text += f"Wind: {wind} km/h\n"
 
@@ -324,19 +543,25 @@ def format_daily_forecast_text(location: str, data: Dict[str, Any]) -> str:
         data: Daily forecast data dict
 
     Returns:
-        Formatted text for LLM
+        Formatted markdown text for LLM
     """
     forecast = data.get("forecast", [])
+    units = data.get("units", "celsius")
+    unit_symbol = get_unit_symbol(units)
     text = f"**24-hour forecast for {location}:**\n\n"
 
-    # Show hourly data for today
-    for item in forecast[:8]:  # Show every 3rd hour (8 entries = 24 hours)
+    # Show every 3rd hour (8 entries = 24 hours)
+    step = HOURLY_DISPLAY_INTERVAL
+    for i in range(0, len(forecast), step):
+        if i >= len(forecast):
+            break
+        item = forecast[i]
         time = item.get("time", "").split("T")[1] if item.get("time") else "?"
         temp = item.get("temperature")
         condition = item.get("condition")
         emoji = get_weather_emoji(item.get("weather_code", 0))
 
-        text += f"{time}: {emoji} {temp}°C - {condition}\n"
+        text += f"{time}: {emoji} {temp}{unit_symbol} - {condition}\n"
 
     return text
 
@@ -349,9 +574,11 @@ def format_weekly_forecast_text(location: str, data: Dict[str, Any]) -> str:
         data: Weekly forecast data dict
 
     Returns:
-        Formatted text for LLM
+        Formatted markdown text for LLM
     """
     forecast = data.get("forecast", [])
+    units = data.get("units", "celsius")
+    unit_symbol = get_unit_symbol(units)
     text = f"**7-day forecast for {location}:**\n\n"
 
     day_names = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"]
@@ -369,16 +596,23 @@ def format_weekly_forecast_text(location: str, data: Dict[str, Any]) -> str:
         condition = item.get("condition")
         emoji = get_weather_emoji(item.get("weather_code", 0))
 
-        text += f"{day_name}: {emoji} {temp_max}°C / {temp_min}°C - {condition}\n"
+        text += f"{day_name}: {emoji} {temp_max}{unit_symbol} / {temp_min}{unit_symbol} - {condition}\n"
 
     return text
 
+# ============================================================================
+# MCP TOOL DEFINITION
+# ============================================================================
 
-@mcp.tool()
+
+@mcp.tool(
+    input_schema=WeatherInputSchema,
+    description="Get weather information for a location with current, daily, or weekly forecasts"
+)
 async def get_weather(
     location: str,
-    forecast_type: str = "current",
-    units: str = "fahrenheit",
+    forecast_type: Literal["current", "daily", "weekly"] = "current",
+    units: Literal["celsius", "fahrenheit"] = "fahrenheit",
     ctx: Context = None
 ) -> CallToolResult:
     """Get weather information for a location.
@@ -397,12 +631,10 @@ async def get_weather(
     Args:
         location: Location name (e.g., "Paris", "New York", "Tokyo")
         forecast_type: Type of forecast - "current", "daily" (24h), or "weekly" (7d)
-                      (default: "current")
-        units: Temperature units - "celsius" or "fahrenheit" (default: "fahrenheit")
-        ctx: MCP context for progress/logging (auto-injected)
+        units: Temperature units - "celsius" or "fahrenheit"
 
     Returns:
-        MCP CallToolResult with formatted weather text and structured weather data for UI
+        CallToolResult with formatted weather text, structured data, and rich metadata
 
     Examples:
         # Current weather
@@ -414,48 +646,136 @@ async def get_weather(
         # Weekly forecast
         get_weather("Tokyo", forecast_type="weekly")
     """
-    logger.info(f"Getting {forecast_type} weather for {location} ({units})")
+    request_timestamp = datetime.utcnow().isoformat() + "Z"
+    logger.info(f"Weather request: location='{location}', type={forecast_type}, units={units}")
+
     if ctx:
         await ctx.info(f"Fetching {forecast_type} weather for {location}")
 
     try:
-        # Validate forecast_type
-        if forecast_type not in ["current", "daily", "weekly"]:
-            raise ValueError(f"Invalid forecast_type: {forecast_type}. Must be 'current', 'daily', or 'weekly'")
+        # Validate location using shared validation
+        is_valid, error_msg = validate_string_length(location, MIN_LOCATION_LENGTH, MAX_LOCATION_LENGTH, "location")
+        if not is_valid:
+            logger.warning(f"Location validation failed: {error_msg}")
+            return create_validation_error(
+                field_name="location",
+                error_message=error_msg,
+                field_value=location
+            )
 
-        # Validate units
+        # Validate forecast_type (already type-checked by Literal, but add runtime check)
+        if forecast_type not in ["current", "daily", "weekly"]:
+            logger.warning(f"Invalid forecast_type: {forecast_type}")
+            return CallToolResult(
+                content=[TextContent(type="text", text=f"Invalid forecast_type: {forecast_type}. Must be 'current', 'daily', or 'weekly'")],
+                metadata={
+                    "error_type": "validation_error",
+                    "error_code": ERROR_CODE_INVALID_FORECAST_TYPE,
+                    "forecast_type_provided": forecast_type,
+                    "valid_options": ["current", "daily", "weekly"],
+                    "timestamp": request_timestamp
+                },
+                isError=True
+            )
+
+        # Validate units (already type-checked by Literal, but add runtime check)
         if units not in ["celsius", "fahrenheit"]:
-            raise ValueError(f"Invalid units: {units}. Must be 'celsius' or 'fahrenheit'")
+            logger.warning(f"Invalid units: {units}")
+            return CallToolResult(
+                content=[TextContent(type="text", text=f"Invalid units: {units}. Must be 'celsius' or 'fahrenheit'")],
+                metadata={
+                    "error_type": "validation_error",
+                    "error_code": ERROR_CODE_INVALID_UNITS,
+                    "units_provided": units,
+                    "valid_options": ["celsius", "fahrenheit"],
+                    "timestamp": request_timestamp
+                },
+                isError=True
+            )
 
         # Geocode location
         if ctx:
             await ctx.report_progress(1, 5, f"Geocoding {location}...")
 
-        geo_data = await geocode_location(location)
-        if not geo_data:
-            raise ValueError(f"Location not found: {location}")
+        try:
+            geo_data = await geocode_location(location)
+        except ValueError as e:
+            # Location not found
+            logger.warning(f"Location not found: {location}")
+            if ctx:
+                await ctx.warning(f"Location not found: {location}")
+            return CallToolResult(
+                content=[TextContent(type="text", text=f"Location not found: {location}")],
+                metadata={
+                    "error_type": "geocoding_error",
+                    "error_code": ERROR_CODE_LOCATION_NOT_FOUND,
+                    "location_query": location,
+                    "timestamp": request_timestamp
+                },
+                isError=True
+            )
+        except Exception as e:
+            # Geocoding service error
+            logger.error(f"Geocoding service error for '{location}': {e}")
+            if ctx:
+                await ctx.error(f"Geocoding failed: {str(e)}")
+            return CallToolResult(
+                content=[TextContent(type="text", text=f"Geocoding service error: {str(e)}")],
+                metadata={
+                    "error_type": "geocoding_error",
+                    "error_code": ERROR_CODE_GEOCODE_SERVICE_ERROR,
+                    "location_query": location,
+                    "timestamp": request_timestamp
+                },
+                isError=True
+            )
 
         location_name = geo_data["name"]
         lat = geo_data["latitude"]
         lon = geo_data["longitude"]
 
-        logger.info(f"Geocoded {location} to {location_name} ({lat}, {lon})")
+        logger.info(f"Geocoded '{location}' to {location_name} ({lat}, {lon})")
 
         # Fetch appropriate weather data
-        if forecast_type == "current":
+        if ctx:
+            await ctx.report_progress(2, 5, f"Fetching {forecast_type} weather...")
+
+        try:
+            if forecast_type == "current":
+                weather_data = await fetch_current_weather(lat, lon, units)
+            elif forecast_type == "daily":
+                weather_data = await fetch_daily_forecast(lat, lon, units)
+            else:  # weekly
+                weather_data = await fetch_weekly_forecast(lat, lon, units)
+        except Exception as e:
+            # Weather fetch error
+            logger.error(f"Weather fetch failed for {location_name}: {e}")
             if ctx:
-                await ctx.report_progress(2, 5, "Fetching current weather...")
-            weather_data = await fetch_current_weather(lat, lon, units)
-        elif forecast_type == "daily":
-            if ctx:
-                await ctx.report_progress(2, 5, "Fetching daily forecast...")
-            weather_data = await fetch_daily_forecast(lat, lon, units)
-        else:  # weekly
-            if ctx:
-                await ctx.report_progress(2, 5, "Fetching weekly forecast...")
-            weather_data = await fetch_weekly_forecast(lat, lon, units)
+                await ctx.error(f"Weather fetch failed: {str(e)}")
+
+            # Determine error code from exception metadata if available
+            error_code = ERROR_CODE_FETCH_FAILED
+            if hasattr(e, 'args') and len(e.args) > 1 and isinstance(e.args[1], dict):
+                error_code = e.args[1].get("error_code", ERROR_CODE_FETCH_FAILED)
+
+            return CallToolResult(
+                content=[TextContent(type="text", text=f"Weather fetch failed: {str(e)}")],
+                metadata={
+                    "error_type": "fetch_error",
+                    "error_code": error_code,
+                    "location": location_name,
+                    "latitude": lat,
+                    "longitude": lon,
+                    "forecast_type": forecast_type,
+                    "timestamp": request_timestamp
+                },
+                isError=True
+            )
 
         # Format weather text for LLM
+        if ctx:
+            await ctx.report_progress(4, 5, "Formatting weather data...")
+
         if forecast_type == "current":
             formatted_text = format_current_weather_text(location_name, weather_data)
         elif forecast_type == "daily":
@@ -463,13 +783,16 @@ async def get_weather(
         else:  # weekly
             formatted_text = format_weekly_forecast_text(location_name, weather_data)
 
-        # Build structured data for UI rendering
-        weather_ui_data = {
+        # Build rich metadata for response
+        metadata = {
             "location": location_name,
             "latitude": lat,
             "longitude": lon,
-            "type": forecast_type,
+            "country": geo_data.get("country"),
+            "timezone": geo_data.get("timezone"),
+            "forecast_type": forecast_type,
             "units": units,
+            "timestamp": request_timestamp,
             "data": weather_data
         }
 
@@ -480,29 +803,31 @@ async def get_weather(
 
         return CallToolResult(
             content=[TextContent(type="text", text=formatted_text)],
-            structuredContent=weather_ui_data
+            metadata=metadata
         )
 
-    except ValueError as e:
-        logger.warning(f"Invalid input: {e}")
-        if ctx:
-            await ctx.warning(f"Invalid input: {e}")
-        error_text = f"Error: {str(e)}"
-        return CallToolResult(
-            content=[TextContent(type="text", text=error_text)],
-            structuredContent=None,
-            isError=True
-        )
     except Exception as e:
-        logger.error(f"Failed to get weather: {e}", exc_info=True)
+        # Catch-all for unexpected errors
+        logger.error(f"Unexpected error in get_weather: {e}", exc_info=True)
         if ctx:
-            await ctx.error(f"Failed to get weather: {str(e)}")
-        error_text = f"Error fetching weather: {str(e)}"
+            await ctx.error(f"Unexpected error: {str(e)}")
+
         return CallToolResult(
-            content=[TextContent(type="text", text=error_text)],
-            structuredContent=None,
+            content=[TextContent(type="text", text=f"Unexpected error: {str(e)}")],
+            metadata={
+                "error_type": "unexpected_error",
+                "error_code": "unknown_error",
+                "location_query": location,
+                "forecast_type": forecast_type,
+                "units": units,
+                "timestamp": request_timestamp
+            },
             isError=True
         )
+
+# ============================================================================
+# SERVER ENTRY POINT
+# ============================================================================
 
 
 if __name__ == "__main__":

@@ -5,7 +5,9 @@ Uses the official MCP SDK (modelcontextprotocol/python-sdk) instead of community
 
 import logging
 import os
+from typing import Any, Dict, Optional
 from mcp.server.fastmcp import FastMCP
+from mcp.types import CallToolResult, TextContent
 
 
 def setup_logging(logger_name: str, level: int = logging.INFO) -> logging.Logger:
@@ -79,3 +81,85 @@ class MCPServerBase:
             Starlette ASGI application instance
         """
         return self.mcp.streamable_http_app()
+
+    def create_success_result(
+        self,
+        content: str,
+        metadata: Optional[Dict[str, Any]] = None
+    ) -> CallToolResult:
+        """Create standardized success result.
+
+        Args:
+            content: The response text to return
+            metadata: Optional metadata dictionary
+
+        Returns:
+            CallToolResult with standardized success format
+
+        Examples:
+            >>> result = server.create_success_result("Task completed")
+            >>> result = server.create_success_result("Found 5 items", {"count": 5})
+        """
+        text_content = TextContent(type="text", text=content)
+        if metadata:
+            return CallToolResult(content=[text_content], metadata=metadata)
+        return CallToolResult(content=[text_content])
+
+    def log_tool_start(self, tool_name: str, **params) -> None:
+        """Log tool invocation with parameters.
+
+        Args:
+            tool_name: Name of the tool being invoked
+            **params: Keyword arguments to log (will be formatted)
+
+        Examples:
+            >>> server.log_tool_start("search", query="python", limit=10)
+            >>> server.log_tool_start("fetch", url="https://example.com")
+        """
+        if params:
+            param_str = ", ".join(f"{k}={v}" for k, v in params.items())
+            self.logger.info(f"{tool_name} started: {param_str}")
+        else:
+            self.logger.info(f"{tool_name} started")
+
+    def log_tool_complete(self, tool_name: str, **metrics) -> None:
+        """Log tool completion with execution metrics.
+
+        Args:
+            tool_name: Name of the tool that completed
+            **metrics: Performance/execution metrics to log
+
+        Examples:
+            >>> server.log_tool_complete("search", results=42, duration_ms=150)
+            >>> server.log_tool_complete("fetch", bytes_received=1024)
+        """
+        if metrics:
+            metric_str = ", ".join(f"{k}={v}" for k, v in metrics.items())
+            self.logger.info(f"{tool_name} completed: {metric_str}")
+        else:
+            self.logger.info(f"{tool_name} completed")
+
+    def log_tool_error(
+        self,
+        tool_name: str,
+        error_code: str,
+        error_message: str,
+        **context
+    ) -> None:
+        """Log tool error with context.
+
+        Args:
+            tool_name: Name of the tool that failed
+            error_code: Machine-readable error code
+            error_message: Human-readable error message
+            **context: Additional error context
+
+        Examples:
+            >>> server.log_tool_error("search", "TIMEOUT", "Request timed out", timeout=30)
+            >>> server.log_tool_error("fetch", "HTTP_404", "Page not found", url="https://example.com")
+        """
+        context_str = ", ".join(f"{k}={v}" for k, v in context.items()) if context else ""
+        if context_str:
+            self.logger.error(f"{tool_name} error [{error_code}]: {error_message} ({context_str})")
+        else:
+            self.logger.error(f"{tool_name} error [{error_code}]: {error_message}")

@@ -31,9 +31,6 @@ def run_server(server_module: str, host: str = "0.0.0.0", port: int = 8000) -> N
         elif server_module == "web_search":
             from web_search import server as web_search_server
             mcp_instance = web_search_server.get_mcp()
-        elif server_module == "jina_reader":
-            from jina_reader import server as jina_reader_server
-            mcp_instance = jina_reader_server.get_mcp()
         elif server_module == "code_interpreter":
             from code_interpreter import server as code_interpreter_server
             mcp_instance = code_interpreter_server.get_mcp()

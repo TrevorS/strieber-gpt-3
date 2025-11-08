@@ -4,11 +4,11 @@ This document describes the Model Context Protocol (MCP) servers integrated into
 
 ## Overview
 
-Strieber-GPT-3 includes four MCP servers that provide extended capabilities to the LLM:
+Strieber-GPT-3 includes five MCP servers that provide extended capabilities to the LLM:
 
 1. **Weather Service** (port 8100) - Current weather and forecasts via Open-Meteo
 2. **Web Search** (port 8102) - Web search and news via Brave Search API
-3. **Jina Reader** (port 8101) - Web page content extraction and web scraping
+3. **Web Reader** (port 8104) - Privacy-first web content extraction via Playwright + ReaderLM-v2
 4. **Code Interpreter** (port 8103) - Sandboxed Python code execution with visualization support
 
 All servers use **Streamable HTTP** transport for web-friendly, non-blocking communication.
@@ -29,7 +29,9 @@ All servers use **Streamable HTTP** transport for web-friendly, non-blocking com
 │  MCP Servers (Streamable HTTP)                                   │
 │  ├── mcp-weather (localhost:8100)                                │
 │  ├── mcp-web-search (localhost:8102)                             │
-│  ├── mcp-jina-reader (localhost:8101)                            │
+│  ├── mcp-reader (localhost:8104) - Privacy-first web reader     │
+│  │   ├── playwright-scraper (localhost, internal)               │
+│  │   └── llama-server-readerlm (for ReaderLM-v2 extraction)    │
 │  └── mcp-code-interpreter (localhost:8103)                       │
 │      └── code-executor (sandboxed Python)                        │
 │                                                                   │
@@ -46,7 +48,7 @@ docker compose ps | grep mcp
 
 # Check health
 docker exec strieber-mcp-weather curl http://localhost:8000/health
-docker exec strieber-mcp-jina-reader curl http://localhost:8000/health
+docker exec strieber-mcp-reader curl http://localhost:8000/health
 docker exec strieber-mcp-web-search curl http://localhost:8000/health
 docker exec strieber-mcp-code-interpreter curl http://localhost:8000/health
 ```
@@ -76,10 +78,11 @@ In Admin Settings, navigate to **External Tools** and add each MCP server:
 - **Server URL**: `http://mcp-web-search:8000`
 - **Required Environment**: `BRAVE_API_KEY` (set in `.env`)
 
-#### Jina Reader
+#### Web Reader (Privacy-First)
 - **Type**: MCP (Streamable HTTP)
-- **Server URL**: `http://mcp-jina-reader:8000`
-- **Optional Environment**: `JINA_API_KEY` (set in `.env` for higher rate limits)
+- **Server URL**: `http://mcp-reader:8000`
+- **Features**: Full privacy - no external API calls, complete local processing
+- **Backend**: Playwright (web scraping) + ReaderLM-v2 (content extraction)
 
 #### Code Interpreter
 - **Type**: MCP (Streamable HTTP)
@@ -90,16 +93,15 @@ In Admin Settings, navigate to **External Tools** and add each MCP server:
 Set the following in `.env` for API-based services:
 
 ```bash
-# Required
+# Required for Web Search
 BRAVE_API_KEY=your_brave_search_api_key
-
-# Optional (improves Jina reader rate limits)
-JINA_API_KEY=your_jina_api_key
 
 # MCP server ports (if running on different host)
 LLAMA_HOST=0.0.0.0
 OPENWEBUI_PORT=3000
 ```
+
+Note: The Web Reader service is fully local - no API keys or external services required.
 
 ## Available Tools
 
@@ -138,21 +140,29 @@ Get latest tech news
 search_news(query="technology news")
 ```
 
-### Web Content Extraction (`read_url`)
+### Web Content Extraction (`fetch_page`)
 
-Extract clean, structured content from web pages.
+Extract clean, structured content from web pages with full privacy (local processing only).
 
 **Parameters:**
-- `url` (required): URL to extract (supports HTTP/HTTPS and PDFs)
+- `url` (required): URL to fetch (HTTP/HTTPS)
+- `prompt` (optional): Extraction instruction for targeted content extraction
+- `timeout` (optional): Maximum fetch time in seconds (default: 30)
+- `force_js_rendering` (optional): Force JavaScript rendering for SPAs (default: false)
 
 **Example:**
 ```
 Extract content from article
-read_url(url="https://example.com/article")
+fetch_page(url="https://example.com/article")
 
-Extract PDF content
-read_url(url="https://example.com/document.pdf")
+Extract specific content with instruction
+fetch_page(url="https://example.com/article", prompt="Extract main article text and author")
+
+Handle JavaScript-heavy sites
+fetch_page(url="https://twitter.com/user/status/123", force_js_rendering=true)
 ```
+
+**Privacy Note:** All processing happens locally. URLs and content never leave your infrastructure.
 
 ### Code Interpreter (`execute_code`)
 
@@ -197,14 +207,15 @@ plt.show()
 - **Environment**: `BRAVE_API_KEY` (required)
 - **Network**: `strieber-net`
 
-### mcp-jina-reader
-- **Image**: `strieber-mcp-jina-reader:latest`
-- **Container**: `strieber-mcp-jina-reader`
-- **Port**: `8101:8000`
+### mcp-reader (Privacy-First Web Reader)
+- **Image**: `strieber-mcp-reader:latest`
+- **Container**: `strieber-mcp-reader`
+- **Port**: `8104:8000`
 - **Health Check**: `curl -f http://localhost:8000/health`
-- **Dependencies**: None
-- **Environment**: `JINA_API_KEY` (optional)
+- **Dependencies**: `playwright-scraper`, `llama-server-readerlm`
+- **Environment**: None required (fully local operation)
 - **Network**: `strieber-net`
+- **Features**: No external API calls, no API keys needed, unlimited usage
 
 ### mcp-code-interpreter
 - **Image**: `strieber-mcp-code-interpreter:latest`
@@ -246,8 +257,9 @@ strieber-gpt-3/
 │       │   │   └── README.md                # Testing documentation
 │       │   ├── weather.py                   # Weather forecast MCP server
 │       │   ├── web_search.py                # Web search MCP server (uses factory)
-│       │   ├── jina_reader.py               # Web content extraction server
 │       │   ├── code_interpreter.py          # Sandboxed code execution server
+│       │   ├── reader/
+│       │   │   └── server.py                # Privacy-first web reader (local extraction)
 │       │   ├── requirements.txt             # Dependencies (includes pytest for dev)
 │       │   └── Dockerfile.mcp-server        # Parameterized Dockerfile (builds all servers)
 │       └── code-executor/
@@ -306,9 +318,10 @@ docker logs strieber-mcp-code-interpreter
 - Verify `BRAVE_API_KEY` is set in `.env`
 - Restart services: `docker compose restart mcp-web-search`
 
-**Jina Reader Rate Limited:**
-- Optionally set `JINA_API_KEY` in `.env` for higher limits
-- Restart: `docker compose restart mcp-jina-reader`
+**Web Reader Not Working:**
+- Check playwright-scraper health: `docker logs strieber-playwright-scraper`
+- Check llama-server-readerlm health: `docker logs strieber-llama-server-readerlm`
+- Ensure both dependencies are healthy before using reader
 
 ### Docker Network Issues
 
@@ -349,10 +362,11 @@ docker exec strieber-mcp-weather curl -s http://localhost:8000/health
 docker exec strieber-mcp-web-search curl -s http://localhost:8000/health
 ```
 
-### Test Jina Reader
+### Test Web Reader
 
 ```bash
-docker exec strieber-mcp-jina-reader curl -s http://localhost:8000/health
+docker exec strieber-mcp-reader curl -s http://localhost:8000/health
+# Expected: {"status":"ok"}
 ```
 
 ### Test Code Interpreter
@@ -403,8 +417,8 @@ Memory and CPU limits can be set in Docker compose if needed.
 - [FastMCP Framework](https://github.com/janus-llm/fastmcp)
 - [Model Context Protocol Specification](https://spec.modelcontextprotocol.io/)
 - [Brave Search API](https://api.search.brave.com/)
-- [Jina Reader API](https://jina.ai/reader/)
 - [Open-Meteo Weather API](https://open-meteo.com/)
+- [ReaderLM Model](https://huggingface.co/jina-ai/ReaderLM-v2)
 
 ## Support
 

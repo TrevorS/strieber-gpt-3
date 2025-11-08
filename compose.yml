@@ -226,7 +226,6 @@ services:
     depends_on:
       - llama-server
       - mcp-weather
-      - mcp-jina-reader
       - mcp-web-search
       - mcp-code-interpreter
       - mcp-reader
@@ -269,26 +268,6 @@ services:
       - "8100:8000"
     environment:
       - PORT=8000
-    networks:
-      - strieber-net
-
-  # mcp-jina-reader: Web page content extraction
-  # Uses: Jina Reader API (optional API key for higher rate limits)
-  # Provides: Clean markdown extraction from URLs, PDF support
-  mcp-jina-reader:
-    build:
-      context: ./backend/tools/mcp_servers
-      dockerfile: Dockerfile.mcp-server
-      args:
-        SERVER_MODULE: jina_reader
-    image: strieber-mcp-jina-reader:latest
-    container_name: strieber-mcp-jina-reader
-    restart: unless-stopped
-    ports:
-      - "8101:8000"
-    environment:
-      - PORT=8000
-      - JINA_API_KEY=${JINA_API_KEY:-}
     networks:
       - strieber-net
 
