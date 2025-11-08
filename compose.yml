@@ -186,7 +186,7 @@ services:
       - "on"                              # Flash attention: efficiency
       - "--cont-batching"                 # Continuous batching
       - "--parallel"
-      - "2"                               # Allow up to 2 concurrent requests
+      - "1"                               # Single concurrent request (full 131K context per request)
       - "-t"
       - "0.1"                             # Temperature: near-zero for deterministic conversion
       - "--no-mmap"                       # Disable mmap

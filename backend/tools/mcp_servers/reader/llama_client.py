@@ -12,6 +12,67 @@ import httpx
 
 logger = logging.getLogger(__name__)
 
+# Context window limits
+MAX_CONTEXT_TOKENS = 131072  # llama-server-readerlm context size
+SYSTEM_PROMPT_TOKENS = 500   # Approximate tokens for system prompt
+OUTPUT_TOKENS = 8000         # Budget for output generation
+SAFE_INPUT_TOKENS = MAX_CONTEXT_TOKENS - SYSTEM_PROMPT_TOKENS - OUTPUT_TOKENS
+BYTES_PER_TOKEN = 3.5        # Conservative estimate: 3.5 bytes = 1 token
+
+
+def estimate_tokens(text: str) -> int:
+    """Estimate token count from text (conservative estimate).
+
+    Args:
+        text: Text to estimate tokens for
+
+    Returns:
+        Approximate token count
+    """
+    return max(1, len(text.encode('utf-8')) // int(BYTES_PER_TOKEN))
+
+
+def truncate_html(html: str, max_bytes: int = 300000) -> tuple[str, bool]:
+    """Truncate HTML if it exceeds safe size for ReaderLM-v2.
+
+    Strategy: Keep first N% of HTML (main content usually at top)
+
+    Args:
+        html: HTML content to potentially truncate
+        max_bytes: Maximum HTML size in bytes before truncation (default 300KB for safety)
+
+    Returns:
+        (truncated_html, was_truncated) tuple
+    """
+    html_bytes = len(html.encode('utf-8'))
+
+    if html_bytes <= max_bytes:
+        return html, False
+
+    # Calculate safe truncation point
+    # Aim for ~90% to ensure we stay under limit with safety margin
+    target_bytes = int(max_bytes * 0.85)
+
+    # Find safe truncation point (avoid breaking in middle of tag)
+    html_truncated = html[:target_bytes]
+
+    # Try to truncate at a tag boundary
+    last_close_tag = html_truncated.rfind('>')
+    if last_close_tag > target_bytes * 0.75:  # Must be reasonably close to target
+        html_truncated = html_truncated[:last_close_tag + 1]
+
+    html_truncated += "\n<!-- [Content truncated due to size] -->\n"
+
+    truncated_tokens = estimate_tokens(html_truncated)
+    original_tokens = estimate_tokens(html)
+
+    logger.warning(
+        f"HTML truncated: {html_bytes} bytes ({original_tokens} tokens) "
+        f"→ {len(html_truncated.encode('utf-8'))} bytes ({truncated_tokens} tokens)"
+    )
+
+    return html_truncated, True
+
 
 class LlamaReaderClient:
     """Client for communicating with llama-server-readerlm inference service."""
@@ -48,6 +109,17 @@ class LlamaReaderClient:
             (markdown_content, success)
         """
         try:
+            # Validate HTML size before sending to ReaderLM
+            html_truncated, was_truncated = truncate_html(html_content)
+            tokens_in = estimate_tokens(html_truncated)
+
+            if was_truncated or tokens_in > SAFE_INPUT_TOKENS:
+                logger.warning(
+                    f"HTML input size: {tokens_in} tokens "
+                    f"(safe limit: {SAFE_INPUT_TOKENS} tokens, "
+                    f"max context: {MAX_CONTEXT_TOKENS} tokens)"
+                )
+
             # Always use default instruction - research shows custom instructions reduce quality
             # ReaderLM-v2 is optimized for main content extraction
             instruction = "Extract the main content from the given HTML and convert it to Markdown format."
@@ -64,7 +136,7 @@ class LlamaReaderClient:
                         },
                         {
                             "role": "user",
-                            "content": html_content
+                            "content": html_truncated
                         }
                     ],
                     "max_tokens": max_tokens,
