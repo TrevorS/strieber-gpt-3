@@ -50,10 +50,10 @@ services:
     # IPC mode for better GPU communication
     ipc: host
 
-    # Port mapping: host:container
+    # Port mapping: host:container (9010 = LLM range, main orchestrator)
     # IMPORTANT: Make sure this is accessible from remote machines
     ports:
-      - "${LLAMA_PORT:-8000}:8000"
+      - "${LLAMA_PORT:-9010}:8000"
 
     # Volume mounts
     volumes:
@@ -93,9 +93,9 @@ services:
       - "${GPU_LAYERS:-999}"           # Auto-detect layers (works for both models)
       - "--jinja"                      # Enable chat template support
       - "-b"
-      - "2048"                         # Batch size: up from default 512 for better throughput
+      - "512"                          # Batch size: reduced from 2048 to prevent KV cache exhaustion
       - "-ub"
-      - "2048"                         # Ubatch size: physical batch size (same as -b for high-end hardware)
+      - "512"                          # Ubatch size: physical batch size (reduced for memory stability)
       - "--flash-attn"
       - "on"                           # Flash attention: 15% speedup, reduces VRAM usage
       - "--cont-batching"              # Continuous batching: better throughput with multiple requests
@@ -146,9 +146,9 @@ services:
     # IPC mode for better GPU communication
     ipc: host
 
-    # Port mapping: host:container (8001 for ReaderLM vs 8000 for main)
+    # Port mapping: host:container (9030 = LLM range, ReaderLM)
     ports:
-      - "8001:8000"
+      - "9030:8000"
 
     # Volume mounts
     volumes:
@@ -196,8 +196,90 @@ services:
       - strieber-net
 
   # ==========================================================================
+  # llama-server-qwen-vl: Vision-language model for task routing and image analysis
+  # ABOUTME: Qwen3-VL-2B multimodal model for vision tasks and text generation
+  # Supports: Image understanding, visual question answering, task classification
+  # ==========================================================================
+  llama-server-qwen-vl:
+    build:
+      context: .
+      dockerfile: Dockerfile.llamacpp
+      args:
+        CUDA_VERSION: "13.0.1"
+        UBUNTU_VERSION: "22.04"
+        CUDA_DOCKER_ARCH: "121"  # Blackwell GB10
+
+    image: strieber-llama-server:latest  # Reuse same image
+    container_name: strieber-llama-server-qwen-vl
+
+    # Restart policy
+    restart: unless-stopped
+
+    # GPU configuration (shares GPU 0 with other llama-server instances)
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1  # Request 1 GPU, will share with other instances
+              capabilities: [gpu]
+
+    # Shared memory for CUDA operations
+    shm_size: 4g  # Small model, minimal overhead
+
+    # IPC mode for better GPU communication
+    ipc: host
+
+    # Port mapping: host:container (9020 = LLM range, Qwen-VL task + vision)
+    ports:
+      - "9020:8000"
+
+    # Volume mounts
+    volumes:
+      # Models directory (includes both main model and mmproj files)
+      - /home/trevor/models:/models
+
+    # Environment variables
+    environment:
+      - LLAMA_ARG_HOST=0.0.0.0
+      - LLAMA_ARG_PORT=8000
+      - LLAMA_LOG_VERBOSITY=0
+      - LLAMA_LOG_TIMESTAMPS=true
+      - LLAMA_LOG_PREFIX=true
+
+    # Server command optimized for Qwen3-VL-2B (multimodal model)
+    # Supports both text generation and vision tasks (image analysis)
+    command:
+      - "-m"
+      - "/models/Qwen3-VL-2B-Instruct-Q4_K_M.gguf"
+      - "--mmproj"
+      - "/models/mmproj-F16.gguf"             # Multimodal projector for vision
+      - "--port"
+      - "8000"
+      - "--host"
+      - "0.0.0.0"
+      - "-c"
+      - "32768"                               # Context: 32k tokens (standard for 2B models)
+      - "--n-gpu-layers"
+      - "999"                                 # Auto-detect layers for GPU offload
+      - "--jinja"                             # Enable chat template support
+      - "-b"
+      - "512"                                 # Batch size: standard for 2B model
+      - "-ub"
+      - "512"                                 # Ubatch size: physical batch size
+      - "--flash-attn"
+      - "on"                                  # Flash attention: efficiency
+      - "--cont-batching"                     # Continuous batching
+      - "--parallel"
+      - "1"                                   # Single concurrent request
+      - "--no-mmap"                           # Disable mmap
+
+    # Network configuration for MCP server communication
+    networks:
+      - strieber-net
+
+  # ==========================================================================
   # open-webui: Web interface for llama-server
-  # Connects to llama-server OpenAI-compatible API endpoint
   # ==========================================================================
   open-webui:
     image: ghcr.io/open-webui/open-webui:v0.6.36
@@ -206,9 +288,9 @@ services:
     # Restart policy
     restart: unless-stopped
 
-    # Port mapping: host:container
+    # Port mapping: host:container (9200 = Web UI range)
     ports:
-      - "${OPENWEBUI_PORT:-3000}:8080"
+      - "${OPENWEBUI_PORT:-9200}:8080"
 
     # Volume for persistent data
     volumes:
@@ -217,9 +299,9 @@ services:
 
     # Environment variables
     environment:
-      # Connect to llama-server using Docker container name
+      # Connect directly to llama-server for gpt-oss-120b
       - OPENAI_API_BASE_URL=http://strieber-llama-server:8000/v1
-      - OPENAI_API_KEY=sk-open-webui-local  # Dummy key for local usage
+      - OPENAI_API_KEY=none
       # Enable direct MCP server connections (native tool discovery)
       - ENABLE_DIRECT_CONNECTIONS=true
 
@@ -266,7 +348,7 @@ services:
     container_name: strieber-mcp-weather
     restart: unless-stopped
     ports:
-      - "8100:8000"
+      - "9100:8000"
     environment:
       - PORT=8000
     networks:
@@ -285,7 +367,7 @@ services:
     container_name: strieber-mcp-web-search
     restart: unless-stopped
     ports:
-      - "8102:8000"
+      - "9110:8000"
     environment:
       - PORT=8000
       - BRAVE_API_KEY=${BRAVE_API_KEY:-}
@@ -310,7 +392,7 @@ services:
     container_name: strieber-mcp-code-interpreter
     restart: unless-stopped
     ports:
-      - "8103:8000"
+      - "9120:8000"
     environment:
       - PORT=8000
     volumes:
@@ -360,7 +442,7 @@ services:
     container_name: strieber-mcp-reader
     restart: unless-stopped
     ports:
-      - "8104:8000"
+      - "9130:8000"
     environment:
       - PORT=8000
       - SCRAPER_ENDPOINT=http://playwright-scraper:8000

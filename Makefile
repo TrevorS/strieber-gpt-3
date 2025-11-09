@@ -38,6 +38,25 @@ health: ## Check llama-server health endpoint
 llama-util: ## Run llama.cpp utilities (usage: make llama-util CMD="/app/bin/llama-bench --help")
 	docker compose -f compose.yml exec llama-server /bin/bash -c "$(CMD)"
 
+# LLM Console Client
+
+llm-build: ## Build llm-client Docker image
+	docker build -f Dockerfile.llm-client -t llm-client:latest .
+
+llm-setup: ## Initialize llm API key (one-time setup)
+	docker run --rm -it \
+		--network strieber-gpt-3_strieber-net \
+		-v ~/.config/io.datasette.llm:/root/.config/io.datasette.llm \
+		llm-client:latest \
+		llm keys set local
+
+llm-chat: ## Start interactive console chat with llm
+	docker run --rm -it \
+		--network strieber-gpt-3_strieber-net \
+		-v ~/.config/io.datasette.llm:/root/.config/io.datasette.llm \
+		llm-client:latest \
+		llm chat -m gpt-oss-120b
+
 # Docker Cleanup
 
 prune: ## Remove unused Docker images and containers

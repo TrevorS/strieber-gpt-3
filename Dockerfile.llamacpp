@@ -32,7 +32,9 @@ RUN apt-get update && \
 WORKDIR /app
 
 # Clone llama.cpp repository
-RUN git clone https://github.com/ggml-org/llama.cpp.git .
+# Pin to tag b6999 (Nov 9, 2025) - includes fix for prompt cache crash bug
+RUN git clone https://github.com/ggml-org/llama.cpp.git . && \
+    git checkout b6999
 
 # Build llama.cpp with DGX Spark optimizations
 # Critical flags:
@@ -75,12 +77,16 @@ RUN mkdir -p /app/full && \
 # ============================================================================
 FROM ${BASE_CUDA_RUN_CONTAINER} AS base
 
-# Install minimal runtime dependencies
+# Install runtime dependencies
 RUN apt-get update && \
     apt-get install -y \
         libgomp1 \
         curl \
-        ca-certificates && \
+        ca-certificates \
+        python3 \
+        python3-pip && \
+    pip install --no-cache-dir huggingface-hub[cli] && \
+    ln -sf /usr/local/bin/huggingface-cli /usr/bin/huggingface-cli && \
     apt-get autoremove -y && \
     apt-get clean -y && \
     rm -rf /tmp/* /var/tmp/* && \
