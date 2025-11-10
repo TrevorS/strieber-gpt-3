@@ -1,0 +1,131 @@
+{
+  "_comment": "ComfyUI API workflow for Qwen img2img/inpaint editing",
+  "_mapping_instructions": {
+    "description": "This is a template workflow for image editing. Replace the inputs in the nodes below with actual values.",
+    "node_mappings": {
+      "1": {
+        "class_type": "CLIPTextEncode",
+        "description": "Positive prompt encoder",
+        "inputs_to_patch": {
+          "text": "Set from tool parameter: prompt (optional, can be empty)"
+        }
+      },
+      "2": {
+        "class_type": "CLIPTextEncode",
+        "description": "Negative prompt encoder",
+        "inputs_to_patch": {
+          "text": "Set from tool parameter: negative_prompt (optional)"
+        }
+      },
+      "3": {
+        "class_type": "LoadImage",
+        "description": "Load init image",
+        "inputs_to_patch": {
+          "image": "Set to uploaded filename from comfy_client.upload_image()"
+        }
+      },
+      "4": {
+        "class_type": "VAEEncode",
+        "description": "Encode init image to latent"
+      },
+      "5": {
+        "class_type": "KSampler",
+        "description": "Main sampler node for editing",
+        "inputs_to_patch": {
+          "seed": "Set from tool parameter: seed (or random)",
+          "steps": "Set from tool parameter: steps",
+          "cfg": "Set from tool parameter: guidance",
+          "denoise": "Set from tool parameter: strength (controls how much to change)"
+        }
+      },
+      "6": {
+        "class_type": "CheckpointLoaderSimple",
+        "description": "Load Qwen model checkpoint",
+        "inputs_to_patch": {
+          "ckpt_name": "qwen_model.safetensors or your actual checkpoint name"
+        }
+      },
+      "7": {
+        "class_type": "VAEDecode",
+        "description": "Decode latents to image"
+      },
+      "8": {
+        "class_type": "SaveImage",
+        "description": "Save output image",
+        "inputs_to_patch": {
+          "filename_prefix": "qwen_edit"
+        }
+      },
+      "9": {
+        "class_type": "LoadImage",
+        "description": "Optional: Load mask image for inpainting",
+        "inputs_to_patch": {
+          "image": "Set to uploaded mask filename (if provided)"
+        },
+        "note": "Only used if mask is provided. For simple img2img, this can be omitted."
+      }
+    }
+  },
+  "1": {
+    "inputs": {
+      "text": "PLACEHOLDER_PROMPT",
+      "clip": ["6", 1]
+    },
+    "class_type": "CLIPTextEncode"
+  },
+  "2": {
+    "inputs": {
+      "text": "PLACEHOLDER_NEGATIVE_PROMPT",
+      "clip": ["6", 1]
+    },
+    "class_type": "CLIPTextEncode"
+  },
+  "3": {
+    "inputs": {
+      "image": "PLACEHOLDER_INIT_IMAGE.png"
+    },
+    "class_type": "LoadImage"
+  },
+  "4": {
+    "inputs": {
+      "pixels": ["3", 0],
+      "vae": ["6", 2]
+    },
+    "class_type": "VAEEncode"
+  },
+  "5": {
+    "inputs": {
+      "seed": 0,
+      "steps": 30,
+      "cfg": 5.0,
+      "sampler_name": "euler",
+      "scheduler": "normal",
+      "denoise": 0.7,
+      "model": ["6", 0],
+      "positive": ["1", 0],
+      "negative": ["2", 0],
+      "latent_image": ["4", 0]
+    },
+    "class_type": "KSampler"
+  },
+  "6": {
+    "inputs": {
+      "ckpt_name": "qwen_model.safetensors"
+    },
+    "class_type": "CheckpointLoaderSimple"
+  },
+  "7": {
+    "inputs": {
+      "samples": ["5", 0],
+      "vae": ["6", 2]
+    },
+    "class_type": "VAEDecode"
+  },
+  "8": {
+    "inputs": {
+      "filename_prefix": "qwen_edit",
+      "images": ["7", 0]
+    },
+    "class_type": "SaveImage"
+  }
+}
