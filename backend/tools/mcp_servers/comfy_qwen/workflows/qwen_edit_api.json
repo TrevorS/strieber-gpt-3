@@ -1,0 +1,110 @@
+{
+  "_meta": {
+    "description": "Qwen Image Edit img2img/inpaint workflow (API format)",
+    "nodes": {
+      "1": "CheckpointLoaderSimple - Load Qwen model",
+      "2": "LoadImage - Load init image",
+      "3": "VAEEncode - Encode init image",
+      "4": "CLIPTextEncode - Positive prompt",
+      "5": "CLIPTextEncode - Negative prompt",
+      "6": "KSampler - Main sampling with denoise",
+      "7": "VAEDecode - Decode latents",
+      "8": "SaveImage - Save output",
+      "9": "LoadImageMask - Optional mask for inpainting"
+    },
+    "parameters": {
+      "node_2": {
+        "image": "Init image filename (uploaded to ComfyUI)"
+      },
+      "node_4": {
+        "text": "Positive prompt (what to add/change)"
+      },
+      "node_5": {
+        "text": "Negative prompt"
+      },
+      "node_6": {
+        "seed": "Random seed",
+        "steps": "Sampling steps",
+        "cfg": "Guidance scale",
+        "denoise": "Strength (0.0-1.0, higher = more change)",
+        "sampler_name": "Sampler algorithm",
+        "scheduler": "Scheduler type"
+      },
+      "node_9": {
+        "image": "Optional mask filename for inpainting"
+      }
+    }
+  },
+  "1": {
+    "inputs": {
+      "ckpt_name": "qwen-vl-base.safetensors"
+    },
+    "class_type": "CheckpointLoaderSimple"
+  },
+  "2": {
+    "inputs": {
+      "image": "init_image.png",
+      "upload": "image"
+    },
+    "class_type": "LoadImage"
+  },
+  "3": {
+    "inputs": {
+      "pixels": ["2", 0],
+      "vae": ["1", 2]
+    },
+    "class_type": "VAEEncode"
+  },
+  "4": {
+    "inputs": {
+      "text": "high quality, detailed",
+      "clip": ["1", 1]
+    },
+    "class_type": "CLIPTextEncode"
+  },
+  "5": {
+    "inputs": {
+      "text": "blurry, low quality, distorted",
+      "clip": ["1", 1]
+    },
+    "class_type": "CLIPTextEncode"
+  },
+  "6": {
+    "inputs": {
+      "seed": 42,
+      "steps": 30,
+      "cfg": 5.0,
+      "sampler_name": "euler",
+      "scheduler": "normal",
+      "denoise": 0.7,
+      "model": ["1", 0],
+      "positive": ["4", 0],
+      "negative": ["5", 0],
+      "latent_image": ["3", 0]
+    },
+    "class_type": "KSampler"
+  },
+  "7": {
+    "inputs": {
+      "samples": ["6", 0],
+      "vae": ["1", 2]
+    },
+    "class_type": "VAEDecode"
+  },
+  "8": {
+    "inputs": {
+      "filename_prefix": "qwen_img2img",
+      "images": ["7", 0]
+    },
+    "class_type": "SaveImage"
+  },
+  "9": {
+    "inputs": {
+      "image": "mask.png",
+      "upload": "image",
+      "channel": "alpha"
+    },
+    "class_type": "LoadImageMask",
+    "_note": "Optional node for inpainting. If mask is provided, connect to KSampler's mask input"
+  }
+}
