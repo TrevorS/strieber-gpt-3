@@ -195,6 +195,71 @@ make up-all
 
 Open WebUI data (chats, settings, files) is stored in a Docker named volume `open-webui-data` and persists across container restarts.
 
+### ComfyUI Configuration
+
+**ComfyUI** is an advanced node-based interface for image generation with Stable Diffusion and other models.
+
+#### Starting ComfyUI
+
+```bash
+# Starts automatically with main stack
+make up
+
+# Or manage separately
+make comfyui-restart
+make comfyui-logs
+```
+
+#### Accessing ComfyUI
+
+Once services are running:
+
+```
+ComfyUI Web UI: http://localhost:9040
+```
+
+#### GPU Sharing
+
+ComfyUI shares GPU 0 with:
+- Main llama-server (gpt-oss-120b)
+- ReaderLM-v2 (1.5B)
+- Qwen-VL-2B (vision model)
+
+**Memory Usage:**
+- **Idle:** ~2-4GB (ComfyUI) + ~83GB (other services) = ~85-87GB
+- **Generating (SD1.5):** ~10-15GB (ComfyUI) + ~83GB (other services) = ~93-96GB
+- **Headroom:** ~32-35GB free during generation ✅
+
+#### Model Storage
+
+Models stored in `/home/trevor/models/comfyui/`:
+
+```
+/home/trevor/models/comfyui/
+├── checkpoints/          # SD1.5, SDXL, etc.
+├── vae/                  # VAE models
+├── loras/               # LoRA fine-tunes
+├── controlnet/          # ControlNet models
+├── upscale_models/      # Upscaling models
+├── diffusion_models/    # Other diffusion models
+├── clip/                # CLIP text encoders
+└── text_encoders/       # Other text encoders
+```
+
+#### Makefile Commands for ComfyUI
+
+```bash
+make comfyui-build       # Build ComfyUI image
+make comfyui-logs        # View logs
+make comfyui-shell       # Open bash shell
+make comfyui-restart     # Restart service
+make comfyui-health      # Check health status
+```
+
+#### ComfyUI Documentation
+
+See `comfyui/README.md` for detailed ComfyUI documentation and troubleshooting.
+
 ---
 
 ## Makefile Commands

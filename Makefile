@@ -71,3 +71,23 @@ nuke: ## Force-remove all strieber containers and images
 	docker ps -a --filter "name=strieber-*" -q | xargs -r docker rm -f
 	docker images --filter "reference=strieber-*" -q | xargs -r docker rmi -f
 	docker system prune -f
+
+# ==========================================================================
+# ComfyUI Management Commands
+# ==========================================================================
+
+comfyui-build: ## Build ComfyUI Docker image
+	docker compose -f compose.yml build comfyui
+
+comfyui-logs: ## Show ComfyUI logs (follow mode)
+	docker compose -f compose.yml logs -f comfyui
+
+comfyui-shell: ## Open bash shell in ComfyUI container
+	docker compose -f compose.yml exec comfyui /bin/bash
+
+comfyui-restart: ## Restart ComfyUI service
+	docker compose -f compose.yml restart comfyui
+
+comfyui-health: ## Check ComfyUI health status
+	@docker inspect strieber-comfyui --format='{{.State.Health.Status}}' 2>/dev/null || echo "not running"
+	@curl -sf http://localhost:9040 && echo "✓ ComfyUI web UI responding" || echo "✗ ComfyUI not responding"

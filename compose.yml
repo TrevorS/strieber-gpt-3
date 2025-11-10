@@ -279,6 +279,86 @@ services:
       - strieber-net
 
   # ==========================================================================
+  # comfyui: Advanced image generation workflows and Stable Diffusion UI
+  # ABOUTME: ComfyUI node-based interface for image generation and manipulation
+  # Shares GPU 0 with other services, uses shared model storage
+  # ==========================================================================
+  comfyui:
+    build:
+      context: ./comfyui
+      dockerfile: Dockerfile
+      args:
+        UID: 1000
+        GID: 1000
+    image: strieber-comfyui:latest
+    container_name: strieber-comfyui
+    restart: unless-stopped
+
+    # GPU configuration (shares GPU 0 with other services)
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+
+    # Shared memory for CUDA operations
+    shm_size: 4g
+
+    # IPC mode for better GPU communication
+    ipc: host
+
+    # Port mapping: host:container (9040 = ComfyUI)
+    ports:
+      - "${COMFYUI_PORT:-9040}:8188"
+
+    # Volume mounts
+    volumes:
+      # Models: shared storage across projects
+      - /home/trevor/models/comfyui:/opt/ComfyUI/models
+      # Data: inputs, outputs, custom nodes (project-local)
+      - ./comfyui-data/input:/opt/ComfyUI/input
+      - ./comfyui-data/output:/opt/ComfyUI/output
+      - ./comfyui-data/custom_nodes:/opt/ComfyUI/custom_nodes
+      # Caches: HuggingFace and PyTorch (project-local to avoid conflicts)
+      - ./comfyui-data/hf-cache:/home/app/.cache/huggingface
+      - ./comfyui-data/torch-cache:/home/app/.cache/torch
+
+    # Environment variables
+    environment:
+      - CUDA_VISIBLE_DEVICES=0
+      - NVIDIA_VISIBLE_DEVICES=all
+      - NVIDIA_DRIVER_CAPABILITIES=compute,utility
+      - PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
+      - COMFY_LISTEN_HOST=0.0.0.0
+      - COMFY_PORT=8188
+      - DOWNLOAD_SD15=${COMFYUI_DOWNLOAD_SD15:-0}
+
+    # Command-line arguments
+    command:
+      - "--enable-cors-header"
+      - "*"
+      - "--disable-auto-launch"
+
+    # Resource limits
+    ulimits:
+      memlock: -1
+      stack: 67108864
+
+    # Healthcheck
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "http://127.0.0.1:8188"]
+      interval: 30s
+      timeout: 5s
+      start_period: 20s
+      retries: 10
+
+    # Network configuration
+    networks:
+      - strieber-net
+
+  # ==========================================================================
   # open-webui: Web interface for llama-server
   # ==========================================================================
   open-webui:
