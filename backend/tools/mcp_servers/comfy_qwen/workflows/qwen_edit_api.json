@@ -1,0 +1,135 @@
+{
+  "_comment": "This is a template workflow for Qwen Image Edit (img2img/inpaint).",
+  "_instructions": "Export your ComfyUI workflow in API format and replace this file. Update NODE_MAPPINGS in server.py to match your actual node IDs.",
+  "_node_mapping": {
+    "checkpoint_loader": "Node ID that loads the Qwen model checkpoint",
+    "load_image": "Node ID that loads the init image",
+    "load_mask": "Node ID that loads the mask (optional, for inpainting)",
+    "positive_prompt": "Node ID for the positive/main prompt (CLIPTextEncode)",
+    "negative_prompt": "Node ID for the negative prompt (CLIPTextEncode)",
+    "vae_encode": "Node ID that encodes image to latent",
+    "sampler": "Node ID for KSampler (seed, steps, cfg, denoise/strength)",
+    "vae_decode": "Node ID that decodes latent to image",
+    "save_image": "Node ID that saves/outputs the final image"
+  },
+  "1": {
+    "inputs": {
+      "ckpt_name": "qwen_image_model.safetensors"
+    },
+    "class_type": "CheckpointLoaderSimple",
+    "_meta": {
+      "title": "Load Checkpoint"
+    }
+  },
+  "2": {
+    "inputs": {
+      "image": "PLACEHOLDER_INIT_IMAGE_NAME",
+      "upload": "image"
+    },
+    "class_type": "LoadImage",
+    "_meta": {
+      "title": "Load Image"
+    }
+  },
+  "3": {
+    "inputs": {
+      "text": "PLACEHOLDER_POSITIVE_PROMPT",
+      "clip": [
+        "1",
+        1
+      ]
+    },
+    "class_type": "CLIPTextEncode",
+    "_meta": {
+      "title": "CLIP Text Encode (Positive)"
+    }
+  },
+  "4": {
+    "inputs": {
+      "text": "",
+      "clip": [
+        "1",
+        1
+      ]
+    },
+    "class_type": "CLIPTextEncode",
+    "_meta": {
+      "title": "CLIP Text Encode (Negative)"
+    }
+  },
+  "5": {
+    "inputs": {
+      "pixels": [
+        "2",
+        0
+      ],
+      "vae": [
+        "1",
+        2
+      ]
+    },
+    "class_type": "VAEEncode",
+    "_meta": {
+      "title": "VAE Encode"
+    }
+  },
+  "6": {
+    "inputs": {
+      "seed": 0,
+      "steps": 30,
+      "cfg": 5.0,
+      "sampler_name": "euler",
+      "scheduler": "normal",
+      "denoise": 0.7,
+      "model": [
+        "1",
+        0
+      ],
+      "positive": [
+        "3",
+        0
+      ],
+      "negative": [
+        "4",
+        0
+      ],
+      "latent_image": [
+        "5",
+        0
+      ]
+    },
+    "class_type": "KSampler",
+    "_meta": {
+      "title": "KSampler"
+    }
+  },
+  "7": {
+    "inputs": {
+      "samples": [
+        "6",
+        0
+      ],
+      "vae": [
+        "1",
+        2
+      ]
+    },
+    "class_type": "VAEDecode",
+    "_meta": {
+      "title": "VAE Decode"
+    }
+  },
+  "8": {
+    "inputs": {
+      "filename_prefix": "qwen_edit",
+      "images": [
+        "7",
+        0
+      ]
+    },
+    "class_type": "SaveImage",
+    "_meta": {
+      "title": "Save Image"
+    }
+  }
+}

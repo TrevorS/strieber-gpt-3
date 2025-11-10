@@ -37,6 +37,9 @@ def run_server(server_module: str, host: str = "0.0.0.0", port: int = 8000) -> N
         elif server_module == "reader":
             from reader import server as reader_server
             mcp_instance = reader_server.get_mcp()
+        elif server_module == "comfy_qwen":
+            from comfy_qwen import server as comfy_qwen_server
+            mcp_instance = comfy_qwen_server.get_mcp()
         else:
             raise ValueError(f"Unknown MCP server module: {server_module}")
     except ImportError as e:
