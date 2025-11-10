@@ -5,25 +5,22 @@ Provides two tools:
 - qwen_image_edit: Image editing/inpainting using Qwen models
 
 Both tools support:
+- Quality presets (fast/standard/high) with automatic Lightning LoRA
 - Progress streaming via MCP notifications
 - Automatic upload to Open WebUI Files
-- Optional inline image previews
-- Proper MCP content blocks (TextContent, ResourceLink, ImageContent)
+- Proper MCP content blocks (TextContent, ResourceLink)
 """
 
 import asyncio
-import base64
 import json
 import logging
 import os
 import random
-from io import BytesIO
 from pathlib import Path
-from typing import List, Optional
+from typing import Dict, List, Literal, Optional, Tuple
 
 from mcp.server.fastmcp import Context, FastMCP
-from mcp.types import ImageContent, ResourceLink, TextContent
-from PIL import Image
+from mcp.types import ResourceLink, TextContent
 from pydantic import BaseModel, Field, HttpUrl
 
 # Import our clients
@@ -50,22 +47,82 @@ with open(WORKFLOWS_DIR / "qwen_edit_api.json") as f:
     QWEN_EDIT_WORKFLOW = json.load(f)
 
 
+# ============================================================================
+# Quality Presets Configuration
+# ============================================================================
+
+QualityLevel = Literal["fast", "standard", "high"]
+ImageSize = Literal[
+    "1024x1024",  # Square
+    "1024x768",   # Landscape 4:3
+    "768x1024",   # Portrait 3:4
+    "1280x720",   # Landscape 16:9
+    "720x1280",   # Portrait 9:16
+    "1344x768",   # Wide landscape
+    "768x1344",   # Tall portrait
+]
+
+# Quality presets define steps, cfg, and Lightning LoRA usage
+QUALITY_PRESETS: Dict[QualityLevel, Dict] = {
+    "fast": {
+        "use_lightning": True,
+        "lora_file": "Qwen-Image-Lightning-8steps-V1.1.safetensors",
+        "steps": 8,
+        "guidance": 2.5,
+        "description": "8-step Lightning LoRA - fastest generation with great quality",
+    },
+    "standard": {
+        "use_lightning": False,
+        "lora_file": None,
+        "steps": 20,
+        "guidance": 5.0,
+        "description": "20-step standard generation - balanced speed and quality",
+    },
+    "high": {
+        "use_lightning": False,
+        "lora_file": None,
+        "steps": 50,
+        "guidance": 5.0,
+        "description": "50-step high-quality generation - maximum detail",
+    },
+}
+
+# Size presets map string sizes to (width, height) tuples
+SIZE_PRESETS: Dict[ImageSize, Tuple[int, int]] = {
+    "1024x1024": (1024, 1024),
+    "1024x768": (1024, 768),
+    "768x1024": (768, 1024),
+    "1280x720": (1280, 720),
+    "720x1280": (720, 1280),
+    "1344x768": (1344, 768),
+    "768x1344": (768, 1344),
+}
+
+
+# ============================================================================
+# Node ID Mappings
+# ============================================================================
+
 # Node ID mappings for qwen_image workflow
 # Update these to match your actual ComfyUI workflow node IDs
 QWEN_IMAGE_NODES = {
-    "positive_prompt": "2",  # CLIPTextEncode node for positive prompt
-    "negative_prompt": "3",  # CLIPTextEncode node for negative prompt
-    "empty_latent": "4",     # EmptyLatentImage node (width, height, batch_size)
-    "sampler": "5",          # KSampler node (seed, steps, cfg)
+    "checkpoint_loader": "1",    # CheckpointLoader node
+    "lora_loader": "10",         # LoraLoaderModelOnly node (NEW)
+    "positive_prompt": "2",      # CLIPTextEncode node for positive prompt
+    "negative_prompt": "3",      # CLIPTextEncode node for negative prompt
+    "empty_latent": "4",         # EmptyLatentImage node (width, height, batch_size)
+    "sampler": "5",              # KSampler node (seed, steps, cfg)
 }
 
 # Node ID mappings for qwen_edit workflow
 # Update these to match your actual ComfyUI workflow node IDs
 QWEN_EDIT_NODES = {
-    "load_image": "2",       # LoadImage node
-    "positive_prompt": "3",  # CLIPTextEncode node for positive prompt
-    "negative_prompt": "4",  # CLIPTextEncode node for negative prompt
-    "sampler": "6",          # KSampler node (seed, steps, cfg, denoise)
+    "checkpoint_loader": "1",    # CheckpointLoader node
+    "lora_loader": "10",         # LoraLoaderModelOnly node (NEW)
+    "load_image": "2",           # LoadImage node
+    "positive_prompt": "3",      # CLIPTextEncode node for positive prompt
+    "negative_prompt": "4",      # CLIPTextEncode node for negative prompt
+    "sampler": "6",              # KSampler node (seed, steps, cfg, denoise)
 }
 
 
@@ -79,61 +136,169 @@ owui_client = OpenWebUIClient()
 # ============================================================================
 
 class QwenImageInput(BaseModel):
-    """Input schema for qwen_image tool."""
+    """Input schema for qwen_image tool.
 
-    prompt: str = Field(..., description="Positive prompt describing the desired image")
-    negative_prompt: str = Field("", description="Negative prompt (things to avoid)")
-    width: int = Field(1024, ge=512, le=2048, description="Image width in pixels")
-    height: int = Field(1024, ge=512, le=2048, description="Image height in pixels")
-    steps: int = Field(20, ge=1, le=150, description="Number of sampling steps")
-    guidance: float = Field(5.0, ge=1.0, le=30.0, description="Guidance scale (CFG)")
-    seed: Optional[int] = Field(None, description="Random seed (None for random)")
-    batch_size: int = Field(1, ge=1, le=4, description="Number of images to generate")
-    inline_preview: bool = Field(False, description="Include small inline image preview")
-    upload_results_to_openwebui: bool = Field(True, description="Upload results to Open WebUI Files")
+    Provides OpenAI-style quality presets with advanced overrides for power users.
+    """
+
+    prompt: str = Field(
+        ...,
+        description="Text description of the image to generate"
+    )
+    quality: QualityLevel = Field(
+        "fast",
+        description="Generation quality: 'fast' (8 steps, Lightning LoRA), 'standard' (20 steps), or 'high' (50 steps)"
+    )
+    size: ImageSize = Field(
+        "1024x1024",
+        description="Output image size as WIDTHxHEIGHT (e.g., '1024x1024', '1280x720')"
+    )
+    n: int = Field(
+        1,
+        ge=1,
+        le=4,
+        description="Number of images to generate (1-4)"
+    )
+    negative_prompt: str = Field(
+        "",
+        description="Negative prompt describing what to avoid in the generated image"
+    )
+    seed: Optional[int] = Field(
+        None,
+        description="Random seed for reproducible generation (omit for random)"
+    )
+
+    # Advanced overrides (optional)
+    steps: Optional[int] = Field(
+        None,
+        ge=1,
+        le=150,
+        description="Override number of sampling steps (advanced users only)"
+    )
+    guidance: Optional[float] = Field(
+        None,
+        ge=1.0,
+        le=30.0,
+        description="Override CFG/guidance scale (advanced users only)"
+    )
+    use_lightning: Optional[bool] = Field(
+        None,
+        description="Explicitly enable/disable Lightning LoRA (overrides quality preset)"
+    )
+    upload_results_to_openwebui: bool = Field(
+        True,
+        description="Upload generated images to Open WebUI Files API"
+    )
 
 
 class QwenImageEditInput(BaseModel):
-    """Input schema for qwen_image_edit tool."""
+    """Input schema for qwen_image_edit tool.
 
-    prompt: Optional[str] = Field(None, description="Editing prompt (what to change)")
-    init_image_file_id: Optional[str] = Field(None, description="Open WebUI file ID for init image")
-    init_image_url: Optional[HttpUrl] = Field(None, description="URL to init image")
-    mask_file_id: Optional[str] = Field(None, description="Open WebUI file ID for mask")
-    mask_image_url: Optional[HttpUrl] = Field(None, description="URL to mask image")
-    strength: float = Field(0.7, ge=0.0, le=1.0, description="Denoising strength (0=no change, 1=full)")
-    steps: int = Field(30, ge=1, le=150, description="Number of sampling steps")
-    guidance: float = Field(5.0, ge=1.0, le=30.0, description="Guidance scale (CFG)")
-    seed: Optional[int] = Field(None, description="Random seed (None for random)")
-    inline_preview: bool = Field(False, description="Include small inline image preview")
-    upload_results_to_openwebui: bool = Field(True, description="Upload results to Open WebUI Files")
+    Edit or inpaint existing images using Qwen models with quality presets.
+    """
+
+    prompt: Optional[str] = Field(
+        None,
+        description="Text description of the desired edit or transformation"
+    )
+    init_image_file_id: Optional[str] = Field(
+        None,
+        description="Open WebUI file ID for the base image to edit"
+    )
+    init_image_url: Optional[HttpUrl] = Field(
+        None,
+        description="URL to the base image (must be from Open WebUI domain)"
+    )
+    quality: QualityLevel = Field(
+        "fast",
+        description="Generation quality: 'fast' (8 steps, Lightning LoRA), 'standard' (30 steps), or 'high' (50 steps)"
+    )
+    strength: float = Field(
+        0.7,
+        ge=0.0,
+        le=1.0,
+        description="Denoising strength: 0.0 = no change, 1.0 = complete regeneration"
+    )
+    mask_file_id: Optional[str] = Field(
+        None,
+        description="Open WebUI file ID for inpainting mask (optional)"
+    )
+    mask_image_url: Optional[HttpUrl] = Field(
+        None,
+        description="URL to inpainting mask image (optional)"
+    )
+    negative_prompt: str = Field(
+        "",
+        description="Negative prompt describing what to avoid"
+    )
+    seed: Optional[int] = Field(
+        None,
+        description="Random seed for reproducible edits (omit for random)"
+    )
+
+    # Advanced overrides (optional)
+    steps: Optional[int] = Field(
+        None,
+        ge=1,
+        le=150,
+        description="Override number of sampling steps (advanced users only)"
+    )
+    guidance: Optional[float] = Field(
+        None,
+        ge=1.0,
+        le=30.0,
+        description="Override CFG/guidance scale (advanced users only)"
+    )
+    use_lightning: Optional[bool] = Field(
+        None,
+        description="Explicitly enable/disable Lightning LoRA (overrides quality preset)"
+    )
+    upload_results_to_openwebui: bool = Field(
+        True,
+        description="Upload edited images to Open WebUI Files API"
+    )
 
 
 # ============================================================================
 # Helper Functions
 # ============================================================================
 
-def create_thumbnail(image_bytes: bytes, max_size: int = 512) -> str:
-    """Create a base64-encoded thumbnail from image bytes.
+def resolve_quality_settings(
+    quality: QualityLevel,
+    steps_override: Optional[int],
+    guidance_override: Optional[float],
+    use_lightning_override: Optional[bool],
+) -> Dict:
+    """Resolve quality preset with optional advanced overrides.
 
     Args:
-        image_bytes: Raw image bytes
-        max_size: Maximum dimension for thumbnail
+        quality: Quality preset level
+        steps_override: User-provided steps override
+        guidance_override: User-provided guidance override
+        use_lightning_override: User-provided Lightning LoRA override
 
     Returns:
-        Base64-encoded thumbnail data URL
+        Dictionary with resolved settings (steps, guidance, use_lightning, lora_file)
     """
-    img = Image.open(BytesIO(image_bytes))
+    preset = QUALITY_PRESETS[quality].copy()
 
-    # Resize maintaining aspect ratio
-    img.thumbnail((max_size, max_size), Image.Resampling.LANCZOS)
+    # Apply overrides
+    if steps_override is not None:
+        preset["steps"] = steps_override
+        logger.info(f"Overriding steps: {steps_override}")
 
-    # Convert to PNG and encode
-    buffer = BytesIO()
-    img.save(buffer, format="PNG")
-    b64_data = base64.b64encode(buffer.getvalue()).decode("utf-8")
+    if guidance_override is not None:
+        preset["guidance"] = guidance_override
+        logger.info(f"Overriding guidance: {guidance_override}")
 
-    return f"data:image/png;base64,{b64_data}"
+    if use_lightning_override is not None:
+        preset["use_lightning"] = use_lightning_override
+        if use_lightning_override and not preset.get("lora_file"):
+            # Enable Lightning LoRA even if preset doesn't have it
+            preset["lora_file"] = "Qwen-Image-Lightning-8steps-V1.1.safetensors"
+        logger.info(f"Overriding Lightning LoRA: {use_lightning_override}")
+
+    return preset
 
 
 async def download_init_image(
@@ -174,53 +339,74 @@ async def download_init_image(
 @mcp.tool()
 async def qwen_image(
     prompt: str,
+    quality: QualityLevel = "fast",
+    size: ImageSize = "1024x1024",
+    n: int = 1,
     negative_prompt: str = "",
-    width: int = 1024,
-    height: int = 1024,
-    steps: int = 20,
-    guidance: float = 5.0,
     seed: Optional[int] = None,
-    batch_size: int = 1,
-    inline_preview: bool = False,
+    steps: Optional[int] = None,
+    guidance: Optional[float] = None,
+    use_lightning: Optional[bool] = None,
     upload_results_to_openwebui: bool = True,
     ctx: Context = None,
 ) -> List:
-    """Generate images from text using Qwen Image models (txt2img).
+    """Generate images from text using Qwen Image models.
 
-    This tool creates new images from text descriptions using ComfyUI's Qwen
-    workflow. Results are uploaded to Open WebUI Files and returned as resource
-    links by default, making them compatible with non-vision models.
+    This tool creates images from text descriptions with three quality presets:
+    - 'fast': 8-step Lightning LoRA (2-3 seconds, great quality)
+    - 'standard': 20-step standard generation (balanced)
+    - 'high': 50-step maximum quality (slower, best detail)
+
+    Results are uploaded to Open WebUI Files and returned as resource links,
+    making them compatible with both vision and non-vision models.
 
     Args:
-        prompt: Positive prompt describing the desired image
-        negative_prompt: Negative prompt (things to avoid)
-        width: Image width in pixels (512-2048)
-        height: Image height in pixels (512-2048)
-        steps: Number of sampling steps (1-150)
-        guidance: Guidance scale/CFG (1.0-30.0)
-        seed: Random seed (None for random)
-        batch_size: Number of images to generate (1-4)
-        inline_preview: Include small inline image preview (default: False)
+        prompt: Text description of the image to generate
+        quality: Generation quality preset (default: "fast")
+        size: Output image size (default: "1024x1024")
+        n: Number of images to generate (default: 1)
+        negative_prompt: What to avoid in the image (default: "")
+        seed: Random seed for reproducibility (default: random)
+        steps: Override sampling steps (advanced, default: from preset)
+        guidance: Override CFG scale (advanced, default: from preset)
+        use_lightning: Force Lightning LoRA on/off (advanced, default: from preset)
         upload_results_to_openwebui: Upload to OWUI Files (default: True)
         ctx: MCP context for progress notifications
 
     Returns:
-        List of MCP content blocks (TextContent, optional ImageContent, ResourceLinks)
+        List of MCP content blocks:
+        - TextContent: Generation summary
+        - ResourceLink: Links to full-resolution images on OWUI
 
     Example:
+        Generate a fast image:
         {
-          "prompt": "cinematic photo of an astronaut on the moon",
-          "negative_prompt": "blurry, low quality",
-          "width": 768,
-          "height": 1024,
-          "steps": 28,
-          "guidance": 4.5,
-          "seed": 12345
+          "prompt": "sunset over mountains, dramatic lighting",
+          "quality": "fast",
+          "size": "1280x720"
+        }
+
+        High-quality with custom seed:
+        {
+          "prompt": "portrait of a wise elder",
+          "quality": "high",
+          "negative_prompt": "blurry, distorted",
+          "seed": 42
         }
     """
-    logger.info(f"qwen_image called: prompt='{prompt[:50]}...', size={width}x{height}")
+    logger.info(f"qwen_image called: prompt='{prompt[:50]}...', quality={quality}, size={size}")
 
     try:
+        # Resolve quality settings
+        settings = resolve_quality_settings(quality, steps, guidance, use_lightning)
+        final_steps = settings["steps"]
+        final_guidance = settings["guidance"]
+        use_lora = settings["use_lightning"]
+        lora_file = settings.get("lora_file")
+
+        # Parse size
+        width, height = SIZE_PRESETS[size]
+
         # Generate random seed if not provided
         if seed is None:
             seed = random.randint(0, 2**32 - 1)
@@ -228,15 +414,27 @@ async def qwen_image(
         # Prepare workflow
         workflow = json.loads(json.dumps(QWEN_IMAGE_WORKFLOW))  # Deep copy
 
+        # Configure LoRA node
+        if use_lora and lora_file:
+            # Enable LoRA loader
+            workflow[QWEN_IMAGE_NODES["lora_loader"]]["inputs"]["lora_name"] = lora_file
+            workflow[QWEN_IMAGE_NODES["lora_loader"]]["inputs"]["strength_model"] = 1.0
+            workflow[QWEN_IMAGE_NODES["lora_loader"]].pop("mode", None)  # Ensure enabled
+            logger.info(f"Lightning LoRA enabled: {lora_file}")
+        else:
+            # Bypass LoRA loader
+            workflow[QWEN_IMAGE_NODES["lora_loader"]]["mode"] = 4
+            logger.info("Lightning LoRA bypassed")
+
         # Update workflow nodes with parameters
         workflow[QWEN_IMAGE_NODES["positive_prompt"]]["inputs"]["text"] = prompt
         workflow[QWEN_IMAGE_NODES["negative_prompt"]]["inputs"]["text"] = negative_prompt
         workflow[QWEN_IMAGE_NODES["empty_latent"]]["inputs"]["width"] = width
         workflow[QWEN_IMAGE_NODES["empty_latent"]]["inputs"]["height"] = height
-        workflow[QWEN_IMAGE_NODES["empty_latent"]]["inputs"]["batch_size"] = batch_size
+        workflow[QWEN_IMAGE_NODES["empty_latent"]]["inputs"]["batch_size"] = n
         workflow[QWEN_IMAGE_NODES["sampler"]]["inputs"]["seed"] = seed
-        workflow[QWEN_IMAGE_NODES["sampler"]]["inputs"]["steps"] = steps
-        workflow[QWEN_IMAGE_NODES["sampler"]]["inputs"]["cfg"] = guidance
+        workflow[QWEN_IMAGE_NODES["sampler"]]["inputs"]["steps"] = final_steps
+        workflow[QWEN_IMAGE_NODES["sampler"]]["inputs"]["cfg"] = final_guidance
 
         # Queue workflow
         prompt_id = await comfy_client.queue_prompt(workflow)
@@ -244,10 +442,13 @@ async def qwen_image(
         # Track progress
         if ctx:
             async for progress in comfy_client.progress(prompt_id):
+                quality_label = f"quality={quality}"
+                if use_lora:
+                    quality_label += f" (Lightning {final_steps}-step)"
                 await ctx.send_progress_notification(
                     progress=progress,
                     total=100,
-                    message=f"Generating image... {progress}%"
+                    message=f"Generating image ({quality_label})... {progress}%"
                 )
 
         # Collect outputs
@@ -257,11 +458,19 @@ async def qwen_image(
         content_blocks = []
 
         # 1. Text summary
-        summary_text = (
-            f"Generated {len(output_files)} image(s) using Qwen Image.\n"
-            f"Prompt: {prompt}\n"
-            f"Size: {width}x{height}, Steps: {steps}, Guidance: {guidance}, Seed: {seed}"
-        )
+        summary_parts = [
+            f"Generated {len(output_files)} image(s) using Qwen Image.",
+            f"Quality: {quality} ({final_steps} steps, CFG {final_guidance})",
+        ]
+        if use_lora:
+            summary_parts.append(f"Lightning LoRA: {lora_file}")
+        summary_parts.extend([
+            f"Size: {width}x{height}",
+            f"Seed: {seed}",
+            f"Prompt: {prompt}",
+        ])
+
+        summary_text = "\n".join(summary_parts)
         content_blocks.append(TextContent(type="text", text=summary_text))
 
         # 2. Upload to OWUI and create resource links
@@ -270,7 +479,7 @@ async def qwen_image(
                 try:
                     file_id, content_url = await owui_client.upload_file(
                         img_bytes,
-                        f"qwen_image_{prompt_id}_{idx}.png",
+                        f"qwen_image_{quality}_{prompt_id}_{idx}.png",
                         "image/png",
                     )
 
@@ -281,21 +490,10 @@ async def qwen_image(
                             resource={
                                 "uri": content_url,
                                 "mimeType": "image/png",
-                                "name": f"Image {idx + 1}",
+                                "name": f"Image {idx + 1} ({size})",
                             }
                         )
                     )
-
-                    # Optional: add inline preview
-                    if inline_preview:
-                        thumbnail = create_thumbnail(img_bytes)
-                        content_blocks.append(
-                            ImageContent(
-                                type="image",
-                                data=thumbnail,
-                                mimeType="image/png",
-                            )
-                        )
 
                 except Exception as e:
                     logger.error(f"Failed to upload image {idx}: {e}")
@@ -314,7 +512,7 @@ async def qwen_image(
                 )
             )
 
-        logger.info(f"qwen_image completed: {len(output_files)} image(s)")
+        logger.info(f"qwen_image completed: {len(output_files)} image(s), quality={quality}")
         return content_blocks
 
     except Exception as e:
@@ -324,6 +522,7 @@ async def qwen_image(
             f"Troubleshooting:\n"
             f"- Ensure ComfyUI is running at {comfy_client.base_url}\n"
             f"- Check that the Qwen model is loaded in ComfyUI\n"
+            f"- If using Lightning LoRA, ensure {lora_file if 'lora_file' in locals() else 'LoRA file'} is in ComfyUI/models/loras/\n"
             f"- Verify workflow node IDs in server.py match your ComfyUI setup"
         )
         return [TextContent(type="text", text=error_msg)]
@@ -334,55 +533,81 @@ async def qwen_image_edit(
     prompt: Optional[str] = None,
     init_image_file_id: Optional[str] = None,
     init_image_url: Optional[HttpUrl] = None,
+    quality: QualityLevel = "fast",
+    strength: float = 0.7,
     mask_file_id: Optional[str] = None,
     mask_image_url: Optional[HttpUrl] = None,
-    strength: float = 0.7,
-    steps: int = 30,
-    guidance: float = 5.0,
+    negative_prompt: str = "",
     seed: Optional[int] = None,
-    inline_preview: bool = False,
+    steps: Optional[int] = None,
+    guidance: Optional[float] = None,
+    use_lightning: Optional[bool] = None,
     upload_results_to_openwebui: bool = True,
     ctx: Context = None,
 ) -> List:
-    """Edit images using Qwen Image Edit (img2img/inpaint).
+    """Edit or transform images using Qwen Image Edit models.
 
     This tool modifies existing images using text prompts and optional masks.
+    Supports three quality presets with automatic Lightning LoRA for speed:
+    - 'fast': 8-step Lightning LoRA (2-3 seconds)
+    - 'standard': 30-step standard editing (balanced)
+    - 'high': 50-step maximum quality (best detail)
+
     Accepts images via OWUI file IDs or URLs. Results are uploaded to Open WebUI
     Files and returned as resource links by default.
 
     Args:
-        prompt: Editing instruction (what to change)
+        prompt: Text description of the desired edit
         init_image_file_id: OWUI file ID for the base image
-        init_image_url: URL to the base image (OWUI URLs only for security)
-        mask_file_id: OWUI file ID for mask (optional, for inpainting)
+        init_image_url: URL to the base image (must be from OWUI domain)
+        quality: Edit quality preset (default: "fast")
+        strength: Denoising strength, 0.0-1.0 (default: 0.7)
+        mask_file_id: OWUI file ID for inpainting mask (optional)
         mask_image_url: URL to mask image (optional)
-        strength: Denoising strength (0.0=no change, 1.0=full regeneration)
-        steps: Number of sampling steps (1-150)
-        guidance: Guidance scale/CFG (1.0-30.0)
-        seed: Random seed (None for random)
-        inline_preview: Include small inline image preview (default: False)
+        negative_prompt: What to avoid (default: "")
+        seed: Random seed for reproducibility (default: random)
+        steps: Override sampling steps (advanced, default: from preset)
+        guidance: Override CFG scale (advanced, default: from preset)
+        use_lightning: Force Lightning LoRA on/off (advanced, default: from preset)
         upload_results_to_openwebui: Upload to OWUI Files (default: True)
         ctx: MCP context for progress notifications
 
     Returns:
-        List of MCP content blocks (TextContent, optional ImageContent, ResourceLinks)
+        List of MCP content blocks:
+        - TextContent: Edit summary
+        - ResourceLink: Links to edited images on OWUI
 
     Example:
+        Fast edit with file ID:
         {
-          "prompt": "replace sky with dramatic storm clouds",
-          "init_image_file_id": "ab12cd34",
-          "strength": 0.65,
-          "steps": 24,
-          "guidance": 4.0,
-          "seed": 777
+          "prompt": "make the sky more dramatic with storm clouds",
+          "init_image_file_id": "abc123",
+          "quality": "fast",
+          "strength": 0.65
+        }
+
+        High-quality edit with URL:
+        {
+          "prompt": "convert to autumn colors",
+          "init_image_url": "https://webui.example.com/api/v1/files/xyz789/content",
+          "quality": "high",
+          "strength": 0.8,
+          "seed": 42
         }
     """
-    logger.info(f"qwen_image_edit called: prompt='{prompt}'")
+    logger.info(f"qwen_image_edit called: prompt='{prompt}', quality={quality}")
 
     try:
         # Validate inputs
         if not init_image_file_id and not init_image_url:
             raise ValueError("Must provide either init_image_file_id or init_image_url")
+
+        # Resolve quality settings
+        settings = resolve_quality_settings(quality, steps, guidance, use_lightning)
+        final_steps = settings["steps"]
+        final_guidance = settings["guidance"]
+        use_lora = settings["use_lightning"]
+        lora_file = settings.get("lora_file")
 
         # Generate random seed if not provided
         if seed is None:
@@ -417,12 +642,25 @@ async def qwen_image_edit(
         # Prepare workflow
         workflow = json.loads(json.dumps(QWEN_EDIT_WORKFLOW))  # Deep copy
 
+        # Configure LoRA node
+        if use_lora and lora_file:
+            # Enable LoRA loader
+            workflow[QWEN_EDIT_NODES["lora_loader"]]["inputs"]["lora_name"] = lora_file
+            workflow[QWEN_EDIT_NODES["lora_loader"]]["inputs"]["strength_model"] = 1.0
+            workflow[QWEN_EDIT_NODES["lora_loader"]].pop("mode", None)  # Ensure enabled
+            logger.info(f"Lightning LoRA enabled: {lora_file}")
+        else:
+            # Bypass LoRA loader
+            workflow[QWEN_EDIT_NODES["lora_loader"]]["mode"] = 4
+            logger.info("Lightning LoRA bypassed")
+
         # Update workflow nodes with parameters
         workflow[QWEN_EDIT_NODES["load_image"]]["inputs"]["image"] = init_filename
         workflow[QWEN_EDIT_NODES["positive_prompt"]]["inputs"]["text"] = prompt or ""
+        workflow[QWEN_EDIT_NODES["negative_prompt"]]["inputs"]["text"] = negative_prompt
         workflow[QWEN_EDIT_NODES["sampler"]]["inputs"]["seed"] = seed
-        workflow[QWEN_EDIT_NODES["sampler"]]["inputs"]["steps"] = steps
-        workflow[QWEN_EDIT_NODES["sampler"]]["inputs"]["cfg"] = guidance
+        workflow[QWEN_EDIT_NODES["sampler"]]["inputs"]["steps"] = final_steps
+        workflow[QWEN_EDIT_NODES["sampler"]]["inputs"]["cfg"] = final_guidance
         workflow[QWEN_EDIT_NODES["sampler"]]["inputs"]["denoise"] = strength
 
         # Queue workflow
@@ -436,10 +674,13 @@ async def qwen_image_edit(
             async for progress in comfy_client.progress(prompt_id):
                 # Map 0-100 to 25-95 range (reserve 0-25 for prep, 95-100 for upload)
                 scaled_progress = 25 + int(progress * 0.70)
+                quality_label = f"quality={quality}"
+                if use_lora:
+                    quality_label += f" (Lightning {final_steps}-step)"
                 await ctx.send_progress_notification(
                     progress=scaled_progress,
                     total=100,
-                    message=f"Editing image... {progress}%"
+                    message=f"Editing image ({quality_label})... {progress}%"
                 )
 
         # Collect outputs
@@ -449,11 +690,19 @@ async def qwen_image_edit(
         content_blocks = []
 
         # 1. Text summary
-        summary_text = (
-            f"Edited {len(output_files)} image(s) using Qwen Image Edit.\n"
-            f"Prompt: {prompt or '(none)'}\n"
-            f"Strength: {strength}, Steps: {steps}, Guidance: {guidance}, Seed: {seed}"
-        )
+        summary_parts = [
+            f"Edited {len(output_files)} image(s) using Qwen Image Edit.",
+            f"Quality: {quality} ({final_steps} steps, CFG {final_guidance})",
+        ]
+        if use_lora:
+            summary_parts.append(f"Lightning LoRA: {lora_file}")
+        summary_parts.extend([
+            f"Strength: {strength}",
+            f"Seed: {seed}",
+            f"Prompt: {prompt or '(none)'}",
+        ])
+
+        summary_text = "\n".join(summary_parts)
         content_blocks.append(TextContent(type="text", text=summary_text))
 
         # 2. Upload to OWUI and create resource links
@@ -465,7 +714,7 @@ async def qwen_image_edit(
                 try:
                     file_id, content_url = await owui_client.upload_file(
                         img_bytes,
-                        f"qwen_edit_{prompt_id}_{idx}.png",
+                        f"qwen_edit_{quality}_{prompt_id}_{idx}.png",
                         "image/png",
                     )
 
@@ -480,17 +729,6 @@ async def qwen_image_edit(
                             }
                         )
                     )
-
-                    # Optional: add inline preview
-                    if inline_preview:
-                        thumbnail = create_thumbnail(img_bytes)
-                        content_blocks.append(
-                            ImageContent(
-                                type="image",
-                                data=thumbnail,
-                                mimeType="image/png",
-                            )
-                        )
 
                 except Exception as e:
                     logger.error(f"Failed to upload edited image {idx}: {e}")
@@ -512,7 +750,7 @@ async def qwen_image_edit(
         if ctx:
             await ctx.send_progress_notification(100, 100, "Complete!")
 
-        logger.info(f"qwen_image_edit completed: {len(output_files)} image(s)")
+        logger.info(f"qwen_image_edit completed: {len(output_files)} image(s), quality={quality}")
         return content_blocks
 
     except Exception as e:
@@ -524,6 +762,7 @@ async def qwen_image_edit(
             f"- Check that the Qwen model is loaded in ComfyUI\n"
             f"- Verify init image source (file_id or URL)\n"
             f"- Ensure OWUI_BASE_URL and OWUI_API_TOKEN are set correctly\n"
+            f"- If using Lightning LoRA, ensure {lora_file if 'lora_file' in locals() else 'LoRA file'} is in ComfyUI/models/loras/\n"
             f"- Verify workflow node IDs in server.py match your ComfyUI setup"
         )
         return [TextContent(type="text", text=error_msg)]

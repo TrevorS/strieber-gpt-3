@@ -8,12 +8,18 @@ Production-ready MCP server that fronts ComfyUI workflows for **Qwen Image** gen
   - `qwen_image`: Text-to-image generation (txt2img)
   - `qwen_image_edit`: Image editing and inpainting (img2img)
 
+- **Quality Presets with Lightning LoRA:**
+  - `fast`: 8-step Lightning LoRA (2-3 seconds, 12-25× faster)
+  - `standard`: 20-step standard generation (balanced)
+  - `high`: 50-step maximum quality (best detail)
+
+- **OpenAI-Style API:** Simple, familiar parameters (`quality`, `size`, `n`) with advanced overrides
+
 - **Streamable HTTP Transport:** Ready for Docker deployment with progress streaming
 
 - **Open WebUI Integration:**
   - Automatic file uploads to OWUI Files API
   - Returns resource links (works with non-vision models)
-  - Optional inline image previews
   - Pre-model filter for converting inline images to file URLs
 
 - **Progress Tracking:** Real-time progress notifications via MCP
@@ -36,26 +42,32 @@ Production-ready MCP server that fronts ComfyUI workflows for **Qwen Image** gen
                       └──────────────┘
 ```
 
-## Directory Structure
+## What's New: Lightning LoRA Support
 
-```
-comfy_qwen/
-├── server.py                       # Main MCP server with tools
-├── comfy_client.py                 # ComfyUI API client
-├── owui_client.py                  # Open WebUI Files API client
-├── workflows/
-│   ├── qwen_image_api.json         # txt2img workflow template
-│   └── qwen_edit_api.json          # img2img workflow template
-├── filter/
-│   └── image_to_file_router.py     # Open WebUI pre-model filter
-└── README.md
-```
+**Lightning LoRAs** provide 12-25× speed improvements with minimal quality loss:
+
+- **Default behavior**: `quality="fast"` uses 8-step Lightning LoRA
+- **Automatic switching**: Quality presets automatically enable/disable LoRA
+- **Manual override**: Advanced users can force `use_lightning=true/false`
+
+### Speed Comparison
+
+| Quality | Steps | LoRA | Time (estimate) | Use Case |
+|---------|-------|------|-----------------|----------|
+| `fast` | 8 | ✓ Lightning | ~2-3 sec | Quick iterations, previews |
+| `standard` | 20 | ✗ None | ~8-10 sec | Balanced quality/speed |
+| `high` | 50 | ✗ None | ~20-30 sec | Final renders, maximum detail |
 
 ## Prerequisites
 
 1. **ComfyUI** running with Qwen models loaded
-2. **Open WebUI** with Files API enabled
-3. **Python 3.10+** with required packages (see `requirements.txt`)
+2. **Lightning LoRA files** (optional, for `fast` quality):
+   - Download from [HuggingFace](https://huggingface.co/lightx2v/Qwen-Image-Lightning)
+   - Place in `ComfyUI/models/loras/`:
+     - `Qwen-Image-Lightning-8steps-V1.1.safetensors` (txt2img)
+     - `Qwen-Image-Edit-Lightning-8steps-V1.0.safetensors` (img2img)
+3. **Open WebUI** with Files API enabled
+4. **Python 3.10+** with required packages (see `requirements.txt`)
 
 ## Setup
 
@@ -90,40 +102,62 @@ export PORT="8000"
 3. Create a new API key
 4. Copy the token value
 
-### 3. Export ComfyUI Workflows
+### 3. Download Lightning LoRA Models (Optional)
+
+For `fast` quality preset:
+
+```bash
+# Navigate to ComfyUI models directory
+cd /path/to/ComfyUI/models/loras
+
+# Download txt2img Lightning LoRA
+wget https://huggingface.co/lightx2v/Qwen-Image-Lightning/resolve/main/Qwen-Image-Lightning-8steps-V1.1.safetensors
+
+# Download img2img/edit Lightning LoRA
+wget https://huggingface.co/lightx2v/Qwen-Image-Lightning/resolve/main/Qwen-Image-Edit-Lightning-8steps-V1.0.safetensors
+```
+
+**Note:** If you skip this step, `quality="fast"` will fail. Use `quality="standard"` or `quality="high"` instead.
+
+### 4. Export ComfyUI Workflows
 
 You need to export your actual ComfyUI workflows in **API format**:
 
 1. Open ComfyUI and load your Qwen Image workflow
-2. Click **"Save (API Format)"** (not regular save!)
-3. Replace `workflows/qwen_image_api.json` with the exported file
-4. Repeat for your Qwen Edit workflow → `workflows/qwen_edit_api.json`
+2. **Important:** Add a `LoraLoaderModelOnly` node between the checkpoint and sampler
+3. Click **"Save (API Format)"** (not regular save!)
+4. Replace `workflows/qwen_image_api.json` with the exported file
+5. Repeat for your Qwen Edit workflow → `workflows/qwen_edit_api.json`
 
-### 4. Update Node ID Mappings
+### 5. Update Node ID Mappings
 
 Edit `server.py` and update the node ID mappings to match your workflows:
 
 ```python
-# Around line 43-49 for qwen_image
+# Around line 108-115 for qwen_image
 QWEN_IMAGE_NODES = {
-    "positive_prompt": "2",  # Update with your CLIPTextEncode node ID
-    "negative_prompt": "3",  # Update with your negative prompt node ID
-    "empty_latent": "4",     # Update with your EmptyLatentImage node ID
-    "sampler": "5",          # Update with your KSampler node ID
+    "checkpoint_loader": "1",    # Update with your CheckpointLoader node ID
+    "lora_loader": "10",         # Update with your LoraLoaderModelOnly node ID
+    "positive_prompt": "2",      # Update with your positive CLIPTextEncode node ID
+    "negative_prompt": "3",      # Update with your negative CLIPTextEncode node ID
+    "empty_latent": "4",         # Update with your EmptyLatentImage node ID
+    "sampler": "5",              # Update with your KSampler node ID
 }
 
-# Around line 52-58 for qwen_edit
+# Around line 119-126 for qwen_edit
 QWEN_EDIT_NODES = {
-    "load_image": "2",       # Update with your LoadImage node ID
-    "positive_prompt": "3",  # Update with your CLIPTextEncode node ID
-    "negative_prompt": "4",  # Update with your negative prompt node ID
-    "sampler": "6",          # Update with your KSampler node ID
+    "checkpoint_loader": "1",    # Update with your CheckpointLoader node ID
+    "lora_loader": "10",         # Update with your LoraLoaderModelOnly node ID
+    "load_image": "2",           # Update with your LoadImage node ID
+    "positive_prompt": "3",      # Update with your positive CLIPTextEncode node ID
+    "negative_prompt": "4",      # Update with your negative CLIPTextEncode node ID
+    "sampler": "6",              # Update with your KSampler node ID
 }
 ```
 
 **How to find node IDs:**
 - Open the exported JSON workflow file
-- Node IDs are the top-level keys (e.g., `"1"`, `"2"`, `"3"`)
+- Node IDs are the top-level keys (e.g., `"1"`, `"2"`, `"10"`)
 - Match them to node titles in the `_meta.title` field
 
 ## Running the Server
@@ -209,13 +243,12 @@ For non-vision model support:
 
 ## Usage Examples
 
-### Example 1: Text-to-Image Generation
+### Example 1: Fast Text-to-Image (Default)
 
 In Open WebUI chat:
 
 ```
-Generate a cinematic photo of an astronaut on the moon,
-high detail, dramatic lighting
+Generate a sunset over mountains with dramatic lighting
 ```
 
 Behind the scenes, the AI will call:
@@ -224,27 +257,65 @@ Behind the scenes, the AI will call:
 {
   "tool": "qwen_image",
   "arguments": {
-    "prompt": "cinematic photo of an astronaut on the moon, high detail, dramatic lighting",
-    "negative_prompt": "blurry, low quality, distorted",
-    "width": 1024,
-    "height": 1024,
-    "steps": 28,
-    "guidance": 5.0
+    "prompt": "sunset over mountains with dramatic lighting",
+    "quality": "fast"
   }
 }
 ```
 
-**Result:** Text summary + resource links to generated images
+**Result:** 8-step Lightning LoRA generation (~2-3 seconds)
 
-### Example 2: Image Editing
+### Example 2: High-Quality Generation
+
+```
+Create a detailed portrait of a wise elder, high quality, sharp details
+```
+
+AI calls:
+
+```json
+{
+  "tool": "qwen_image",
+  "arguments": {
+    "prompt": "detailed portrait of a wise elder, sharp details",
+    "quality": "high",
+    "negative_prompt": "blurry, low quality, distorted"
+  }
+}
+```
+
+**Result:** 50-step standard generation (~20-30 seconds)
+
+### Example 3: Custom Size and Multiple Images
+
+```
+Generate 2 wide landscape images of a futuristic city, size 1344x768
+```
+
+AI calls:
+
+```json
+{
+  "tool": "qwen_image",
+  "arguments": {
+    "prompt": "futuristic city",
+    "quality": "fast",
+    "size": "1344x768",
+    "n": 2
+  }
+}
+```
+
+**Result:** 2 images at 1344x768 resolution
+
+### Example 4: Image Editing
 
 1. Upload an image in the chat
-2. Say: `Replace the sky with dramatic storm clouds`
+2. Say: `Make the sky more dramatic with storm clouds`
 
 The filter will:
 1. Upload your image to OWUI Files
 2. Convert it to a file URL
-3. Suggest using `qwen_image_edit`
 
 The AI will then call:
 
@@ -252,36 +323,36 @@ The AI will then call:
 {
   "tool": "qwen_image_edit",
   "arguments": {
-    "prompt": "Replace the sky with dramatic storm clouds",
+    "prompt": "make the sky more dramatic with storm clouds",
     "init_image_url": "https://webui.example.com/api/v1/files/abc123/content",
-    "strength": 0.7,
-    "steps": 30,
-    "guidance": 5.0
+    "quality": "fast",
+    "strength": 0.7
   }
 }
 ```
 
-**Result:** Text summary + resource links to edited images
+**Result:** Fast 8-step edit with Lightning LoRA
 
-### Example 3: Advanced Generation
+### Example 5: Advanced - Reproducible Generation
 
 ```
-Create 2 images of a futuristic cityscape at sunset,
-size 768x1024, 35 sampling steps, high quality
+Generate an astronaut on the moon, seed 42, standard quality
 ```
 
-Parameters extracted:
-- `batch_size: 2`
-- `width: 768`, `height: 1024`
-- `steps: 35`
-- `prompt: "futuristic cityscape at sunset, high quality"`
+AI calls:
 
-### Example 4: Inpainting (with mask)
+```json
+{
+  "tool": "qwen_image",
+  "arguments": {
+    "prompt": "astronaut on the moon",
+    "quality": "standard",
+    "seed": 42
+  }
+}
+```
 
-1. Upload an image and a mask
-2. Say: `Fill the masked area with a mountain landscape`
-
-The tool will use the mask for targeted editing.
+**Result:** Reproducible 20-step generation (same seed = same image)
 
 ## Tool Reference
 
@@ -289,41 +360,98 @@ The tool will use the mask for targeted editing.
 
 **Purpose:** Generate images from text descriptions
 
-**Parameters:**
+**Simple Parameters:**
 - `prompt` (required): Text description of desired image
-- `negative_prompt` (optional): Things to avoid
-- `width` (default: 1024): Image width (512-2048)
-- `height` (default: 1024): Image height (512-2048)
-- `steps` (default: 20): Sampling steps (1-150)
-- `guidance` (default: 5.0): Guidance/CFG scale (1.0-30.0)
+- `quality` (default: `"fast"`): `"fast"` | `"standard"` | `"high"`
+- `size` (default: `"1024x1024"`): Image size (see sizes below)
+- `n` (default: `1`): Number of images to generate (1-4)
+- `negative_prompt` (default: `""`): What to avoid
 - `seed` (optional): Random seed for reproducibility
-- `batch_size` (default: 1): Number of images (1-4)
-- `inline_preview` (default: false): Include thumbnail
-- `upload_results_to_openwebui` (default: true): Upload to Files
+
+**Available Sizes:**
+- `"1024x1024"` - Square (default)
+- `"1024x768"` - Landscape 4:3
+- `"768x1024"` - Portrait 3:4
+- `"1280x720"` - Landscape 16:9
+- `"720x1280"` - Portrait 9:16
+- `"1344x768"` - Wide landscape
+- `"768x1344"` - Tall portrait
+
+**Advanced Parameters (optional):**
+- `steps` - Override sampling steps
+- `guidance` - Override CFG scale
+- `use_lightning` - Force Lightning LoRA on/off
+- `upload_results_to_openwebui` (default: `true`)
 
 **Returns:**
-- `TextContent`: Generation summary
-- `ResourceLink`: Links to full-resolution images
-- `ImageContent` (if `inline_preview=true`): Thumbnail
+- `TextContent`: Generation summary with settings
+- `ResourceLink`: Links to full-resolution images on OWUI
 
 ### qwen_image_edit
 
-**Purpose:** Edit/modify existing images
+**Purpose:** Edit or transform existing images
 
-**Parameters:**
-- `prompt` (optional): Editing instruction
-- `init_image_file_id` (one required): OWUI file ID
-- `init_image_url` (one required): Image URL
-- `mask_file_id` (optional): Mask file ID (for inpainting)
-- `mask_image_url` (optional): Mask URL
-- `strength` (default: 0.7): Denoising strength (0.0-1.0)
-- `steps` (default: 30): Sampling steps
-- `guidance` (default: 5.0): Guidance scale
-- `seed` (optional): Random seed
-- `inline_preview` (default: false): Include thumbnail
-- `upload_results_to_openwebui` (default: true): Upload to Files
+**Simple Parameters:**
+- `prompt`: Editing instruction
+- `init_image_file_id` | `init_image_url` (one required): Base image source
+- `quality` (default: `"fast"`): `"fast"` | `"standard"` | `"high"`
+- `strength` (default: `0.7`): Denoising strength (0.0-1.0)
+- `mask_file_id` | `mask_image_url` (optional): Inpainting mask
+- `negative_prompt` (default: `""`): What to avoid
+- `seed` (optional): Random seed for reproducibility
+
+**Advanced Parameters (optional):**
+- `steps` - Override sampling steps
+- `guidance` - Override CFG scale
+- `use_lightning` - Force Lightning LoRA on/off
+- `upload_results_to_openwebui` (default: `true`)
 
 **Returns:** Same as `qwen_image`
+
+## Quality Preset Details
+
+### Fast (Default)
+
+```python
+{
+  "use_lightning": True,
+  "lora_file": "Qwen-Image-Lightning-8steps-V1.1.safetensors",
+  "steps": 8,
+  "guidance": 2.5
+}
+```
+
+- **Speed:** ~2-3 seconds
+- **Use case:** Quick iterations, previews, most generations
+- **Quality:** Excellent (12-25× faster with minimal loss)
+
+### Standard
+
+```python
+{
+  "use_lightning": False,
+  "steps": 20,
+  "guidance": 5.0
+}
+```
+
+- **Speed:** ~8-10 seconds
+- **Use case:** Balanced quality/speed when LoRA unavailable
+- **Quality:** Good baseline
+
+### High
+
+```python
+{
+  "use_lightning": False,
+  "steps": 50,
+  "guidance": 5.0
+}
+```
+
+- **Speed:** ~20-30 seconds
+- **Use case:** Final renders, maximum detail
+- **Quality:** Best possible
 
 ## Troubleshooting
 
@@ -339,6 +467,15 @@ The tool will use the mask for targeted editing.
 2. Verify `COMFY_URL` in environment
 3. Test workflow manually in ComfyUI first
 4. Check server logs for detailed errors
+
+### Issue: "Lightning LoRA file not found"
+
+**Cause:** Lightning LoRA files not in `ComfyUI/models/loras/`
+
+**Solutions:**
+1. Download Lightning LoRAs (see Setup step 3)
+2. Place files in correct directory
+3. Or use `quality="standard"` or `quality="high"` instead
 
 ### Issue: "Failed to upload file to Open WebUI"
 
@@ -359,12 +496,14 @@ The tool will use the mask for targeted editing.
 - Workflow failed silently
 - Wrong node IDs in mappings
 - Model not loaded in ComfyUI
+- LoRA node misconfigured
 
 **Solutions:**
 1. Check ComfyUI logs for errors
 2. Verify node ID mappings in `server.py`
 3. Ensure Qwen model is loaded: check ComfyUI UI
-4. Test workflow manually in ComfyUI first
+4. Verify LoRA node is properly connected in workflow
+5. Test workflow manually in ComfyUI first
 
 ### Issue: "URL not from Open WebUI domain"
 
@@ -375,14 +514,14 @@ The tool will use the mask for targeted editing.
 - Images must be uploaded to OWUI Files first
 - The filter handles this automatically
 
-### Issue: Progress stuck at 90%
+## Performance Tips
 
-**Cause:** Workflow taking longer than expected
-
-**Solution:**
-- This is normal for high-resolution images
-- Wait for completion (check ComfyUI UI)
-- Increase timeout in `comfy_client.py` if needed
+1. **Use fast quality by default:** Lightning LoRA provides 95%+ quality at 12-25× speed
+2. **Batch when possible:** Use `n=2` or `n=3` for multiple variations
+3. **Optimize workflows:** Simplify ComfyUI workflows where possible
+4. **Cache models:** Keep Qwen models loaded in ComfyUI
+5. **Right-size images:** Lower resolution = faster generation
+6. **Adjust strength:** For edits, lower strength (0.5-0.6) = faster
 
 ## Development & Testing
 
@@ -399,18 +538,8 @@ pytest comfy_qwen/tests/ -v
 # Start server
 python comfy_qwen/server.py
 
-# In another terminal, test with curl
-curl -X POST http://localhost:8000/tools/call \
-  -H "Content-Type: application/json" \
-  -d '{
-    "name": "qwen_image",
-    "arguments": {
-      "prompt": "test image",
-      "width": 512,
-      "height": 512,
-      "steps": 10
-    }
-  }'
+# In another terminal, test with example script
+python comfy_qwen/example_usage.py
 ```
 
 ### Enable Debug Logging
@@ -471,36 +600,9 @@ In Open WebUI filter settings:
 - Content-Type headers checked
 - Malformed data rejected
 
-## Performance Tips
-
-1. **Batch Processing:** Use `batch_size` for multiple variations
-2. **Workflow Optimization:** Simplify ComfyUI workflows where possible
-3. **Caching:** ComfyUI caches models - keep them loaded
-4. **Resolution:** Lower resolution = faster generation
-5. **Steps:** 20-30 steps often sufficient for good quality
-
-## Contributing
-
-When modifying this server:
-
-1. Update node mappings in `server.py` for your workflows
-2. Test with various parameter combinations
-3. Update this README with new features
-4. Add tests for new functionality
-
 ## License
 
 MIT License - see repository root for details
-
-## Support
-
-For issues:
-1. Check ComfyUI logs
-2. Check MCP server logs
-3. Enable debug logging
-4. Verify environment variables
-5. Test workflows manually in ComfyUI
-6. Open an issue with logs and configuration
 
 ## Credits
 
@@ -509,3 +611,4 @@ Built with:
 - [ComfyUI](https://github.com/comfyanonymous/ComfyUI) - Workflow engine
 - [Open WebUI](https://github.com/open-webui/open-webui) - Web interface
 - [Qwen Models](https://github.com/QwenLM) - Image generation models
+- [Qwen Lightning LoRA](https://huggingface.co/lightx2v/Qwen-Image-Lightning) - Fast generation

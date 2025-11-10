@@ -1,23 +1,39 @@
 {
-  "_comment": "This is a template workflow for Qwen Image (txt2img) generation.",
+  "_comment": "Qwen Image (txt2img) workflow with Lightning LoRA support.",
   "_instructions": "Export your ComfyUI workflow in API format and replace this file. Update NODE_MAPPINGS in server.py to match your actual node IDs.",
   "_node_mapping": {
-    "checkpoint_loader": "Node ID that loads the Qwen model checkpoint",
-    "positive_prompt": "Node ID for the positive/main prompt (CLIPTextEncode)",
-    "negative_prompt": "Node ID for the negative prompt (CLIPTextEncode)",
-    "empty_latent": "Node ID that creates empty latent image (width, height, batch_size)",
-    "sampler": "Node ID for KSampler (seed, steps, cfg, sampler_name, scheduler)",
-    "vae_decode": "Node ID that decodes latent to image",
-    "save_image": "Node ID that saves/outputs the final image"
+    "checkpoint_loader": "Node ID 1 - Loads the Qwen model checkpoint",
+    "lora_loader": "Node ID 10 - LoraLoaderModelOnly for Lightning LoRA (NEW, can be bypassed)",
+    "positive_prompt": "Node ID 2 - CLIPTextEncode for positive prompt",
+    "negative_prompt": "Node ID 3 - CLIPTextEncode for negative prompt",
+    "empty_latent": "Node ID 4 - EmptyLatentImage (width, height, batch_size)",
+    "sampler": "Node ID 5 - KSampler (seed, steps, cfg)",
+    "vae_decode": "Node ID 6 - VAEDecode",
+    "save_image": "Node ID 7 - SaveImage"
   },
   "1": {
     "inputs": {
-      "ckpt_name": "qwen_image_model.safetensors"
+      "ckpt_name": "qwen_image_fp8_e4m3fn.safetensors"
     },
     "class_type": "CheckpointLoaderSimple",
     "_meta": {
       "title": "Load Checkpoint"
     }
+  },
+  "10": {
+    "inputs": {
+      "model": [
+        "1",
+        0
+      ],
+      "lora_name": "Qwen-Image-Lightning-8steps-V1.1.safetensors",
+      "strength_model": 1.0
+    },
+    "class_type": "LoraLoaderModelOnly",
+    "_meta": {
+      "title": "Load Lightning LoRA (Optional)"
+    },
+    "_note": "This node can be bypassed by setting mode=4. The server.py will set mode=4 when quality='standard' or 'high'."
   },
   "2": {
     "inputs": {
@@ -62,10 +78,10 @@
       "steps": 20,
       "cfg": 5.0,
       "sampler_name": "euler",
-      "scheduler": "normal",
+      "scheduler": "simple",
       "denoise": 1.0,
       "model": [
-        "1",
+        "10",
         0
       ],
       "positive": [
@@ -84,7 +100,8 @@
     "class_type": "KSampler",
     "_meta": {
       "title": "KSampler"
-    }
+    },
+    "_note": "Model input comes from LoRA loader (node 10). When LoRA is bypassed, this will still work as the LoRA passthrough outputs the model."
   },
   "6": {
     "inputs": {
