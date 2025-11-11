@@ -275,6 +275,17 @@ def get_unit_symbol(units: str) -> str:
     """
     return FAHRENHEIT_DISPLAY_UNIT if units == "fahrenheit" else CELSIUS_DISPLAY_UNIT
 
+def get_wind_speed_unit(units: str) -> str:
+    """Get wind speed unit based on temperature units.
+
+    Args:
+        units: Temperature units ("celsius" or "fahrenheit")
+
+    Returns:
+        Wind speed unit string ("mph" or "km/h")
+    """
+    return "mph" if units == "fahrenheit" else "km/h"
+
 # ============================================================================
 # GEOCODING FUNCTIONS
 # ============================================================================
@@ -395,7 +406,7 @@ def _build_base_params(lat: float, lon: float, units: str) -> Dict[str, Any]:
         "latitude": lat,
         "longitude": lon,
         "temperature_unit": "fahrenheit" if units == "fahrenheit" else "celsius",
-        "wind_speed_unit": "kmh",
+        "wind_speed_unit": "mph" if units == "fahrenheit" else "kmh",
         "timezone": "auto"
     }
 
@@ -654,6 +665,7 @@ def format_current_weather_text(location: str, data: Dict[str, Any]) -> str:
     wind = data.get("wind_speed")
     units = data.get("units", "celsius")
     unit_symbol = get_unit_symbol(units)
+    wind_unit = get_wind_speed_unit(units)
 
     # Additional parameters
     precipitation = data.get("precipitation")
@@ -671,7 +683,7 @@ def format_current_weather_text(location: str, data: Dict[str, Any]) -> str:
     if dew_point is not None:
         text += f"Dew point: {dew_point}{unit_symbol}\n"
 
-    text += f"Wind: {wind} km/h\n"
+    text += f"Wind: {wind} {wind_unit}\n"
 
     if cloud_cover is not None:
         text += f"Cloud cover: {cloud_cover}%\n"
@@ -778,7 +790,7 @@ async def get_weather(
     Args:
         location: Location name (e.g., "Paris", "New York", "Tokyo")
         forecast_type: Type of forecast - "current", "daily" (24h), or "weekly" (7d)
-        units: Temperature units - "celsius" or "fahrenheit"
+        units: Temperature units - "celsius" or "fahrenheit" (also determines wind speed units: km/h or mph)
 
     Returns:
         CallToolResult with formatted weather text, structured data, and rich metadata
@@ -795,7 +807,8 @@ async def get_weather(
     - Humidity: 30-50% (comfortable), 50-70% (noticeable/sticky), >70% (uncomfortable), >85% (very humid/oppressive)
       High humidity makes temperatures feel more extreme
 
-    - Wind Speed: <10 km/h (calm), 10-30 (breezy/pleasant), 30-50 (windy/gusty), >50 (strong/difficult conditions)
+    - Wind Speed (km/h): <10 (calm), 10-30 (breezy/pleasant), 30-50 (windy/gusty), >50 (strong/difficult)
+      Wind Speed (mph): <6 (calm), 6-19 (breezy/pleasant), 19-31 (windy/gusty), >31 (strong/difficult)
 
     - Precipitation Probability: <20% (unlikely), 20-50% (possible/uncertain), 50-80% (likely), >80% (very likely/expected)
 
