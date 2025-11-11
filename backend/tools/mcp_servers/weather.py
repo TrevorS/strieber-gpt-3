@@ -123,10 +123,10 @@ class ForecastType(str, Enum):
     DAILY = "daily"
     WEEKLY = "weekly"
 
-class TemperatureUnits(str, Enum):
-    """Valid temperature units."""
-    CELSIUS = "celsius"
-    FAHRENHEIT = "fahrenheit"
+class UnitSystem(str, Enum):
+    """Valid unit systems."""
+    METRIC = "metric"
+    IMPERIAL = "imperial"
 
 # ============================================================================
 # PYDANTIC MODELS
@@ -145,9 +145,9 @@ class WeatherInputSchema(BaseModel):
         default="current",
         description="Type of forecast - 'current' for current weather, 'daily' for 24h forecast, 'weekly' for 7d forecast"
     )
-    units: Literal["celsius", "fahrenheit"] = Field(
-        default="fahrenheit",
-        description="Temperature units - 'celsius' or 'fahrenheit'"
+    units: Literal["metric", "imperial"] = Field(
+        default="imperial",
+        description="Unit system - 'metric' (°C, km/h) or 'imperial' (°F, mph)"
     )
 
     @field_validator("location")
@@ -268,23 +268,23 @@ def get_unit_symbol(units: str) -> str:
     """Get temperature unit symbol.
 
     Args:
-        units: Temperature units ("celsius" or "fahrenheit")
+        units: Unit system ("metric" or "imperial")
 
     Returns:
         Unit symbol string
     """
-    return FAHRENHEIT_DISPLAY_UNIT if units == "fahrenheit" else CELSIUS_DISPLAY_UNIT
+    return FAHRENHEIT_DISPLAY_UNIT if units == "imperial" else CELSIUS_DISPLAY_UNIT
 
 def get_wind_speed_unit(units: str) -> str:
-    """Get wind speed unit based on temperature units.
+    """Get wind speed unit based on unit system.
 
     Args:
-        units: Temperature units ("celsius" or "fahrenheit")
+        units: Unit system ("metric" or "imperial")
 
     Returns:
         Wind speed unit string ("mph" or "km/h")
     """
-    return "mph" if units == "fahrenheit" else "km/h"
+    return "mph" if units == "imperial" else "km/h"
 
 # ============================================================================
 # GEOCODING FUNCTIONS
@@ -397,7 +397,7 @@ def _build_base_params(lat: float, lon: float, units: str) -> Dict[str, Any]:
     Args:
         lat: Latitude coordinate
         lon: Longitude coordinate
-        units: Temperature units ("celsius" or "fahrenheit")
+        units: Unit system ("metric" or "imperial")
 
     Returns:
         Dict with common API parameters
@@ -405,8 +405,8 @@ def _build_base_params(lat: float, lon: float, units: str) -> Dict[str, Any]:
     return {
         "latitude": lat,
         "longitude": lon,
-        "temperature_unit": "fahrenheit" if units == "fahrenheit" else "celsius",
-        "wind_speed_unit": "mph" if units == "fahrenheit" else "kmh",
+        "temperature_unit": "fahrenheit" if units == "imperial" else "celsius",
+        "wind_speed_unit": "mph" if units == "imperial" else "kmh",
         "timezone": "auto"
     }
 
@@ -453,13 +453,13 @@ async def _fetch_weather_data(
 # ============================================================================
 
 
-async def fetch_current_weather(lat: float, lon: float, units: str = "celsius") -> Dict[str, Any]:
+async def fetch_current_weather(lat: float, lon: float, units: str = "metric") -> Dict[str, Any]:
     """Fetch current weather for given coordinates.
 
     Args:
         lat: Latitude coordinate
         lon: Longitude coordinate
-        units: Temperature units ("celsius" or "fahrenheit")
+        units: Unit system ("metric" or "imperial")
 
     Returns:
         Dict with current weather data including temperature, condition, humidity, wind speed,
@@ -497,13 +497,13 @@ async def fetch_current_weather(lat: float, lon: float, units: str = "celsius") 
     return weather_data
 
 
-async def fetch_daily_forecast(lat: float, lon: float, units: str = "celsius") -> Dict[str, Any]:
+async def fetch_daily_forecast(lat: float, lon: float, units: str = "metric") -> Dict[str, Any]:
     """Fetch daily forecast (24 hours) for given coordinates.
 
     Args:
         lat: Latitude coordinate
         lon: Longitude coordinate
-        units: Temperature units ("celsius" or "fahrenheit")
+        units: Unit system ("metric" or "imperial")
 
     Returns:
         Dict with hourly forecast data for next 24 hours including temperature, humidity,
@@ -545,13 +545,13 @@ async def fetch_daily_forecast(lat: float, lon: float, units: str = "celsius") -
     }
 
 
-async def fetch_weekly_forecast(lat: float, lon: float, units: str = "celsius") -> Dict[str, Any]:
+async def fetch_weekly_forecast(lat: float, lon: float, units: str = "metric") -> Dict[str, Any]:
     """Fetch weekly forecast (7 days) for given coordinates.
 
     Args:
         lat: Latitude coordinate
         lon: Longitude coordinate
-        units: Temperature units ("celsius" or "fahrenheit")
+        units: Unit system ("metric" or "imperial")
 
     Returns:
         Dict with daily forecast data for next 7 days including temperature ranges,
@@ -663,7 +663,7 @@ def format_current_weather_text(location: str, data: Dict[str, Any]) -> str:
     feels_like = data.get("feels_like")
     humidity = data.get("humidity")
     wind = data.get("wind_speed")
-    units = data.get("units", "celsius")
+    units = data.get("units", "metric")
     unit_symbol = get_unit_symbol(units)
     wind_unit = get_wind_speed_unit(units)
 
@@ -715,7 +715,7 @@ def format_daily_forecast_text(location: str, data: Dict[str, Any]) -> str:
         Formatted markdown text for LLM
     """
     forecast = data.get("forecast", [])
-    units = data.get("units", "celsius")
+    units = data.get("units", "metric")
     unit_symbol = get_unit_symbol(units)
     text = f"**24-hour forecast for {location}:**\n\n"
 
@@ -746,7 +746,7 @@ def format_weekly_forecast_text(location: str, data: Dict[str, Any]) -> str:
         Formatted markdown text for LLM
     """
     forecast = data.get("forecast", [])
-    units = data.get("units", "celsius")
+    units = data.get("units", "metric")
     unit_symbol = get_unit_symbol(units)
     text = f"**7-day forecast for {location}:**\n\n"
 
@@ -778,7 +778,7 @@ def format_weekly_forecast_text(location: str, data: Dict[str, Any]) -> str:
 async def get_weather(
     location: str,
     forecast_type: Literal["current", "daily", "weekly"] = "current",
-    units: Literal["celsius", "fahrenheit"] = "fahrenheit",
+    units: Literal["metric", "imperial"] = "imperial",
     ctx: Context = None
 ) -> CallToolResult:
     """Get weather information for a location.
@@ -790,7 +790,7 @@ async def get_weather(
     Args:
         location: Location name (e.g., "Paris", "New York", "Tokyo")
         forecast_type: Type of forecast - "current", "daily" (24h), or "weekly" (7d)
-        units: Temperature units - "celsius" or "fahrenheit" (also determines wind speed units: km/h or mph)
+        units: Unit system - "metric" (°C, km/h) or "imperial" (°F, mph)
 
     Returns:
         CallToolResult with formatted weather text, structured data, and rich metadata
@@ -832,8 +832,8 @@ async def get_weather(
 
     Examples:
         get_weather("Paris")
-        get_weather("New York", forecast_type="daily", units="fahrenheit")
-        get_weather("Tokyo", forecast_type="weekly")
+        get_weather("New York", forecast_type="daily", units="imperial")
+        get_weather("Tokyo", forecast_type="weekly", units="metric")
     """
     request_timestamp = datetime.utcnow().isoformat() + "Z"
     logger.info(f"Weather request: location='{location}', type={forecast_type}, units={units}")
@@ -868,15 +868,15 @@ async def get_weather(
             )
 
         # Validate units (already type-checked by Literal, but add runtime check)
-        if units not in ["celsius", "fahrenheit"]:
+        if units not in ["metric", "imperial"]:
             logger.warning(f"Invalid units: {units}")
             return CallToolResult(
-                content=[TextContent(type="text", text=f"Invalid units: {units}. Must be 'celsius' or 'fahrenheit'")],
+                content=[TextContent(type="text", text=f"Invalid units: {units}. Must be 'metric' or 'imperial'")],
                 metadata={
                     "error_type": "validation_error",
                     "error_code": ERROR_CODE_INVALID_UNITS,
                     "units_provided": units,
-                    "valid_options": ["celsius", "fahrenheit"],
+                    "valid_options": ["metric", "imperial"],
                     "timestamp": request_timestamp
                 },
                 isError=True
