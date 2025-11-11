@@ -399,6 +399,7 @@ services:
   # ==========================================================================
   # code-executor: Sandboxed Python execution environment
   # Used by code-interpreter MCP server for safe code execution
+  # Note: This is ephemeral and invoked via docker run, not docker compose up
   # ==========================================================================
   code-executor:
     build:
@@ -406,9 +407,11 @@ services:
       dockerfile: Dockerfile
     image: code-executor:latest
     container_name: code-executor
-    restart: unless-stopped
+    restart: "no"
     networks:
       - strieber-net
+    profiles:
+      - tools
 
   # ==========================================================================
   # MCP Tool Servers (Phase 2)
@@ -461,6 +464,7 @@ services:
   # mcp-code-interpreter: Sandboxed Python execution
   # Uses: Docker container isolation for safe code execution
   # Provides: Python code execution with matplotlib figure capture
+  # Note: code-executor image built separately, invoked via docker run
   mcp-code-interpreter:
     build:
       context: ./backend/tools/mcp_servers
@@ -476,8 +480,6 @@ services:
       - PORT=8000
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
-    depends_on:
-      - code-executor
     networks:
       - strieber-net
 
