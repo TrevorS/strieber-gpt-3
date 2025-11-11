@@ -8,7 +8,7 @@ Both tools support:
 - Quality presets (fast/standard/high) with automatic Lightning LoRA
 - Progress streaming via MCP notifications
 - Automatic upload to Open WebUI Files
-- Proper MCP content blocks (TextContent, ResourceLink)
+- Markdown image links in responses for inline rendering
 """
 
 import asyncio
@@ -20,7 +20,7 @@ from pathlib import Path
 from typing import Dict, List, Literal, Optional, Tuple
 
 from mcp.server.fastmcp import Context, FastMCP
-from mcp.types import ResourceLink, TextContent
+from mcp.types import TextContent
 from pydantic import BaseModel, Field, HttpUrl
 
 # Import our clients
@@ -315,7 +315,7 @@ async def qwen_image(
     negative_prompt: str = "",
     seed: Optional[int] = None,
     ctx: Context = None,
-) -> List[TextContent | ResourceLink]:
+) -> List[TextContent]:
     """Generate images from text using Qwen Image models.
 
     This tool creates images from text descriptions with four quality presets:
@@ -324,8 +324,8 @@ async def qwen_image(
     - 'standard': 20-step standard generation (balanced)
     - 'high': 50-step maximum quality (slower, best detail)
 
-    Results are uploaded to Open WebUI Files and returned as resource links,
-    making them compatible with both vision and non-vision models.
+    Results are uploaded to Open WebUI Files and returned as markdown image links
+    for inline rendering in the UI, without token overhead from base64 encoding.
 
     Args:
         prompt: Text description of the image to generate
@@ -337,9 +337,9 @@ async def qwen_image(
         ctx: MCP context for progress notifications
 
     Returns:
-        List of MCP content blocks:
-        - TextContent: Generation summary
-        - ResourceLink: Links to full-resolution images on OWUI
+        List of TextContent blocks:
+        - Generation summary and status
+        - Markdown image links to full-resolution images on OWUI
 
     Example:
         Generate a fast image:
@@ -436,29 +436,29 @@ async def qwen_image(
         summary_text = "\n".join(summary_parts)
         content_blocks.append(TextContent(type="text", text=summary_text))
 
-        # 2. Upload to OWUI and create resource links
+        # 2. Upload to OWUI and create markdown image links
         # Always attempt upload if credentials are configured
-        logger.info(f"DEBUG: Before upload - content_blocks has {len(content_blocks)} items")
         if owui_client.base_url and owui_client.api_token:
-            logger.info(f"DEBUG: Uploading {len(output_files)} images to OWUI...")
             for idx, (filename, img_bytes) in enumerate(output_files):
                 try:
+                    logger.info(f"Uploading image {idx} of {len(output_files)}")
                     file_id, content_url = await owui_client.upload_file(
                         img_bytes,
                         f"qwen_image_{quality}_{prompt_id}_{idx}.png",
                         "image/png",
                     )
+                    logger.info(f"Upload successful, file_id={file_id}, content_url={content_url}")
 
-                    # Add resource link
-                    resource_link = ResourceLink(
-                        type="resource_link",
-                        uri=content_url,
-                        mimeType="image/png",
-                        name=f"Image {idx + 1} ({size})",
+                    # Add markdown image link (renders inline without token overhead)
+                    markdown_text = f"![Image {idx + 1}]({content_url})"
+                    logger.info(f"Creating markdown content block: {markdown_text}")
+                    text_block = TextContent(
+                        type="text",
+                        text=markdown_text
                     )
-                    logger.info(f"DEBUG: Created ResourceLink: type={resource_link.type}, uri={resource_link.uri}, name={resource_link.name}")
-                    content_blocks.append(resource_link)
-                    logger.info(f"DEBUG: After appending ResourceLink {idx} - content_blocks has {len(content_blocks)} items")
+                    logger.info(f"TextContent created: type={text_block.type}, text preview={text_block.text[:50]}")
+                    content_blocks.append(text_block)
+                    logger.info(f"Added to content_blocks, now {len(content_blocks)} items")
 
                 except Exception as e:
                     logger.error(f"Failed to upload image {idx}: {e}", exc_info=True)
@@ -477,11 +477,14 @@ async def qwen_image(
                     text=f"⚠️ Generated {len(output_files)} image(s) but upload disabled (OWUI_BASE_URL or OWUI_API_TOKEN not set)"
                 )
             )
-
-        logger.info(f"DEBUG: Final content_blocks count: {len(content_blocks)}")
-        for idx, block in enumerate(content_blocks):
-            logger.info(f"DEBUG: content_blocks[{idx}] = {type(block).__name__} ({getattr(block, 'type', 'N/A')})")
         logger.info(f"qwen_image completed: {len(output_files)} image(s), quality={quality}")
+        logger.info(f"Returning {len(content_blocks)} content blocks:")
+        for idx, block in enumerate(content_blocks):
+            block_type = type(block).__name__
+            text_preview = ""
+            if hasattr(block, 'text'):
+                text_preview = block.text[:100] if len(block.text) > 100 else block.text
+            logger.info(f"  [{idx}] {block_type}: {text_preview}")
         return content_blocks
 
     except Exception as e:
@@ -509,7 +512,7 @@ async def qwen_image_edit(
     negative_prompt: str = "",
     seed: Optional[int] = None,
     ctx: Context = None,
-) -> List[TextContent | ResourceLink]:
+) -> List[TextContent]:
     """Edit or transform images using Qwen Image Edit models.
 
     This tool modifies existing images using text prompts and optional masks.
@@ -520,7 +523,7 @@ async def qwen_image_edit(
     - 'high': 50-step maximum quality (best detail)
 
     Accepts images via OWUI file IDs or URLs. Results are uploaded to Open WebUI
-    Files and returned as resource links by default.
+    Files and returned as markdown image links for inline rendering.
 
     Args:
         prompt: Text description of the desired edit
@@ -532,13 +535,12 @@ async def qwen_image_edit(
         mask_image_url: URL to mask image (optional)
         negative_prompt: What to avoid (default: "")
         seed: Random seed for reproducibility (default: random)
-        upload_results_to_openwebui: Upload to OWUI Files (default: True)
         ctx: MCP context for progress notifications
 
     Returns:
-        List of MCP content blocks:
-        - TextContent: Edit summary
-        - ResourceLink: Links to edited images on OWUI
+        List of TextContent blocks:
+        - Edit summary and status
+        - Markdown image links to edited images on OWUI
 
     Example:
         Fast edit with file ID:
@@ -668,14 +670,12 @@ async def qwen_image_edit(
         summary_text = "\n".join(summary_parts)
         content_blocks.append(TextContent(type="text", text=summary_text))
 
-        # 2. Upload to OWUI and create resource links
+        # 2. Upload to OWUI and create markdown image links
         # Always attempt upload if credentials are configured
-        logger.info(f"DEBUG: Before upload - content_blocks has {len(content_blocks)} items")
         if owui_client.base_url and owui_client.api_token:
             if ctx:
                 await ctx.report_progress(95, 100, "Uploading results...")
 
-            logger.info(f"DEBUG: Uploading {len(output_files)} edited images to OWUI...")
             for idx, (filename, img_bytes) in enumerate(output_files):
                 try:
                     file_id, content_url = await owui_client.upload_file(
@@ -684,16 +684,13 @@ async def qwen_image_edit(
                         "image/png",
                     )
 
-                    # Add resource link
-                    resource_link = ResourceLink(
-                        type="resource_link",
-                        uri=content_url,
-                        mimeType="image/png",
-                        name=f"Edited Image {idx + 1}",
+                    # Add markdown image link (renders inline without token overhead)
+                    content_blocks.append(
+                        TextContent(
+                            type="text",
+                            text=f"![Edited Image {idx + 1}]({content_url})"
+                        )
                     )
-                    logger.info(f"DEBUG: Created ResourceLink: type={resource_link.type}, uri={resource_link.uri}, name={resource_link.name}")
-                    content_blocks.append(resource_link)
-                    logger.info(f"DEBUG: After appending ResourceLink {idx} - content_blocks has {len(content_blocks)} items")
 
                 except Exception as e:
                     logger.error(f"Failed to upload edited image {idx}: {e}", exc_info=True)
@@ -713,14 +710,17 @@ async def qwen_image_edit(
                 )
             )
 
-        logger.info(f"DEBUG: Final content_blocks count: {len(content_blocks)}")
-        for idx, block in enumerate(content_blocks):
-            logger.info(f"DEBUG: content_blocks[{idx}] = {type(block).__name__} ({getattr(block, 'type', 'N/A')})")
-
         if ctx:
             await ctx.report_progress(100, 100, "Complete!")
 
         logger.info(f"qwen_image_edit completed: {len(output_files)} image(s), quality={quality}")
+        logger.info(f"Returning {len(content_blocks)} content blocks:")
+        for idx, block in enumerate(content_blocks):
+            block_type = type(block).__name__
+            text_preview = ""
+            if hasattr(block, 'text'):
+                text_preview = block.text[:100] if len(block.text) > 100 else block.text
+            logger.info(f"  [{idx}] {block_type}: {text_preview}")
         return content_blocks
 
     except Exception as e:
