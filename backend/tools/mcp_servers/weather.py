@@ -335,7 +335,8 @@ async def fetch_current_weather(lat: float, lon: float, units: str = "celsius") 
         units: Temperature units ("celsius" or "fahrenheit")
 
     Returns:
-        Dict with current weather data including temperature, condition, humidity, wind speed
+        Dict with current weather data including temperature, condition, humidity, wind speed,
+        UV index, visibility, precipitation probability, cloud cover, and pressure
 
     Raises:
         Exception: If API request fails
@@ -346,7 +347,7 @@ async def fetch_current_weather(lat: float, lon: float, units: str = "celsius") 
         params = {
             "latitude": lat,
             "longitude": lon,
-            "current": "temperature_2m,relative_humidity_2m,weather_code,wind_speed_10m,apparent_temperature",
+            "current": "temperature_2m,relative_humidity_2m,weather_code,wind_speed_10m,apparent_temperature,precipitation,cloud_cover,visibility,uv_index,pressure_msl,dew_point_2m",
             "temperature_unit": "fahrenheit" if units == "fahrenheit" else "celsius",
             "wind_speed_unit": "kmh",
             "timezone": "auto"
@@ -364,6 +365,12 @@ async def fetch_current_weather(lat: float, lon: float, units: str = "celsius") 
             "wind_speed": current.get("wind_speed_10m"),
             "condition": WMO_CODES.get(current.get("weather_code", 0), "Unknown"),
             "weather_code": current.get("weather_code"),
+            "precipitation": current.get("precipitation"),
+            "cloud_cover": current.get("cloud_cover"),
+            "visibility": current.get("visibility"),
+            "uv_index": current.get("uv_index"),
+            "pressure_msl": current.get("pressure_msl"),
+            "dew_point": current.get("dew_point_2m"),
             "units": units
         }
 
@@ -393,7 +400,8 @@ async def fetch_daily_forecast(lat: float, lon: float, units: str = "celsius") -
         units: Temperature units ("celsius" or "fahrenheit")
 
     Returns:
-        Dict with hourly forecast data for next 24 hours
+        Dict with hourly forecast data for next 24 hours including temperature, humidity,
+        precipitation, UV index, cloud cover, visibility, and wind
 
     Raises:
         Exception: If API request fails
@@ -404,7 +412,7 @@ async def fetch_daily_forecast(lat: float, lon: float, units: str = "celsius") -
         params = {
             "latitude": lat,
             "longitude": lon,
-            "hourly": "temperature_2m,relative_humidity_2m,weather_code,wind_speed_10m,precipitation",
+            "hourly": "temperature_2m,relative_humidity_2m,weather_code,wind_speed_10m,precipitation,precipitation_probability,uv_index,cloud_cover,visibility,dew_point_2m",
             "temperature_unit": "fahrenheit" if units == "fahrenheit" else "celsius",
             "wind_speed_unit": "kmh",
             "timezone": "auto"
@@ -421,6 +429,11 @@ async def fetch_daily_forecast(lat: float, lon: float, units: str = "celsius") -
         codes = hourly.get("weather_code", [])[:DAILY_FORECAST_HOURS]
         wind = hourly.get("wind_speed_10m", [])[:DAILY_FORECAST_HOURS]
         precip = hourly.get("precipitation", [])[:DAILY_FORECAST_HOURS]
+        precip_prob = hourly.get("precipitation_probability", [])[:DAILY_FORECAST_HOURS]
+        uv = hourly.get("uv_index", [])[:DAILY_FORECAST_HOURS]
+        cloud = hourly.get("cloud_cover", [])[:DAILY_FORECAST_HOURS]
+        vis = hourly.get("visibility", [])[:DAILY_FORECAST_HOURS]
+        dew = hourly.get("dew_point_2m", [])[:DAILY_FORECAST_HOURS]
 
         forecast = []
         for i, time_str in enumerate(times):
@@ -432,6 +445,11 @@ async def fetch_daily_forecast(lat: float, lon: float, units: str = "celsius") -
                 "weather_code": codes[i] if i < len(codes) else None,
                 "wind_speed": wind[i] if i < len(wind) else None,
                 "precipitation": precip[i] if i < len(precip) else None,
+                "precipitation_probability": precip_prob[i] if i < len(precip_prob) else None,
+                "uv_index": uv[i] if i < len(uv) else None,
+                "cloud_cover": cloud[i] if i < len(cloud) else None,
+                "visibility": vis[i] if i < len(vis) else None,
+                "dew_point": dew[i] if i < len(dew) else None,
             })
 
         logger.debug(f"Successfully fetched daily forecast with {len(forecast)} hourly entries")
@@ -463,7 +481,8 @@ async def fetch_weekly_forecast(lat: float, lon: float, units: str = "celsius") 
         units: Temperature units ("celsius" or "fahrenheit")
 
     Returns:
-        Dict with daily forecast data for next 7 days
+        Dict with daily forecast data for next 7 days including temperature ranges,
+        precipitation probability, UV index, sunrise/sunset, and wind
 
     Raises:
         Exception: If API request fails
@@ -474,7 +493,7 @@ async def fetch_weekly_forecast(lat: float, lon: float, units: str = "celsius") 
         params = {
             "latitude": lat,
             "longitude": lon,
-            "daily": "temperature_2m_max,temperature_2m_min,weather_code,wind_speed_10m_max,precipitation_sum",
+            "daily": "temperature_2m_max,temperature_2m_min,weather_code,wind_speed_10m_max,precipitation_sum,precipitation_probability_max,uv_index_max,sunrise,sunset",
             "temperature_unit": "fahrenheit" if units == "fahrenheit" else "celsius",
             "wind_speed_unit": "kmh",
             "timezone": "auto"
@@ -491,6 +510,10 @@ async def fetch_weekly_forecast(lat: float, lon: float, units: str = "celsius") 
         codes = daily.get("weather_code", [])[:WEEKLY_FORECAST_DAYS]
         wind = daily.get("wind_speed_10m_max", [])[:WEEKLY_FORECAST_DAYS]
         precip = daily.get("precipitation_sum", [])[:WEEKLY_FORECAST_DAYS]
+        precip_prob = daily.get("precipitation_probability_max", [])[:WEEKLY_FORECAST_DAYS]
+        uv = daily.get("uv_index_max", [])[:WEEKLY_FORECAST_DAYS]
+        sunrise = daily.get("sunrise", [])[:WEEKLY_FORECAST_DAYS]
+        sunset = daily.get("sunset", [])[:WEEKLY_FORECAST_DAYS]
 
         forecast = []
         for i, time_str in enumerate(times):
@@ -502,6 +525,10 @@ async def fetch_weekly_forecast(lat: float, lon: float, units: str = "celsius") 
                 "weather_code": codes[i] if i < len(codes) else None,
                 "wind_speed": wind[i] if i < len(wind) else None,
                 "precipitation": precip[i] if i < len(precip) else None,
+                "precipitation_probability": precip_prob[i] if i < len(precip_prob) else None,
+                "uv_index": uv[i] if i < len(uv) else None,
+                "sunrise": sunrise[i] if i < len(sunrise) else None,
+                "sunset": sunset[i] if i < len(sunset) else None,
             })
 
         logger.debug(f"Successfully fetched weekly forecast with {len(forecast)} daily entries")
@@ -547,11 +574,39 @@ def format_current_weather_text(location: str, data: Dict[str, Any]) -> str:
     units = data.get("units", "celsius")
     unit_symbol = get_unit_symbol(units)
 
+    # Additional parameters
+    precipitation = data.get("precipitation")
+    cloud_cover = data.get("cloud_cover")
+    visibility = data.get("visibility")
+    uv_index = data.get("uv_index")
+    pressure = data.get("pressure_msl")
+    dew_point = data.get("dew_point")
+
     text = f"**Current weather in {location}:**\n\n"
     text += f"{emoji} **{condition}**\n"
     text += f"Temperature: {temp}{unit_symbol} (feels like {feels_like}{unit_symbol})\n"
     text += f"Humidity: {humidity}%\n"
+
+    if dew_point is not None:
+        text += f"Dew point: {dew_point}{unit_symbol}\n"
+
     text += f"Wind: {wind} km/h\n"
+
+    if cloud_cover is not None:
+        text += f"Cloud cover: {cloud_cover}%\n"
+
+    if precipitation is not None and precipitation > 0:
+        text += f"Precipitation: {precipitation} mm\n"
+
+    if visibility is not None:
+        visibility_km = visibility / 1000
+        text += f"Visibility: {visibility_km:.1f} km\n"
+
+    if uv_index is not None:
+        text += f"UV index: {uv_index}\n"
+
+    if pressure is not None:
+        text += f"Pressure: {pressure} hPa\n"
 
     return text
 
@@ -582,7 +637,27 @@ def format_daily_forecast_text(location: str, data: Dict[str, Any]) -> str:
         condition = item.get("condition")
         emoji = get_weather_emoji(item.get("weather_code", 0))
 
-        text += f"{time}: {emoji} {temp}{unit_symbol} - {condition}\n"
+        # Additional data
+        precip_prob = item.get("precipitation_probability")
+        uv = item.get("uv_index")
+        cloud = item.get("cloud_cover")
+
+        # Format base line
+        line = f"{time}: {emoji} {temp}{unit_symbol} - {condition}"
+
+        # Add notable details
+        details = []
+        if precip_prob is not None and precip_prob > 20:
+            details.append(f"{precip_prob}% precip")
+        if uv is not None and uv >= 6:
+            details.append(f"UV {uv}")
+        if cloud is not None and (cloud < 20 or cloud > 80):
+            details.append(f"{cloud}% cloud")
+
+        if details:
+            line += f" ({', '.join(details)})"
+
+        text += line + "\n"
 
     return text
 
@@ -617,7 +692,24 @@ def format_weekly_forecast_text(location: str, data: Dict[str, Any]) -> str:
         condition = item.get("condition")
         emoji = get_weather_emoji(item.get("weather_code", 0))
 
-        text += f"{day_name}: {emoji} {temp_max}{unit_symbol} / {temp_min}{unit_symbol} - {condition}\n"
+        # Additional data
+        precip_prob = item.get("precipitation_probability")
+        uv = item.get("uv_index")
+
+        # Format base line
+        line = f"{day_name}: {emoji} {temp_max}{unit_symbol} / {temp_min}{unit_symbol} - {condition}"
+
+        # Add notable details
+        details = []
+        if precip_prob is not None and precip_prob > 20:
+            details.append(f"{precip_prob}% precip")
+        if uv is not None and uv >= 6:
+            details.append(f"UV {uv}")
+
+        if details:
+            line += f" ({', '.join(details)})"
+
+        text += line + "\n"
 
     return text
 
@@ -636,15 +728,8 @@ async def get_weather(
     """Get weather information for a location.
 
     Uses Nominatim for geocoding and Open-Meteo for weather (no API keys required).
-
-    IMPORTANT RESPONSE GUIDANCE:
-    After receiving the result, provide a brief, conversational weather summary:
-    - For CURRENT: Mention temperature, condition, and one detail (humidity/wind/feels-like)
-    - For DAILY: Mention high/low temps and expected conditions through the day
-    - For WEEKLY: Highlight the best and worst days in the forecast
-    - Keep responses to 1-2 sentences maximum
-    - Do NOT repeat or format the raw data output - use it to inform your response
-    - Example: "It's 56°F in Tokyo with drizzle, quite humid at 96%"
+    Returns comprehensive weather data including temperature, conditions, precipitation,
+    UV index, visibility, cloud cover, humidity, wind, and atmospheric pressure.
 
     Args:
         location: Location name (e.g., "Paris", "New York", "Tokyo")
@@ -654,14 +739,43 @@ async def get_weather(
     Returns:
         CallToolResult with formatted weather text, structured data, and rich metadata
 
+    PARAMETER INTERPRETATION REFERENCE:
+    Weather data includes numerical values that benefit from contextual interpretation:
+
+    - UV Index: 0-2 (low risk), 3-5 (moderate), 6-7 (high), 8-10 (very high), 11+ (extreme)
+      Protection needed at 3+, essential at 8+
+
+    - Visibility: <1 km (poor/hazardous), 1-5 km (moderate), 5-10 km (good), >10 km (excellent)
+      Below 5 km affects driving, below 1 km is dangerous
+
+    - Humidity: 30-50% (comfortable), 50-70% (noticeable/sticky), >70% (uncomfortable), >85% (very humid/oppressive)
+      High humidity makes temperatures feel more extreme
+
+    - Wind Speed: <10 km/h (calm), 10-30 (breezy/pleasant), 30-50 (windy/gusty), >50 (strong/difficult conditions)
+
+    - Precipitation Probability: <20% (unlikely), 20-50% (possible/uncertain), 50-80% (likely), >80% (very likely/expected)
+
+    - Cloud Cover: 0-25% (clear/sunny), 25-50% (partly cloudy), 50-75% (mostly cloudy), 75-100% (overcast/grey)
+      Affects UV exposure and temperature perception
+
+    - Dew Point: Close to temperature indicates humid conditions, >20°C (68°F) feels oppressive,
+      <10°C (50°F) feels comfortable and dry
+
+    - Atmospheric Pressure: Rising pressure indicates improving weather, falling indicates worsening conditions
+      Rapid changes often signal weather front movement
+
+    USER CONTEXT:
+    Users request weather information when planning outdoor activities, assessing travel conditions,
+    determining appropriate clothing/preparation, or evaluating comfort and safety factors.
+    They care about how conditions affect their specific plans, including:
+    - Safety considerations (UV exposure, visibility for driving, severe weather warnings)
+    - Comfort factors (how temperature actually feels with humidity/wind, oppressive conditions)
+    - Activity planning (precipitation timing, suitable conditions for outdoor plans)
+    - Preparation needs (sun protection, umbrellas, layers, travel delays)
+
     Examples:
-        # Current weather
         get_weather("Paris")
-
-        # Daily forecast in Fahrenheit
         get_weather("New York", forecast_type="daily", units="fahrenheit")
-
-        # Weekly forecast
         get_weather("Tokyo", forecast_type="weekly")
     """
     request_timestamp = datetime.utcnow().isoformat() + "Z"
