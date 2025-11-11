@@ -63,6 +63,8 @@ class OpenWebUIClient:
     def _is_owui_url(self, url: str) -> bool:
         """Check if URL belongs to Open WebUI domain.
 
+        Checks against both base_url (internal) and public_url (external/Tailscale).
+
         Args:
             url: URL to check
 
@@ -71,9 +73,21 @@ class OpenWebUIClient:
         """
         if not self.base_url:
             return False
+
         parsed = urlparse(url)
+
+        # Check against base_url (internal Docker URL)
         base_parsed = urlparse(self.base_url)
-        return parsed.netloc == base_parsed.netloc
+        if parsed.netloc == base_parsed.netloc:
+            return True
+
+        # Also check against public_url (external/Tailscale URL)
+        if self.public_url and self.public_url != self.base_url:
+            public_parsed = urlparse(self.public_url)
+            if parsed.netloc == public_parsed.netloc:
+                return True
+
+        return False
 
     async def upload_file(
         self,
@@ -200,9 +214,13 @@ class OpenWebUIClient:
 
         # SSRF guard: only allow OWUI URLs
         if not self._is_owui_url(url):
+            allowed_domains = [self.base_url]
+            if self.public_url and self.public_url != self.base_url:
+                allowed_domains.append(self.public_url)
             raise ValueError(
                 f"URL not from Open WebUI domain: {url}. "
-                f"Only URLs from {self.base_url} are allowed for security reasons."
+                f"Only URLs from these domains are allowed: {', '.join(allowed_domains)}. "
+                f"Set OWUI_PUBLIC_URL environment variable if using external/Tailscale URLs."
             )
 
         try:
