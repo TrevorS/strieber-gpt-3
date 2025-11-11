@@ -107,14 +107,6 @@ DAILY_FORECAST_PARAMS = [
     "sunset",
 ]
 
-# Weather interpretation thresholds
-WEATHER_THRESHOLDS = {
-    "precip_prob_notable": 20,  # Percentage above which to show precipitation probability
-    "uv_index_notable": 6,  # UV index above which to highlight
-    "cloud_cover_low": 20,  # Percentage below which sky is notably clear
-    "cloud_cover_high": 80,  # Percentage above which sky is notably overcast
-}
-
 # Tool-specific error codes (beyond shared constants)
 ERROR_CODE_INVALID_LOCATION = "invalid_location"
 ERROR_CODE_LOCATION_NOT_FOUND = "location_not_found"
@@ -640,40 +632,6 @@ def _build_forecast_items(
 
 
 # ============================================================================
-# TEXT FORMATTING HELPERS
-# ============================================================================
-
-
-def _build_notable_details(
-    precip_prob: Optional[float] = None,
-    uv: Optional[float] = None,
-    cloud: Optional[float] = None
-) -> str:
-    """Build a string of notable weather details for formatting.
-
-    Args:
-        precip_prob: Precipitation probability percentage
-        uv: UV index value
-        cloud: Cloud cover percentage
-
-    Returns:
-        Formatted string with notable details, empty if none notable
-    """
-    details = []
-
-    if precip_prob is not None and precip_prob > WEATHER_THRESHOLDS["precip_prob_notable"]:
-        details.append(f"{precip_prob:.0f}% precip")
-
-    if uv is not None and uv >= WEATHER_THRESHOLDS["uv_index_notable"]:
-        details.append(f"UV {uv:.0f}")
-
-    if cloud is not None and (cloud < WEATHER_THRESHOLDS["cloud_cover_low"] or cloud > WEATHER_THRESHOLDS["cloud_cover_high"]):
-        details.append(f"{cloud:.0f}% cloud")
-
-    return f" ({', '.join(details)})" if details else ""
-
-
-# ============================================================================
 # TEXT FORMATTING FUNCTIONS
 # ============================================================================
 
@@ -760,13 +718,7 @@ def format_daily_forecast_text(location: str, data: Dict[str, Any]) -> str:
         condition = item.get("condition")
         emoji = get_weather_emoji(item.get("weather_code", 0))
 
-        # Build base line with notable details
-        notable = _build_notable_details(
-            precip_prob=item.get("precipitation_probability"),
-            uv=item.get("uv_index"),
-            cloud=item.get("cloud_cover")
-        )
-        text += f"{time}: {emoji} {temp}{unit_symbol} - {condition}{notable}\n"
+        text += f"{time}: {emoji} {temp}{unit_symbol} - {condition}\n"
 
     return text
 
@@ -801,12 +753,7 @@ def format_weekly_forecast_text(location: str, data: Dict[str, Any]) -> str:
         condition = item.get("condition")
         emoji = get_weather_emoji(item.get("weather_code", 0))
 
-        # Build base line with notable details
-        notable = _build_notable_details(
-            precip_prob=item.get("precipitation_probability"),
-            uv=item.get("uv_index")
-        )
-        text += f"{day_name}: {emoji} {temp_max}{unit_symbol} / {temp_min}{unit_symbol} - {condition}{notable}\n"
+        text += f"{day_name}: {emoji} {temp_max}{unit_symbol} / {temp_min}{unit_symbol} - {condition}\n"
 
     return text
 
