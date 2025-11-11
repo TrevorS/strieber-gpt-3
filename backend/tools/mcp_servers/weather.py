@@ -643,133 +643,6 @@ def _build_forecast_items(
 
 
 # ============================================================================
-# TEXT FORMATTING FUNCTIONS
-# ============================================================================
-
-
-def format_current_weather_text(location: str, data: Dict[str, Any]) -> str:
-    """Format current weather data as human-readable text.
-
-    Args:
-        location: Location name
-        data: Current weather data dict
-
-    Returns:
-        Formatted markdown text for LLM
-    """
-    emoji = get_weather_emoji(data.get("weather_code", 0))
-    temp = data.get("temperature")
-    condition = data.get("condition")
-    feels_like = data.get("feels_like")
-    humidity = data.get("humidity")
-    wind = data.get("wind_speed")
-    units = data.get("units", "metric")
-    unit_symbol = get_unit_symbol(units)
-    wind_unit = get_wind_speed_unit(units)
-
-    # Additional parameters
-    precipitation = data.get("precipitation")
-    cloud_cover = data.get("cloud_cover")
-    visibility = data.get("visibility")
-    uv_index = data.get("uv_index")
-    pressure = data.get("pressure_msl")
-    dew_point = data.get("dew_point")
-
-    text = f"**Current weather in {location}:**\n\n"
-    text += f"{emoji} **{condition}**\n"
-    text += f"Temperature: {temp}{unit_symbol} (feels like {feels_like}{unit_symbol})\n"
-    text += f"Humidity: {humidity}%\n"
-
-    if dew_point is not None:
-        text += f"Dew point: {dew_point}{unit_symbol}\n"
-
-    text += f"Wind: {wind} {wind_unit}\n"
-
-    if cloud_cover is not None:
-        text += f"Cloud cover: {cloud_cover}%\n"
-
-    if precipitation is not None and precipitation > 0:
-        text += f"Precipitation: {precipitation} mm\n"
-
-    if visibility is not None:
-        visibility_km = visibility / 1000
-        text += f"Visibility: {visibility_km:.1f} km\n"
-
-    if uv_index is not None:
-        text += f"UV index: {uv_index}\n"
-
-    if pressure is not None:
-        text += f"Pressure: {pressure} hPa\n"
-
-    return text
-
-
-def format_daily_forecast_text(location: str, data: Dict[str, Any]) -> str:
-    """Format daily forecast as human-readable text.
-
-    Args:
-        location: Location name
-        data: Daily forecast data dict
-
-    Returns:
-        Formatted markdown text for LLM
-    """
-    forecast = data.get("forecast", [])
-    units = data.get("units", "metric")
-    unit_symbol = get_unit_symbol(units)
-    text = f"**24-hour forecast for {location}:**\n\n"
-
-    # Show every 3rd hour (8 entries = 24 hours)
-    step = HOURLY_DISPLAY_INTERVAL
-    for i in range(0, len(forecast), step):
-        if i >= len(forecast):
-            break
-        item = forecast[i]
-        time = item.get("time", "").split("T")[1] if item.get("time") else "?"
-        temp = item.get("temperature")
-        condition = item.get("condition")
-        emoji = get_weather_emoji(item.get("weather_code", 0))
-
-        text += f"{time}: {emoji} {temp}{unit_symbol} - {condition}\n"
-
-    return text
-
-
-def format_weekly_forecast_text(location: str, data: Dict[str, Any]) -> str:
-    """Format weekly forecast as human-readable text.
-
-    Args:
-        location: Location name
-        data: Weekly forecast data dict
-
-    Returns:
-        Formatted markdown text for LLM
-    """
-    forecast = data.get("forecast", [])
-    units = data.get("units", "metric")
-    unit_symbol = get_unit_symbol(units)
-    text = f"**7-day forecast for {location}:**\n\n"
-
-    day_names = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"]
-
-    for i, item in enumerate(forecast):
-        date_str = item.get("date", "")
-        if date_str:
-            date_obj = datetime.fromisoformat(date_str)
-            day_name = day_names[date_obj.weekday()]
-        else:
-            day_name = "?"
-
-        temp_max = item.get("temp_max")
-        temp_min = item.get("temp_min")
-        condition = item.get("condition")
-        emoji = get_weather_emoji(item.get("weather_code", 0))
-
-        text += f"{day_name}: {emoji} {temp_max}{unit_symbol} / {temp_min}{unit_symbol} - {condition}\n"
-
-    return text
-
-# ============================================================================
 # MCP TOOL DEFINITION
 # ============================================================================
 
@@ -829,6 +702,26 @@ async def get_weather(
     - Comfort factors (how temperature actually feels with humidity/wind, oppressive conditions)
     - Activity planning (precipitation timing, suitable conditions for outdoor plans)
     - Preparation needs (sun protection, umbrellas, layers, travel delays)
+
+    RESPONSE VOICE:
+    Communicate weather like a knowledgeable local sharing practical information for planning:
+    - Lead with the immediate experience ("It's a warm, muggy evening..." or "Cool and drizzly right now")
+    - Highlight what matters for the user's likely intent (comfort, planning, safety)
+    - Weave notable details naturally into conversation, not as a data checklist
+    - Mention conditions that affect experience (high humidity making it feel hotter, excellent visibility
+      for driving, low UV so no sunscreen needed, etc.)
+    - Be conversational and contextual, not encyclopedic or formulaic
+
+    Good examples of natural weather communication:
+    - "It's a pleasant 72°F with light winds and clear skies. The low humidity makes it feel quite
+      comfortable, and with excellent visibility you'd have great conditions for being outside."
+    - "Currently 85°F but feels more like 91° with the high humidity - pretty sticky out there. Light
+      winds aren't helping much. If you're heading out, definitely stay hydrated and bring sunscreen
+      since the UV is high."
+    - "Cool and drizzly at 56°F with reduced visibility around 5km. Roads might be slick, so take it
+      easy if you're driving."
+    - "Beautiful 68°F with low humidity and clear skies - ideal conditions. Gentle winds around 8mph.
+      Great day for any outdoor plans."
 
     Examples:
         get_weather("Paris")
@@ -961,16 +854,9 @@ async def get_weather(
                 isError=True
             )
 
-        # Format weather text for LLM
+        # Prepare response
         if ctx:
-            await ctx.report_progress(4, 5, "Formatting weather data...")
-
-        if forecast_type == "current":
-            formatted_text = format_current_weather_text(location_name, weather_data)
-        elif forecast_type == "daily":
-            formatted_text = format_daily_forecast_text(location_name, weather_data)
-        else:  # weekly
-            formatted_text = format_weekly_forecast_text(location_name, weather_data)
+            await ctx.report_progress(4, 5, "Preparing weather data...")
 
         # Build rich metadata for response
         metadata = {
@@ -990,8 +876,9 @@ async def get_weather(
 
         logger.info(f"Successfully retrieved {forecast_type} weather for {location_name}")
 
+        # Return raw JSON data, let model interpret using the voice guidance
         return CallToolResult(
-            content=[TextContent(type="text", text=formatted_text)],
+            content=[TextContent(type="text", text=json.dumps(weather_data, indent=2))],
             metadata=metadata
         )
 
