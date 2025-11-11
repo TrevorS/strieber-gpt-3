@@ -67,6 +67,17 @@ KMH_TO_MPH = 0.621371
 CELSIUS_DISPLAY_UNIT = "°C"
 FAHRENHEIT_DISPLAY_UNIT = "°F"
 
+# API parameter specifications
+CURRENT_WEATHER_PARAMS = "temperature_2m,relative_humidity_2m,weather_code,wind_speed_10m,apparent_temperature,precipitation,cloud_cover,visibility,uv_index,pressure_msl,dew_point_2m"
+HOURLY_FORECAST_PARAMS = "temperature_2m,relative_humidity_2m,weather_code,wind_speed_10m,precipitation,precipitation_probability,uv_index,cloud_cover,visibility,dew_point_2m"
+DAILY_FORECAST_PARAMS = "temperature_2m_max,temperature_2m_min,weather_code,wind_speed_10m_max,precipitation_sum,precipitation_probability_max,uv_index_max,sunrise,sunset"
+
+# Notable weather thresholds
+PRECIP_PROB_NOTABLE_THRESHOLD = 20  # Percentage
+UV_INDEX_NOTABLE_THRESHOLD = 6
+CLOUD_COVER_LOW_THRESHOLD = 20  # Percentage
+CLOUD_COVER_HIGH_THRESHOLD = 80  # Percentage
+
 # Tool-specific error codes (beyond shared constants)
 ERROR_CODE_INVALID_LOCATION = "invalid_location"
 ERROR_CODE_LOCATION_NOT_FOUND = "location_not_found"
@@ -420,7 +431,7 @@ async def fetch_current_weather(lat: float, lon: float, units: str = "celsius") 
     logger.debug(f"Fetching current weather for ({lat}, {lon}) in {units}")
 
     params = _build_base_params(lat, lon, units)
-    params["current"] = "temperature_2m,relative_humidity_2m,weather_code,wind_speed_10m,apparent_temperature,precipitation,cloud_cover,visibility,uv_index,pressure_msl,dew_point_2m"
+    params["current"] = CURRENT_WEATHER_PARAMS
 
     data = await _fetch_weather_data(params, lat, lon, "current")
     current = data.get("current", {})
@@ -464,40 +475,28 @@ async def fetch_daily_forecast(lat: float, lon: float, units: str = "celsius") -
     logger.debug(f"Fetching daily forecast for ({lat}, {lon}) in {units}")
 
     params = _build_base_params(lat, lon, units)
-    params["hourly"] = "temperature_2m,relative_humidity_2m,weather_code,wind_speed_10m,precipitation,precipitation_probability,uv_index,cloud_cover,visibility,dew_point_2m"
+    params["hourly"] = HOURLY_FORECAST_PARAMS
 
     data = await _fetch_weather_data(params, lat, lon, "daily")
     hourly = data.get("hourly", {})
 
-    # Get next 24 hours
-    times = hourly.get("time", [])[:DAILY_FORECAST_HOURS]
-    temps = hourly.get("temperature_2m", [])[:DAILY_FORECAST_HOURS]
-    humidity = hourly.get("relative_humidity_2m", [])[:DAILY_FORECAST_HOURS]
-    codes = hourly.get("weather_code", [])[:DAILY_FORECAST_HOURS]
-    wind = hourly.get("wind_speed_10m", [])[:DAILY_FORECAST_HOURS]
-    precip = hourly.get("precipitation", [])[:DAILY_FORECAST_HOURS]
-    precip_prob = hourly.get("precipitation_probability", [])[:DAILY_FORECAST_HOURS]
-    uv = hourly.get("uv_index", [])[:DAILY_FORECAST_HOURS]
-    cloud = hourly.get("cloud_cover", [])[:DAILY_FORECAST_HOURS]
-    vis = hourly.get("visibility", [])[:DAILY_FORECAST_HOURS]
-    dew = hourly.get("dew_point_2m", [])[:DAILY_FORECAST_HOURS]
+    # Define field mapping for hourly forecast
+    field_mapping = {
+        "time": "time",
+        "temperature": "temperature_2m",
+        "humidity": "relative_humidity_2m",
+        "weather_code": "weather_code",
+        "wind_speed": "wind_speed_10m",
+        "precipitation": "precipitation",
+        "precipitation_probability": "precipitation_probability",
+        "uv_index": "uv_index",
+        "cloud_cover": "cloud_cover",
+        "visibility": "visibility",
+        "dew_point": "dew_point_2m",
+    }
 
-    forecast = []
-    for i, time_str in enumerate(times):
-        forecast.append({
-            "time": time_str,
-            "temperature": _safe_array_get(temps, i),
-            "humidity": _safe_array_get(humidity, i),
-            "condition": WMO_CODES.get(_safe_array_get(codes, i, 0), "Unknown"),
-            "weather_code": _safe_array_get(codes, i),
-            "wind_speed": _safe_array_get(wind, i),
-            "precipitation": _safe_array_get(precip, i),
-            "precipitation_probability": _safe_array_get(precip_prob, i),
-            "uv_index": _safe_array_get(uv, i),
-            "cloud_cover": _safe_array_get(cloud, i),
-            "visibility": _safe_array_get(vis, i),
-            "dew_point": _safe_array_get(dew, i),
-        })
+    # Build forecast items functionally (with conditions)
+    forecast = _build_forecast_items(hourly, field_mapping, DAILY_FORECAST_HOURS, add_condition=True)
 
     logger.debug(f"Successfully fetched daily forecast with {len(forecast)} hourly entries")
     return {
@@ -524,44 +523,84 @@ async def fetch_weekly_forecast(lat: float, lon: float, units: str = "celsius") 
     logger.debug(f"Fetching weekly forecast for ({lat}, {lon}) in {units}")
 
     params = _build_base_params(lat, lon, units)
-    params["daily"] = "temperature_2m_max,temperature_2m_min,weather_code,wind_speed_10m_max,precipitation_sum,precipitation_probability_max,uv_index_max,sunrise,sunset"
+    params["daily"] = DAILY_FORECAST_PARAMS
 
     data = await _fetch_weather_data(params, lat, lon, "weekly")
     daily = data.get("daily", {})
 
-    # Get next 7 days
-    times = daily.get("time", [])[:WEEKLY_FORECAST_DAYS]
-    temps_max = daily.get("temperature_2m_max", [])[:WEEKLY_FORECAST_DAYS]
-    temps_min = daily.get("temperature_2m_min", [])[:WEEKLY_FORECAST_DAYS]
-    codes = daily.get("weather_code", [])[:WEEKLY_FORECAST_DAYS]
-    wind = daily.get("wind_speed_10m_max", [])[:WEEKLY_FORECAST_DAYS]
-    precip = daily.get("precipitation_sum", [])[:WEEKLY_FORECAST_DAYS]
-    precip_prob = daily.get("precipitation_probability_max", [])[:WEEKLY_FORECAST_DAYS]
-    uv = daily.get("uv_index_max", [])[:WEEKLY_FORECAST_DAYS]
-    sunrise = daily.get("sunrise", [])[:WEEKLY_FORECAST_DAYS]
-    sunset = daily.get("sunset", [])[:WEEKLY_FORECAST_DAYS]
+    # Define field mapping for daily forecast
+    field_mapping = {
+        "date": "time",
+        "temp_max": "temperature_2m_max",
+        "temp_min": "temperature_2m_min",
+        "weather_code": "weather_code",
+        "wind_speed": "wind_speed_10m_max",
+        "precipitation": "precipitation_sum",
+        "precipitation_probability": "precipitation_probability_max",
+        "uv_index": "uv_index_max",
+        "sunrise": "sunrise",
+        "sunset": "sunset",
+    }
 
-    forecast = []
-    for i, time_str in enumerate(times):
-        forecast.append({
-            "date": time_str,
-            "temp_max": _safe_array_get(temps_max, i),
-            "temp_min": _safe_array_get(temps_min, i),
-            "condition": WMO_CODES.get(_safe_array_get(codes, i, 0), "Unknown"),
-            "weather_code": _safe_array_get(codes, i),
-            "wind_speed": _safe_array_get(wind, i),
-            "precipitation": _safe_array_get(precip, i),
-            "precipitation_probability": _safe_array_get(precip_prob, i),
-            "uv_index": _safe_array_get(uv, i),
-            "sunrise": _safe_array_get(sunrise, i),
-            "sunset": _safe_array_get(sunset, i),
-        })
+    # Build forecast items functionally (with conditions)
+    forecast = _build_forecast_items(daily, field_mapping, WEEKLY_FORECAST_DAYS, add_condition=True)
 
     logger.debug(f"Successfully fetched weekly forecast with {len(forecast)} daily entries")
     return {
         "forecast": forecast,
         "units": units
     }
+
+def _build_forecast_items(
+    data_source: Dict[str, List[Any]],
+    field_mapping: Dict[str, str],
+    limit: int,
+    add_condition: bool = True
+) -> List[Dict[str, Any]]:
+    """Build forecast items from API data using functional approach.
+
+    Args:
+        data_source: Dict containing arrays of weather data
+        field_mapping: Maps output field names to API field names
+        limit: Maximum number of items to return
+        add_condition: If True, adds 'condition' field from weather_code
+
+    Returns:
+        List of forecast item dicts
+
+    Example:
+        field_mapping = {
+            "time": "time",
+            "temperature": "temperature_2m",
+            "humidity": "relative_humidity_2m"
+        }
+    """
+    # Extract and slice all arrays upfront
+    arrays = {
+        output_key: data_source.get(api_key, [])[:limit]
+        for output_key, api_key in field_mapping.items()
+    }
+
+    # Determine the length from the first array (usually time)
+    if not arrays:
+        return []
+
+    first_key = next(iter(arrays.keys()))
+    num_items = len(arrays[first_key])
+
+    # Build items using list comprehension
+    items = [
+        {key: _safe_array_get(arr, i) for key, arr in arrays.items()}
+        for i in range(num_items)
+    ]
+
+    # Add condition from weather code if requested
+    if add_condition:
+        for item in items:
+            item["condition"] = WMO_CODES.get(item.get("weather_code", 0), "Unknown")
+
+    return items
+
 
 # ============================================================================
 # TEXT FORMATTING HELPERS
@@ -585,13 +624,13 @@ def _build_notable_details(
     """
     details = []
 
-    if precip_prob is not None and precip_prob > 20:
+    if precip_prob is not None and precip_prob > PRECIP_PROB_NOTABLE_THRESHOLD:
         details.append(f"{precip_prob:.0f}% precip")
 
-    if uv is not None and uv >= 6:
+    if uv is not None and uv >= UV_INDEX_NOTABLE_THRESHOLD:
         details.append(f"UV {uv:.0f}")
 
-    if cloud is not None and (cloud < 20 or cloud > 80):
+    if cloud is not None and (cloud < CLOUD_COVER_LOW_THRESHOLD or cloud > CLOUD_COVER_HIGH_THRESHOLD):
         details.append(f"{cloud:.0f}% cloud")
 
     return f" ({', '.join(details)})" if details else ""
