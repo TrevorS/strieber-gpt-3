@@ -1,24 +1,46 @@
 {
-  "_comment": "Qwen Image Edit (img2img/inpaint) workflow with Lightning LoRA support.",
-  "_instructions": "Export your ComfyUI workflow in API format and replace this file. Update NODE_MAPPINGS in server.py to match your actual node IDs.",
+  "_comment": "Qwen Image Edit (img2img/inpaint) workflow with Lightning LoRA support and split model loaders.",
+  "_instructions": "Uses UNETLoader, CLIPLoader, and VAELoader for split model components. LoRA applied conditionally based on quality preset.",
   "_node_mapping": {
-    "checkpoint_loader": "Node ID 1 - Loads the Qwen model checkpoint",
-    "lora_loader": "Node ID 10 - LoraLoaderModelOnly for Lightning LoRA (NEW, can be bypassed)",
+    "unet_loader": "Node ID 1 - UNETLoader for diffusion model",
+    "clip_loader": "Node ID 8 - CLIPLoader for text encoder",
+    "vae_loader": "Node ID 9 - VAELoader for VAE decoder",
+    "lora_loader": "Node ID 10 - LoraLoaderModelOnly for Lightning LoRA (bypassed for standard/high)",
     "load_image": "Node ID 2 - LoadImage for init image",
     "positive_prompt": "Node ID 3 - CLIPTextEncode for positive prompt",
     "negative_prompt": "Node ID 4 - CLIPTextEncode for negative prompt",
     "vae_encode": "Node ID 5 - VAEEncode to convert image to latent",
     "sampler": "Node ID 6 - KSampler (seed, steps, cfg, denoise/strength)",
     "vae_decode": "Node ID 7 - VAEDecode",
-    "save_image": "Node ID 8 - SaveImage"
+    "save_image": "Node ID 11 - SaveImage"
   },
   "1": {
     "inputs": {
-      "ckpt_name": "qwen_image_edit_2509_fp8_e4m3fn.safetensors"
+      "unet_name": "qwen_image_edit_2509_fp8_e4m3fn.safetensors",
+      "weight_dtype": "fp8_e4m3fn"
     },
-    "class_type": "CheckpointLoaderSimple",
+    "class_type": "UNETLoader",
     "_meta": {
-      "title": "Load Checkpoint"
+      "title": "Load Diffusion Model"
+    }
+  },
+  "8": {
+    "inputs": {
+      "clip_name": "qwen_2.5_vl_7b_fp8_scaled.safetensors",
+      "type": "qwen_image"
+    },
+    "class_type": "CLIPLoader",
+    "_meta": {
+      "title": "Load CLIP Text Encoder"
+    }
+  },
+  "9": {
+    "inputs": {
+      "vae_name": "qwen_image_vae.safetensors"
+    },
+    "class_type": "VAELoader",
+    "_meta": {
+      "title": "Load VAE"
     }
   },
   "10": {
@@ -27,7 +49,7 @@
         "1",
         0
       ],
-      "lora_name": "Qwen-Image-Edit-Lightning-8steps-V1.0.safetensors",
+      "lora_name": "Qwen-Image-Edit-Lightning-8steps-V1.0-bf16.safetensors",
       "strength_model": 1.0
     },
     "class_type": "LoraLoaderModelOnly",
@@ -50,8 +72,8 @@
     "inputs": {
       "text": "PLACEHOLDER_POSITIVE_PROMPT",
       "clip": [
-        "1",
-        1
+        "8",
+        0
       ]
     },
     "class_type": "CLIPTextEncode",
@@ -61,10 +83,10 @@
   },
   "4": {
     "inputs": {
-      "text": "",
+      "text": "PLACEHOLDER_NEGATIVE_PROMPT",
       "clip": [
-        "1",
-        1
+        "8",
+        0
       ]
     },
     "class_type": "CLIPTextEncode",
@@ -79,8 +101,8 @@
         0
       ],
       "vae": [
-        "1",
-        2
+        "9",
+        0
       ]
     },
     "class_type": "VAEEncode",
@@ -117,7 +139,7 @@
     "_meta": {
       "title": "KSampler"
     },
-    "_note": "Model input comes from LoRA loader (node 10). When LoRA is bypassed, this will still work as the LoRA passthrough outputs the model."
+    "_note": "Model input comes from LoRA loader (node 10). When LoRA is bypassed, this will still work as the LoRA passthrough outputs the model. server.py dynamically sets model to [1, 0] when using standard/high quality (no Lightning)."
   },
   "7": {
     "inputs": {
@@ -126,8 +148,8 @@
         0
       ],
       "vae": [
-        "1",
-        2
+        "9",
+        0
       ]
     },
     "class_type": "VAEDecode",
@@ -135,7 +157,7 @@
       "title": "VAE Decode"
     }
   },
-  "8": {
+  "11": {
     "inputs": {
       "filename_prefix": "qwen_edit",
       "images": [

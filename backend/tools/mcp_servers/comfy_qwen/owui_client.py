@@ -24,17 +24,21 @@ class OpenWebUIClient:
     def __init__(
         self,
         base_url: Optional[str] = None,
+        public_url: Optional[str] = None,
         api_token: Optional[str] = None,
         timeout: float = 30.0,
     ):
         """Initialize Open WebUI client.
 
         Args:
-            base_url: Base URL for Open WebUI (e.g., https://webui.example.com)
+            base_url: Base URL for Open WebUI API requests (e.g., http://open-webui:8080)
+            public_url: Public URL for content links accessible by external clients
+                        (e.g., https://webui.example.com). Defaults to base_url if not set.
             api_token: Bearer token for authentication
             timeout: Request timeout in seconds
         """
         self.base_url = (base_url or os.getenv("OWUI_BASE_URL", "")).rstrip("/")
+        self.public_url = (public_url or os.getenv("OWUI_PUBLIC_URL", "") or self.base_url).rstrip("/")
         self.api_token = api_token or os.getenv("OWUI_API_TOKEN", "")
         self.timeout = timeout
 
@@ -44,7 +48,7 @@ class OpenWebUIClient:
         if not self.api_token:
             logger.warning("OWUI_API_TOKEN not set - authentication may fail")
 
-        self.files_endpoint = f"{self.base_url}/api/v1/files"
+        self.files_endpoint = f"{self.base_url}/api/v1/files/"
 
     def _get_headers(self) -> dict:
         """Get HTTP headers including authentication.
@@ -117,8 +121,8 @@ class OpenWebUIClient:
                 if not file_id:
                     raise ValueError(f"No file ID in upload response: {data}")
 
-                # Construct canonical content URL
-                content_url = f"{self.base_url}/api/v1/files/{file_id}/content"
+                # Construct canonical content URL using public URL
+                content_url = f"{self.public_url}/api/v1/files/{file_id}/content"
 
                 logger.info(f"File uploaded successfully: {file_id}")
                 return file_id, content_url

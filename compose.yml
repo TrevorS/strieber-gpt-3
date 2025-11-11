@@ -57,9 +57,8 @@ services:
 
     # Volume mounts
     volumes:
-      # Models directory (write access enabled for llama-cli downloads)
-      # Mount actual models directory, not symlink
-      - /home/trevor/models:/models
+      # Models directory: GPT-OSS models for main inference engine
+      - /home/trevor/models/llama-cpp/gpt-oss:/models
       # Optional: cache directory for prompt caching
       # - ./cache:/cache
 
@@ -152,8 +151,8 @@ services:
 
     # Volume mounts
     volumes:
-      # Models directory
-      - /home/trevor/models:/models
+      # Models directory: ReaderLM for HTML-to-Markdown conversion
+      - /home/trevor/models/llama-cpp/specialized:/models
 
     # Environment variables
     environment:
@@ -236,8 +235,8 @@ services:
 
     # Volume mounts
     volumes:
-      # Models directory (includes both main model and mmproj files)
-      - /home/trevor/models:/models
+      # Models directory: Qwen-VL vision-language model and mmproj
+      - /home/trevor/models/llama-cpp/qwen-vl:/models
 
     # Environment variables
     environment:
@@ -531,6 +530,33 @@ services:
       playwright-scraper:
         condition: service_healthy
       llama-server-readerlm:
+        condition: service_healthy
+    networks:
+      - strieber-net
+
+  # mcp-comfy-qwen: Text-to-image and image editing with Qwen models
+  # ABOUTME: MCP server for ComfyUI-based Qwen image generation with Lightning LoRA support
+  # Uses: Split model architecture (UNETLoader, CLIPLoader, VAELoader) with quality presets
+  # ==========================================================================
+  mcp-comfy-qwen:
+    build:
+      context: ./backend/tools/mcp_servers
+      dockerfile: Dockerfile.mcp-server
+      args:
+        SERVER_MODULE: comfy_qwen
+    image: strieber-mcp-comfy-qwen:latest
+    container_name: strieber-mcp-comfy-qwen
+    restart: unless-stopped
+    ports:
+      - "9140:8000"
+    environment:
+      - PORT=8000
+      - COMFY_URL=http://comfyui:8188
+      - OWUI_BASE_URL=http://open-webui:8080
+      - OWUI_PUBLIC_URL=http://spark-ebf0.tailbb09a1.ts.net:9200
+      - OWUI_API_TOKEN=sk-5467fee6567144d3a8b1758ebb5bb843
+    depends_on:
+      comfyui:
         condition: service_healthy
     networks:
       - strieber-net

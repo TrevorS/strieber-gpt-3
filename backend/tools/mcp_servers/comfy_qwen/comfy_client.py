@@ -57,8 +57,14 @@ class ComfyUIClient:
 
         try:
             async with httpx.AsyncClient(timeout=self.timeout) as client:
+                # Clean up workflow: remove comment keys (start with #) that ComfyUI doesn't understand
+                clean_workflow = {
+                    k: v for k, v in workflow.items()
+                    if not k.startswith("#")
+                }
+
                 payload = {
-                    "prompt": workflow,
+                    "prompt": clean_workflow,
                     "client_id": self.client_id,
                 }
                 response = await client.post(
