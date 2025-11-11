@@ -9,7 +9,7 @@ import asyncio
 import json
 import logging
 import os
-from typing import Optional, Dict, Any, Literal
+from typing import Optional, Dict, Any, Literal, List
 from datetime import datetime, timedelta
 from enum import Enum
 
@@ -322,6 +322,82 @@ async def geocode_location(location: str) -> Dict[str, Any]:
         )
 
 # ============================================================================
+# WEATHER FETCH HELPERS
+# ============================================================================
+
+
+def _safe_array_get(arr: List[Any], index: int, default: Any = None) -> Any:
+    """Safely get item from array, returning default if index out of bounds.
+
+    Args:
+        arr: Array to access
+        index: Index to retrieve
+        default: Default value if index out of bounds
+
+    Returns:
+        Array item at index or default value
+    """
+    return arr[index] if index < len(arr) else default
+
+
+def _build_base_params(lat: float, lon: float, units: str) -> Dict[str, Any]:
+    """Build common API parameters for Open-Meteo requests.
+
+    Args:
+        lat: Latitude coordinate
+        lon: Longitude coordinate
+        units: Temperature units ("celsius" or "fahrenheit")
+
+    Returns:
+        Dict with common API parameters
+    """
+    return {
+        "latitude": lat,
+        "longitude": lon,
+        "temperature_unit": "fahrenheit" if units == "fahrenheit" else "celsius",
+        "wind_speed_unit": "kmh",
+        "timezone": "auto"
+    }
+
+
+async def _fetch_weather_data(
+    params: Dict[str, Any],
+    lat: float,
+    lon: float,
+    forecast_type: str
+) -> Dict[str, Any]:
+    """Fetch weather data from Open-Meteo API with error handling.
+
+    Args:
+        params: API request parameters
+        lat: Latitude coordinate
+        lon: Longitude coordinate
+        forecast_type: Type of forecast being requested (for logging)
+
+    Returns:
+        Parsed JSON response from API
+
+    Raises:
+        Exception: If API request fails or times out
+    """
+    try:
+        resp = await safe_http_get(WEATHER_API, params=params, timeout=API_TIMEOUT_SECONDS)
+        return resp.json()
+    except httpx.TimeoutException as e:
+        logger.error(f"{forecast_type} weather fetch timeout for ({lat}, {lon}): {e}")
+        raise Exception(
+            f"Weather request timed out",
+            {"error_code": ERROR_TIMEOUT, "latitude": lat, "longitude": lon}
+        )
+    except Exception as e:
+        logger.error(f"Failed to fetch {forecast_type} weather for ({lat}, {lon}): {e}")
+        raise Exception(
+            f"Weather fetch failed: {str(e)}",
+            {"error_code": ERROR_FETCH_FAILED, "latitude": lat, "longitude": lon}
+        )
+
+
+# ============================================================================
 # WEATHER FETCH FUNCTIONS
 # ============================================================================
 
@@ -343,52 +419,31 @@ async def fetch_current_weather(lat: float, lon: float, units: str = "celsius") 
     """
     logger.debug(f"Fetching current weather for ({lat}, {lon}) in {units}")
 
-    try:
-        params = {
-            "latitude": lat,
-            "longitude": lon,
-            "current": "temperature_2m,relative_humidity_2m,weather_code,wind_speed_10m,apparent_temperature,precipitation,cloud_cover,visibility,uv_index,pressure_msl,dew_point_2m",
-            "temperature_unit": "fahrenheit" if units == "fahrenheit" else "celsius",
-            "wind_speed_unit": "kmh",
-            "timezone": "auto"
-        }
-        resp = await safe_http_get(WEATHER_API, params=params, timeout=API_TIMEOUT_SECONDS)
+    params = _build_base_params(lat, lon, units)
+    params["current"] = "temperature_2m,relative_humidity_2m,weather_code,wind_speed_10m,apparent_temperature,precipitation,cloud_cover,visibility,uv_index,pressure_msl,dew_point_2m"
 
-        data = resp.json()
-        current = data.get("current", {})
+    data = await _fetch_weather_data(params, lat, lon, "current")
+    current = data.get("current", {})
 
-        weather_data = {
-            "time": current.get("time"),
-            "temperature": current.get("temperature_2m"),
-            "feels_like": current.get("apparent_temperature"),
-            "humidity": current.get("relative_humidity_2m"),
-            "wind_speed": current.get("wind_speed_10m"),
-            "condition": WMO_CODES.get(current.get("weather_code", 0), "Unknown"),
-            "weather_code": current.get("weather_code"),
-            "precipitation": current.get("precipitation"),
-            "cloud_cover": current.get("cloud_cover"),
-            "visibility": current.get("visibility"),
-            "uv_index": current.get("uv_index"),
-            "pressure_msl": current.get("pressure_msl"),
-            "dew_point": current.get("dew_point_2m"),
-            "units": units
-        }
+    weather_data = {
+        "time": current.get("time"),
+        "temperature": current.get("temperature_2m"),
+        "feels_like": current.get("apparent_temperature"),
+        "humidity": current.get("relative_humidity_2m"),
+        "wind_speed": current.get("wind_speed_10m"),
+        "condition": WMO_CODES.get(current.get("weather_code", 0), "Unknown"),
+        "weather_code": current.get("weather_code"),
+        "precipitation": current.get("precipitation"),
+        "cloud_cover": current.get("cloud_cover"),
+        "visibility": current.get("visibility"),
+        "uv_index": current.get("uv_index"),
+        "pressure_msl": current.get("pressure_msl"),
+        "dew_point": current.get("dew_point_2m"),
+        "units": units
+    }
 
-        logger.debug(f"Successfully fetched current weather: {weather_data['temperature']}{get_unit_symbol(units)}, {weather_data['condition']}")
-        return weather_data
-
-    except httpx.TimeoutException as e:
-        logger.error(f"Weather fetch timeout for ({lat}, {lon}): {e}")
-        raise Exception(
-            f"Weather request timed out",
-            {"error_code": ERROR_TIMEOUT, "latitude": lat, "longitude": lon}
-        )
-    except Exception as e:
-        logger.error(f"Failed to fetch current weather: {e}")
-        raise Exception(
-            f"Weather fetch failed: {str(e)}",
-            {"error_code": ERROR_FETCH_FAILED, "latitude": lat, "longitude": lon}
-        )
+    logger.debug(f"Successfully fetched current weather: {weather_data['temperature']}{get_unit_symbol(units)}, {weather_data['condition']}")
+    return weather_data
 
 
 async def fetch_daily_forecast(lat: float, lon: float, units: str = "celsius") -> Dict[str, Any]:
@@ -408,68 +463,47 @@ async def fetch_daily_forecast(lat: float, lon: float, units: str = "celsius") -
     """
     logger.debug(f"Fetching daily forecast for ({lat}, {lon}) in {units}")
 
-    try:
-        params = {
-            "latitude": lat,
-            "longitude": lon,
-            "hourly": "temperature_2m,relative_humidity_2m,weather_code,wind_speed_10m,precipitation,precipitation_probability,uv_index,cloud_cover,visibility,dew_point_2m",
-            "temperature_unit": "fahrenheit" if units == "fahrenheit" else "celsius",
-            "wind_speed_unit": "kmh",
-            "timezone": "auto"
-        }
-        resp = await safe_http_get(WEATHER_API, params=params, timeout=API_TIMEOUT_SECONDS)
+    params = _build_base_params(lat, lon, units)
+    params["hourly"] = "temperature_2m,relative_humidity_2m,weather_code,wind_speed_10m,precipitation,precipitation_probability,uv_index,cloud_cover,visibility,dew_point_2m"
 
-        data = resp.json()
-        hourly = data.get("hourly", {})
+    data = await _fetch_weather_data(params, lat, lon, "daily")
+    hourly = data.get("hourly", {})
 
-        # Get next 24 hours
-        times = hourly.get("time", [])[:DAILY_FORECAST_HOURS]
-        temps = hourly.get("temperature_2m", [])[:DAILY_FORECAST_HOURS]
-        humidity = hourly.get("relative_humidity_2m", [])[:DAILY_FORECAST_HOURS]
-        codes = hourly.get("weather_code", [])[:DAILY_FORECAST_HOURS]
-        wind = hourly.get("wind_speed_10m", [])[:DAILY_FORECAST_HOURS]
-        precip = hourly.get("precipitation", [])[:DAILY_FORECAST_HOURS]
-        precip_prob = hourly.get("precipitation_probability", [])[:DAILY_FORECAST_HOURS]
-        uv = hourly.get("uv_index", [])[:DAILY_FORECAST_HOURS]
-        cloud = hourly.get("cloud_cover", [])[:DAILY_FORECAST_HOURS]
-        vis = hourly.get("visibility", [])[:DAILY_FORECAST_HOURS]
-        dew = hourly.get("dew_point_2m", [])[:DAILY_FORECAST_HOURS]
+    # Get next 24 hours
+    times = hourly.get("time", [])[:DAILY_FORECAST_HOURS]
+    temps = hourly.get("temperature_2m", [])[:DAILY_FORECAST_HOURS]
+    humidity = hourly.get("relative_humidity_2m", [])[:DAILY_FORECAST_HOURS]
+    codes = hourly.get("weather_code", [])[:DAILY_FORECAST_HOURS]
+    wind = hourly.get("wind_speed_10m", [])[:DAILY_FORECAST_HOURS]
+    precip = hourly.get("precipitation", [])[:DAILY_FORECAST_HOURS]
+    precip_prob = hourly.get("precipitation_probability", [])[:DAILY_FORECAST_HOURS]
+    uv = hourly.get("uv_index", [])[:DAILY_FORECAST_HOURS]
+    cloud = hourly.get("cloud_cover", [])[:DAILY_FORECAST_HOURS]
+    vis = hourly.get("visibility", [])[:DAILY_FORECAST_HOURS]
+    dew = hourly.get("dew_point_2m", [])[:DAILY_FORECAST_HOURS]
 
-        forecast = []
-        for i, time_str in enumerate(times):
-            forecast.append({
-                "time": time_str,
-                "temperature": temps[i] if i < len(temps) else None,
-                "humidity": humidity[i] if i < len(humidity) else None,
-                "condition": WMO_CODES.get(codes[i] if i < len(codes) else 0, "Unknown"),
-                "weather_code": codes[i] if i < len(codes) else None,
-                "wind_speed": wind[i] if i < len(wind) else None,
-                "precipitation": precip[i] if i < len(precip) else None,
-                "precipitation_probability": precip_prob[i] if i < len(precip_prob) else None,
-                "uv_index": uv[i] if i < len(uv) else None,
-                "cloud_cover": cloud[i] if i < len(cloud) else None,
-                "visibility": vis[i] if i < len(vis) else None,
-                "dew_point": dew[i] if i < len(dew) else None,
-            })
+    forecast = []
+    for i, time_str in enumerate(times):
+        forecast.append({
+            "time": time_str,
+            "temperature": _safe_array_get(temps, i),
+            "humidity": _safe_array_get(humidity, i),
+            "condition": WMO_CODES.get(_safe_array_get(codes, i, 0), "Unknown"),
+            "weather_code": _safe_array_get(codes, i),
+            "wind_speed": _safe_array_get(wind, i),
+            "precipitation": _safe_array_get(precip, i),
+            "precipitation_probability": _safe_array_get(precip_prob, i),
+            "uv_index": _safe_array_get(uv, i),
+            "cloud_cover": _safe_array_get(cloud, i),
+            "visibility": _safe_array_get(vis, i),
+            "dew_point": _safe_array_get(dew, i),
+        })
 
-        logger.debug(f"Successfully fetched daily forecast with {len(forecast)} hourly entries")
-        return {
-            "forecast": forecast,
-            "units": units
-        }
-
-    except httpx.TimeoutException as e:
-        logger.error(f"Daily forecast timeout for ({lat}, {lon}): {e}")
-        raise Exception(
-            f"Weather request timed out",
-            {"error_code": ERROR_TIMEOUT, "latitude": lat, "longitude": lon}
-        )
-    except Exception as e:
-        logger.error(f"Failed to fetch daily forecast: {e}")
-        raise Exception(
-            f"Weather fetch failed: {str(e)}",
-            {"error_code": ERROR_FETCH_FAILED, "latitude": lat, "longitude": lon}
-        )
+    logger.debug(f"Successfully fetched daily forecast with {len(forecast)} hourly entries")
+    return {
+        "forecast": forecast,
+        "units": units
+    }
 
 
 async def fetch_weekly_forecast(lat: float, lon: float, units: str = "celsius") -> Dict[str, Any]:
@@ -489,66 +523,79 @@ async def fetch_weekly_forecast(lat: float, lon: float, units: str = "celsius") 
     """
     logger.debug(f"Fetching weekly forecast for ({lat}, {lon}) in {units}")
 
-    try:
-        params = {
-            "latitude": lat,
-            "longitude": lon,
-            "daily": "temperature_2m_max,temperature_2m_min,weather_code,wind_speed_10m_max,precipitation_sum,precipitation_probability_max,uv_index_max,sunrise,sunset",
-            "temperature_unit": "fahrenheit" if units == "fahrenheit" else "celsius",
-            "wind_speed_unit": "kmh",
-            "timezone": "auto"
-        }
-        resp = await safe_http_get(WEATHER_API, params=params, timeout=API_TIMEOUT_SECONDS)
+    params = _build_base_params(lat, lon, units)
+    params["daily"] = "temperature_2m_max,temperature_2m_min,weather_code,wind_speed_10m_max,precipitation_sum,precipitation_probability_max,uv_index_max,sunrise,sunset"
 
-        data = resp.json()
-        daily = data.get("daily", {})
+    data = await _fetch_weather_data(params, lat, lon, "weekly")
+    daily = data.get("daily", {})
 
-        # Get next 7 days
-        times = daily.get("time", [])[:WEEKLY_FORECAST_DAYS]
-        temps_max = daily.get("temperature_2m_max", [])[:WEEKLY_FORECAST_DAYS]
-        temps_min = daily.get("temperature_2m_min", [])[:WEEKLY_FORECAST_DAYS]
-        codes = daily.get("weather_code", [])[:WEEKLY_FORECAST_DAYS]
-        wind = daily.get("wind_speed_10m_max", [])[:WEEKLY_FORECAST_DAYS]
-        precip = daily.get("precipitation_sum", [])[:WEEKLY_FORECAST_DAYS]
-        precip_prob = daily.get("precipitation_probability_max", [])[:WEEKLY_FORECAST_DAYS]
-        uv = daily.get("uv_index_max", [])[:WEEKLY_FORECAST_DAYS]
-        sunrise = daily.get("sunrise", [])[:WEEKLY_FORECAST_DAYS]
-        sunset = daily.get("sunset", [])[:WEEKLY_FORECAST_DAYS]
+    # Get next 7 days
+    times = daily.get("time", [])[:WEEKLY_FORECAST_DAYS]
+    temps_max = daily.get("temperature_2m_max", [])[:WEEKLY_FORECAST_DAYS]
+    temps_min = daily.get("temperature_2m_min", [])[:WEEKLY_FORECAST_DAYS]
+    codes = daily.get("weather_code", [])[:WEEKLY_FORECAST_DAYS]
+    wind = daily.get("wind_speed_10m_max", [])[:WEEKLY_FORECAST_DAYS]
+    precip = daily.get("precipitation_sum", [])[:WEEKLY_FORECAST_DAYS]
+    precip_prob = daily.get("precipitation_probability_max", [])[:WEEKLY_FORECAST_DAYS]
+    uv = daily.get("uv_index_max", [])[:WEEKLY_FORECAST_DAYS]
+    sunrise = daily.get("sunrise", [])[:WEEKLY_FORECAST_DAYS]
+    sunset = daily.get("sunset", [])[:WEEKLY_FORECAST_DAYS]
 
-        forecast = []
-        for i, time_str in enumerate(times):
-            forecast.append({
-                "date": time_str,
-                "temp_max": temps_max[i] if i < len(temps_max) else None,
-                "temp_min": temps_min[i] if i < len(temps_min) else None,
-                "condition": WMO_CODES.get(codes[i] if i < len(codes) else 0, "Unknown"),
-                "weather_code": codes[i] if i < len(codes) else None,
-                "wind_speed": wind[i] if i < len(wind) else None,
-                "precipitation": precip[i] if i < len(precip) else None,
-                "precipitation_probability": precip_prob[i] if i < len(precip_prob) else None,
-                "uv_index": uv[i] if i < len(uv) else None,
-                "sunrise": sunrise[i] if i < len(sunrise) else None,
-                "sunset": sunset[i] if i < len(sunset) else None,
-            })
+    forecast = []
+    for i, time_str in enumerate(times):
+        forecast.append({
+            "date": time_str,
+            "temp_max": _safe_array_get(temps_max, i),
+            "temp_min": _safe_array_get(temps_min, i),
+            "condition": WMO_CODES.get(_safe_array_get(codes, i, 0), "Unknown"),
+            "weather_code": _safe_array_get(codes, i),
+            "wind_speed": _safe_array_get(wind, i),
+            "precipitation": _safe_array_get(precip, i),
+            "precipitation_probability": _safe_array_get(precip_prob, i),
+            "uv_index": _safe_array_get(uv, i),
+            "sunrise": _safe_array_get(sunrise, i),
+            "sunset": _safe_array_get(sunset, i),
+        })
 
-        logger.debug(f"Successfully fetched weekly forecast with {len(forecast)} daily entries")
-        return {
-            "forecast": forecast,
-            "units": units
-        }
+    logger.debug(f"Successfully fetched weekly forecast with {len(forecast)} daily entries")
+    return {
+        "forecast": forecast,
+        "units": units
+    }
 
-    except httpx.TimeoutException as e:
-        logger.error(f"Weekly forecast timeout for ({lat}, {lon}): {e}")
-        raise Exception(
-            f"Weather request timed out",
-            {"error_code": ERROR_TIMEOUT, "latitude": lat, "longitude": lon}
-        )
-    except Exception as e:
-        logger.error(f"Failed to fetch weekly forecast: {e}")
-        raise Exception(
-            f"Weather fetch failed: {str(e)}",
-            {"error_code": ERROR_FETCH_FAILED, "latitude": lat, "longitude": lon}
-        )
+# ============================================================================
+# TEXT FORMATTING HELPERS
+# ============================================================================
+
+
+def _build_notable_details(
+    precip_prob: Optional[float] = None,
+    uv: Optional[float] = None,
+    cloud: Optional[float] = None
+) -> str:
+    """Build a string of notable weather details for formatting.
+
+    Args:
+        precip_prob: Precipitation probability percentage
+        uv: UV index value
+        cloud: Cloud cover percentage
+
+    Returns:
+        Formatted string with notable details, empty if none notable
+    """
+    details = []
+
+    if precip_prob is not None and precip_prob > 20:
+        details.append(f"{precip_prob:.0f}% precip")
+
+    if uv is not None and uv >= 6:
+        details.append(f"UV {uv:.0f}")
+
+    if cloud is not None and (cloud < 20 or cloud > 80):
+        details.append(f"{cloud:.0f}% cloud")
+
+    return f" ({', '.join(details)})" if details else ""
+
 
 # ============================================================================
 # TEXT FORMATTING FUNCTIONS
@@ -637,27 +684,13 @@ def format_daily_forecast_text(location: str, data: Dict[str, Any]) -> str:
         condition = item.get("condition")
         emoji = get_weather_emoji(item.get("weather_code", 0))
 
-        # Additional data
-        precip_prob = item.get("precipitation_probability")
-        uv = item.get("uv_index")
-        cloud = item.get("cloud_cover")
-
-        # Format base line
-        line = f"{time}: {emoji} {temp}{unit_symbol} - {condition}"
-
-        # Add notable details
-        details = []
-        if precip_prob is not None and precip_prob > 20:
-            details.append(f"{precip_prob}% precip")
-        if uv is not None and uv >= 6:
-            details.append(f"UV {uv}")
-        if cloud is not None and (cloud < 20 or cloud > 80):
-            details.append(f"{cloud}% cloud")
-
-        if details:
-            line += f" ({', '.join(details)})"
-
-        text += line + "\n"
+        # Build base line with notable details
+        notable = _build_notable_details(
+            precip_prob=item.get("precipitation_probability"),
+            uv=item.get("uv_index"),
+            cloud=item.get("cloud_cover")
+        )
+        text += f"{time}: {emoji} {temp}{unit_symbol} - {condition}{notable}\n"
 
     return text
 
@@ -692,24 +725,12 @@ def format_weekly_forecast_text(location: str, data: Dict[str, Any]) -> str:
         condition = item.get("condition")
         emoji = get_weather_emoji(item.get("weather_code", 0))
 
-        # Additional data
-        precip_prob = item.get("precipitation_probability")
-        uv = item.get("uv_index")
-
-        # Format base line
-        line = f"{day_name}: {emoji} {temp_max}{unit_symbol} / {temp_min}{unit_symbol} - {condition}"
-
-        # Add notable details
-        details = []
-        if precip_prob is not None and precip_prob > 20:
-            details.append(f"{precip_prob}% precip")
-        if uv is not None and uv >= 6:
-            details.append(f"UV {uv}")
-
-        if details:
-            line += f" ({', '.join(details)})"
-
-        text += line + "\n"
+        # Build base line with notable details
+        notable = _build_notable_details(
+            precip_prob=item.get("precipitation_probability"),
+            uv=item.get("uv_index")
+        )
+        text += f"{day_name}: {emoji} {temp_max}{unit_symbol} / {temp_min}{unit_symbol} - {condition}{notable}\n"
 
     return text
 
