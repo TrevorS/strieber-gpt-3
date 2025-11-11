@@ -67,16 +67,53 @@ KMH_TO_MPH = 0.621371
 CELSIUS_DISPLAY_UNIT = "°C"
 FAHRENHEIT_DISPLAY_UNIT = "°F"
 
-# API parameter specifications
-CURRENT_WEATHER_PARAMS = "temperature_2m,relative_humidity_2m,weather_code,wind_speed_10m,apparent_temperature,precipitation,cloud_cover,visibility,uv_index,pressure_msl,dew_point_2m"
-HOURLY_FORECAST_PARAMS = "temperature_2m,relative_humidity_2m,weather_code,wind_speed_10m,precipitation,precipitation_probability,uv_index,cloud_cover,visibility,dew_point_2m"
-DAILY_FORECAST_PARAMS = "temperature_2m_max,temperature_2m_min,weather_code,wind_speed_10m_max,precipitation_sum,precipitation_probability_max,uv_index_max,sunrise,sunset"
+# API parameter specifications (as lists for clarity)
+CURRENT_WEATHER_PARAMS = [
+    "temperature_2m",
+    "relative_humidity_2m",
+    "weather_code",
+    "wind_speed_10m",
+    "apparent_temperature",
+    "precipitation",
+    "cloud_cover",
+    "visibility",
+    "uv_index",
+    "pressure_msl",
+    "dew_point_2m",
+]
 
-# Notable weather thresholds
-PRECIP_PROB_NOTABLE_THRESHOLD = 20  # Percentage
-UV_INDEX_NOTABLE_THRESHOLD = 6
-CLOUD_COVER_LOW_THRESHOLD = 20  # Percentage
-CLOUD_COVER_HIGH_THRESHOLD = 80  # Percentage
+HOURLY_FORECAST_PARAMS = [
+    "temperature_2m",
+    "relative_humidity_2m",
+    "weather_code",
+    "wind_speed_10m",
+    "precipitation",
+    "precipitation_probability",
+    "uv_index",
+    "cloud_cover",
+    "visibility",
+    "dew_point_2m",
+]
+
+DAILY_FORECAST_PARAMS = [
+    "temperature_2m_max",
+    "temperature_2m_min",
+    "weather_code",
+    "wind_speed_10m_max",
+    "precipitation_sum",
+    "precipitation_probability_max",
+    "uv_index_max",
+    "sunrise",
+    "sunset",
+]
+
+# Weather interpretation thresholds
+WEATHER_THRESHOLDS = {
+    "precip_prob_notable": 20,  # Percentage above which to show precipitation probability
+    "uv_index_notable": 6,  # UV index above which to highlight
+    "cloud_cover_low": 20,  # Percentage below which sky is notably clear
+    "cloud_cover_high": 80,  # Percentage above which sky is notably overcast
+}
 
 # Tool-specific error codes (beyond shared constants)
 ERROR_CODE_INVALID_LOCATION = "invalid_location"
@@ -431,7 +468,7 @@ async def fetch_current_weather(lat: float, lon: float, units: str = "celsius") 
     logger.debug(f"Fetching current weather for ({lat}, {lon}) in {units}")
 
     params = _build_base_params(lat, lon, units)
-    params["current"] = CURRENT_WEATHER_PARAMS
+    params["current"] = ",".join(CURRENT_WEATHER_PARAMS)
 
     data = await _fetch_weather_data(params, lat, lon, "current")
     current = data.get("current", {})
@@ -475,7 +512,7 @@ async def fetch_daily_forecast(lat: float, lon: float, units: str = "celsius") -
     logger.debug(f"Fetching daily forecast for ({lat}, {lon}) in {units}")
 
     params = _build_base_params(lat, lon, units)
-    params["hourly"] = HOURLY_FORECAST_PARAMS
+    params["hourly"] = ",".join(HOURLY_FORECAST_PARAMS)
 
     data = await _fetch_weather_data(params, lat, lon, "daily")
     hourly = data.get("hourly", {})
@@ -523,7 +560,7 @@ async def fetch_weekly_forecast(lat: float, lon: float, units: str = "celsius") 
     logger.debug(f"Fetching weekly forecast for ({lat}, {lon}) in {units}")
 
     params = _build_base_params(lat, lon, units)
-    params["daily"] = DAILY_FORECAST_PARAMS
+    params["daily"] = ",".join(DAILY_FORECAST_PARAMS)
 
     data = await _fetch_weather_data(params, lat, lon, "weekly")
     daily = data.get("daily", {})
@@ -624,13 +661,13 @@ def _build_notable_details(
     """
     details = []
 
-    if precip_prob is not None and precip_prob > PRECIP_PROB_NOTABLE_THRESHOLD:
+    if precip_prob is not None and precip_prob > WEATHER_THRESHOLDS["precip_prob_notable"]:
         details.append(f"{precip_prob:.0f}% precip")
 
-    if uv is not None and uv >= UV_INDEX_NOTABLE_THRESHOLD:
+    if uv is not None and uv >= WEATHER_THRESHOLDS["uv_index_notable"]:
         details.append(f"UV {uv:.0f}")
 
-    if cloud is not None and (cloud < CLOUD_COVER_LOW_THRESHOLD or cloud > CLOUD_COVER_HIGH_THRESHOLD):
+    if cloud is not None and (cloud < WEATHER_THRESHOLDS["cloud_cover_low"] or cloud > WEATHER_THRESHOLDS["cloud_cover_high"]):
         details.append(f"{cloud:.0f}% cloud")
 
     return f" ({', '.join(details)})" if details else ""
