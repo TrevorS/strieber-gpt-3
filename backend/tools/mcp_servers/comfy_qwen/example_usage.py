@@ -26,6 +26,7 @@ async def test_comfy_connection():
     try:
         # Try to access the root endpoint
         import httpx
+
         async with httpx.AsyncClient(timeout=5.0) as http:
             response = await http.get(f"{client.base_url}/")
             print(f"✓ ComfyUI is accessible at {client.base_url}")
@@ -34,7 +35,7 @@ async def test_comfy_connection():
     except Exception as e:
         print(f"✗ ComfyUI connection failed: {e}")
         print(f"  URL: {client.base_url}")
-        print(f"  Make sure ComfyUI is running!")
+        print("  Make sure ComfyUI is running!")
         return False
 
 
@@ -54,17 +55,22 @@ async def test_owui_connection():
 
     try:
         import httpx
+
         async with httpx.AsyncClient(timeout=5.0) as http:
             headers = {"Authorization": f"Bearer {client.api_token}"}
-            response = await http.get(f"{client.base_url}/api/v1/files", headers=headers)
+            response = await http.get(
+                f"{client.base_url}/api/v1/files", headers=headers
+            )
 
             if response.status_code in [200, 401, 403]:
                 print(f"✓ Open WebUI is accessible at {client.base_url}")
                 if response.status_code == 200:
-                    print(f"  ✓ API token is valid")
+                    print("  ✓ API token is valid")
                     return True
                 else:
-                    print(f"  ✗ API token may be invalid (status {response.status_code})")
+                    print(
+                        f"  ✗ API token may be invalid (status {response.status_code})"
+                    )
                     return False
             else:
                 print(f"✗ Unexpected status: {response.status_code}")
@@ -118,9 +124,9 @@ async def example_txt2img():
     This is a simplified example showing the workflow.
     In production, use the MCP server tools.
     """
-    print("\n" + "="*60)
+    print("\n" + "=" * 60)
     print("Example: Text-to-Image Generation")
-    print("="*60)
+    print("=" * 60)
 
     print("""
 To use the qwen_image tool via Open WebUI:
@@ -158,9 +164,9 @@ async def example_img2img():
     This is a simplified example showing the workflow.
     In production, use the MCP server tools.
     """
-    print("\n" + "="*60)
+    print("\n" + "=" * 60)
     print("Example: Image Editing")
-    print("="*60)
+    print("=" * 60)
 
     print("""
 To use the qwen_image_edit tool via Open WebUI:
@@ -195,14 +201,16 @@ To use the qwen_image_edit tool via Open WebUI:
 
 async def check_environment():
     """Check environment configuration."""
-    print("\n" + "="*60)
+    print("\n" + "=" * 60)
     print("Environment Configuration")
-    print("="*60)
+    print("=" * 60)
 
     env_vars = {
         "COMFY_URL": os.getenv("COMFY_URL", "http://127.0.0.1:8188"),
         "OWUI_BASE_URL": os.getenv("OWUI_BASE_URL", "(not set)"),
-        "OWUI_API_TOKEN": "***" + os.getenv("OWUI_API_TOKEN", "")[-4:] if os.getenv("OWUI_API_TOKEN") else "(not set)",
+        "OWUI_API_TOKEN": "***" + os.getenv("OWUI_API_TOKEN", "")[-4:]
+        if os.getenv("OWUI_API_TOKEN")
+        else "(not set)",
         "HOST": os.getenv("HOST", "0.0.0.0"),
         "PORT": os.getenv("PORT", "8000"),
     }
@@ -235,9 +243,9 @@ async def main():
     await example_img2img()
 
     # Summary
-    print("\n" + "="*60)
+    print("\n" + "=" * 60)
     print("Summary")
-    print("="*60)
+    print("=" * 60)
 
     if comfy_ok and owui_ok and workflows_ok:
         print("✓ All checks passed!")

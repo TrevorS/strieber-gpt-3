@@ -11,7 +11,7 @@ import asyncio
 import base64
 import logging
 import os
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, Optional
 
 import httpx
 from pydantic import BaseModel, Field
@@ -76,7 +76,14 @@ class Filter:
         model_id = __model__.get("id", "").lower()
         model_name = __model__.get("name", "").lower()
 
-        vision_keywords = ["vision", "vl", "llava", "gpt-4-vision", "claude-3", "gemini"]
+        vision_keywords = [
+            "vision",
+            "vl",
+            "llava",
+            "gpt-4-vision",
+            "claude-3",
+            "gemini",
+        ]
 
         for keyword in vision_keywords:
             if keyword in model_id or keyword in model_name:
@@ -211,7 +218,9 @@ class Filter:
                     # Check size
                     max_size = self.valves.max_image_size_mb * 1024 * 1024
                     if len(response.content) > max_size:
-                        self.logger.error(f"Image too large: {len(response.content)} bytes")
+                        self.logger.error(
+                            f"Image too large: {len(response.content)} bytes"
+                        )
                         return None
 
                     # Verify content type
@@ -329,10 +338,12 @@ class Filter:
                             "set to one of the URLs above."
                         )
 
-                    new_content.append({
-                        "type": "text",
-                        "text": urls_text,
-                    })
+                    new_content.append(
+                        {
+                            "type": "text",
+                            "text": urls_text,
+                        }
+                    )
 
                 # Update message content
                 if new_content != content:

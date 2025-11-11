@@ -11,10 +11,8 @@ Both tools support:
 - Markdown image links in responses for inline rendering
 """
 
-import asyncio
 import json
 import logging
-import os
 import random
 from pathlib import Path
 from typing import Dict, List, Literal, Optional, Tuple
@@ -40,12 +38,14 @@ mcp = FastMCP("comfy_qwen")
 # Load workflow templates
 WORKFLOWS_DIR = Path(__file__).parent / "workflows"
 
+
 def _load_workflow(filename: str) -> Dict:
     """Load workflow and remove comment/metadata keys (starting with _)."""
     with open(WORKFLOWS_DIR / filename) as f:
         workflow = json.load(f)
     # Remove metadata keys that start with underscore
     return {k: v for k, v in workflow.items() if not k.startswith("_")}
+
 
 QWEN_IMAGE_WORKFLOW = _load_workflow("qwen_image_api.json")
 QWEN_EDIT_WORKFLOW = _load_workflow("qwen_edit_api.json")
@@ -58,12 +58,12 @@ QWEN_EDIT_WORKFLOW = _load_workflow("qwen_edit_api.json")
 QualityLevel = Literal["turbo", "fast", "standard", "high"]
 ImageSize = Literal[
     "1024x1024",  # Square
-    "1024x768",   # Landscape 4:3
-    "768x1024",   # Portrait 3:4
-    "1280x720",   # Landscape 16:9
-    "720x1280",   # Portrait 9:16
-    "1344x768",   # Wide landscape
-    "768x1344",   # Tall portrait
+    "1024x768",  # Landscape 4:3
+    "768x1024",  # Portrait 3:4
+    "1280x720",  # Landscape 16:9
+    "720x1280",  # Portrait 9:16
+    "1344x768",  # Wide landscape
+    "768x1344",  # Tall portrait
 ]
 
 # Quality presets define steps, cfg, and Lightning LoRA usage
@@ -114,27 +114,27 @@ SIZE_PRESETS: Dict[ImageSize, Tuple[int, int]] = {
 # Node ID mappings for qwen_image workflow
 # Split loader architecture: separate UNETLoader, CLIPLoader, VAELoader nodes
 QWEN_IMAGE_NODES = {
-    "unet_loader": "1",          # UNETLoader node (diffusion model only)
-    "clip_loader": "8",          # CLIPLoader node (text encoder)
-    "vae_loader": "9",           # VAELoader node (VAE decoder)
-    "lora_loader": "10",         # LoraLoaderModelOnly node (bypassed for standard/high)
-    "positive_prompt": "2",      # CLIPTextEncode node for positive prompt
-    "negative_prompt": "3",      # CLIPTextEncode node for negative prompt
-    "empty_latent": "4",         # EmptyLatentImage node (width, height, batch_size)
-    "sampler": "5",              # KSampler node (seed, steps, cfg)
+    "unet_loader": "1",  # UNETLoader node (diffusion model only)
+    "clip_loader": "8",  # CLIPLoader node (text encoder)
+    "vae_loader": "9",  # VAELoader node (VAE decoder)
+    "lora_loader": "10",  # LoraLoaderModelOnly node (bypassed for standard/high)
+    "positive_prompt": "2",  # CLIPTextEncode node for positive prompt
+    "negative_prompt": "3",  # CLIPTextEncode node for negative prompt
+    "empty_latent": "4",  # EmptyLatentImage node (width, height, batch_size)
+    "sampler": "5",  # KSampler node (seed, steps, cfg)
 }
 
 # Node ID mappings for qwen_edit workflow
 # Split loader architecture: separate UNETLoader, CLIPLoader, VAELoader nodes
 QWEN_EDIT_NODES = {
-    "unet_loader": "1",          # UNETLoader node (diffusion model only)
-    "clip_loader": "8",          # CLIPLoader node (text encoder)
-    "vae_loader": "9",           # VAELoader node (VAE decoder)
-    "lora_loader": "10",         # LoraLoaderModelOnly node (bypassed for standard/high)
-    "load_image": "2",           # LoadImage node
-    "positive_prompt": "3",      # CLIPTextEncode node for positive prompt
-    "negative_prompt": "4",      # CLIPTextEncode node for negative prompt
-    "sampler": "6",              # KSampler node (seed, steps, cfg, denoise)
+    "unet_loader": "1",  # UNETLoader node (diffusion model only)
+    "clip_loader": "8",  # CLIPLoader node (text encoder)
+    "vae_loader": "9",  # VAELoader node (VAE decoder)
+    "lora_loader": "10",  # LoraLoaderModelOnly node (bypassed for standard/high)
+    "load_image": "2",  # LoadImage node
+    "positive_prompt": "3",  # CLIPTextEncode node for positive prompt
+    "negative_prompt": "4",  # CLIPTextEncode node for negative prompt
+    "sampler": "6",  # KSampler node (seed, steps, cfg, denoise)
 }
 
 
@@ -147,41 +147,32 @@ owui_client = OpenWebUIClient()
 # Pydantic Models for Tool Inputs
 # ============================================================================
 
+
 class QwenImageInput(BaseModel):
     """Input schema for qwen_image tool.
 
     Provides OpenAI-style quality presets with advanced overrides for power users.
     """
 
-    prompt: str = Field(
-        ...,
-        description="Text description of the image to generate"
-    )
+    prompt: str = Field(..., description="Text description of the image to generate")
     quality: QualityLevel = Field(
         "fast",
-        description="Quality preset: 'turbo' (4 steps, ~1s), 'fast' (8 steps, 2-3s), 'standard' (20 steps), or 'high' (50 steps)"
+        description="Quality preset: 'turbo' (4 steps, ~1s), 'fast' (8 steps, 2-3s), 'standard' (20 steps), or 'high' (50 steps)",
     )
     size: ImageSize = Field(
         "1024x1024",
-        description="Output image size as WIDTHxHEIGHT (e.g., '1024x1024', '1280x720')"
+        description="Output image size as WIDTHxHEIGHT (e.g., '1024x1024', '1280x720')",
     )
-    n: int = Field(
-        1,
-        ge=1,
-        le=4,
-        description="Number of images to generate (1-4)"
-    )
+    n: int = Field(1, ge=1, le=4, description="Number of images to generate (1-4)")
     negative_prompt: str = Field(
         "",
-        description="Negative prompt describing what to avoid in the generated image"
+        description="Negative prompt describing what to avoid in the generated image",
     )
     seed: Optional[int] = Field(
-        None,
-        description="Random seed for reproducible generation (omit for random)"
+        None, description="Random seed for reproducible generation (omit for random)"
     )
     upload_results_to_openwebui: bool = Field(
-        True,
-        description="Upload generated images to Open WebUI Files API"
+        True, description="Upload generated images to Open WebUI Files API"
     )
 
 
@@ -192,52 +183,46 @@ class QwenImageEditInput(BaseModel):
     """
 
     prompt: Optional[str] = Field(
-        None,
-        description="Text description of the desired edit or transformation"
+        None, description="Text description of the desired edit or transformation"
     )
     init_image_file_id: Optional[str] = Field(
-        None,
-        description="Open WebUI file ID for the base image to edit"
+        None, description="Open WebUI file ID for the base image to edit"
     )
     init_image_url: Optional[HttpUrl] = Field(
-        None,
-        description="URL to the base image (must be from Open WebUI domain)"
+        None, description="URL to the base image (must be from Open WebUI domain)"
     )
     quality: QualityLevel = Field(
         "fast",
-        description="Edit quality: 'turbo' (4 steps, ~1s), 'fast' (8 steps, 2-3s), 'standard' (30 steps), or 'high' (50 steps)"
+        description="Edit quality: 'turbo' (4 steps, ~1s), 'fast' (8 steps, 2-3s), 'standard' (30 steps), or 'high' (50 steps)",
     )
+    # TODO: Run studies on optimal strength/denoise values for different quality presets
     strength: float = Field(
         0.7,
         ge=0.0,
         le=1.0,
-        description="Denoising strength: 0.0 = no change, 1.0 = complete regeneration"
+        description="Denoising strength: 0.0 = no change, 1.0 = complete regeneration",
     )
     mask_file_id: Optional[str] = Field(
-        None,
-        description="Open WebUI file ID for inpainting mask (optional)"
+        None, description="Open WebUI file ID for inpainting mask (optional)"
     )
     mask_image_url: Optional[HttpUrl] = Field(
-        None,
-        description="URL to inpainting mask image (optional)"
+        None, description="URL to inpainting mask image (optional)"
     )
     negative_prompt: str = Field(
-        "",
-        description="Negative prompt describing what to avoid"
+        "", description="Negative prompt describing what to avoid"
     )
     seed: Optional[int] = Field(
-        None,
-        description="Random seed for reproducible edits (omit for random)"
+        None, description="Random seed for reproducible edits (omit for random)"
     )
     upload_results_to_openwebui: bool = Field(
-        True,
-        description="Upload edited images to Open WebUI Files API"
+        True, description="Upload edited images to Open WebUI Files API"
     )
 
 
 # ============================================================================
 # Helper Functions
 # ============================================================================
+
 
 def resolve_quality_settings(
     quality: QualityLevel,
@@ -259,14 +244,22 @@ def resolve_quality_settings(
         steps = preset["steps"]
         if model_type == "edit":
             if steps == 4:
-                preset["lora_file"] = "Qwen-Image-Edit-Lightning-4steps-V1.0-bf16.safetensors"
+                preset["lora_file"] = (
+                    "Qwen-Image-Edit-Lightning-4steps-V1.0-bf16.safetensors"
+                )
             else:  # 8-step
-                preset["lora_file"] = "Qwen-Image-Edit-2509-Lightning-8steps-V1.0-bf16.safetensors"
+                preset["lora_file"] = (
+                    "Qwen-Image-Edit-2509-Lightning-8steps-V1.0-bf16.safetensors"
+                )
         else:  # txt2img
             if steps == 4:
-                preset["lora_file"] = "Qwen-Image-Lightning-4steps-V2.0-bf16.safetensors"
+                preset["lora_file"] = (
+                    "Qwen-Image-Lightning-4steps-V2.0-bf16.safetensors"
+                )
             else:  # 8-step
-                preset["lora_file"] = "Qwen-Image-Lightning-8steps-V2.0-bf16.safetensors"
+                preset["lora_file"] = (
+                    "Qwen-Image-Lightning-8steps-V2.0-bf16.safetensors"
+                )
 
     return preset
 
@@ -288,7 +281,9 @@ async def download_init_image(
         ValueError: If neither or both sources provided, or download fails
     """
     if file_id and url:
-        raise ValueError("Provide either init_image_file_id OR init_image_url, not both")
+        raise ValueError(
+            "Provide either init_image_file_id OR init_image_url, not both"
+        )
 
     if not file_id and not url:
         raise ValueError("Must provide either init_image_file_id or init_image_url")
@@ -305,6 +300,7 @@ async def download_init_image(
 # ============================================================================
 # MCP Tools
 # ============================================================================
+
 
 @mcp.tool()
 async def qwen_image(
@@ -357,7 +353,9 @@ async def qwen_image(
           "seed": 42
         }
     """
-    logger.info(f"qwen_image called: prompt='{prompt[:50]}...', quality={quality}, size={size}")
+    logger.info(
+        f"qwen_image called: prompt='{prompt[:50]}...', quality={quality}, size={size}"
+    )
 
     try:
         # Resolve quality settings
@@ -382,7 +380,9 @@ async def qwen_image(
             # Enable LoRA loader
             workflow[QWEN_IMAGE_NODES["lora_loader"]]["inputs"]["lora_name"] = lora_file
             workflow[QWEN_IMAGE_NODES["lora_loader"]]["inputs"]["strength_model"] = 1.0
-            workflow[QWEN_IMAGE_NODES["lora_loader"]].pop("mode", None)  # Ensure enabled
+            workflow[QWEN_IMAGE_NODES["lora_loader"]].pop(
+                "mode", None
+            )  # Ensure enabled
             logger.info(f"Lightning LoRA enabled: {lora_file}")
         else:
             # Bypass LoRA loader
@@ -391,7 +391,9 @@ async def qwen_image(
 
         # Update workflow nodes with parameters
         workflow[QWEN_IMAGE_NODES["positive_prompt"]]["inputs"]["text"] = prompt
-        workflow[QWEN_IMAGE_NODES["negative_prompt"]]["inputs"]["text"] = negative_prompt
+        workflow[QWEN_IMAGE_NODES["negative_prompt"]]["inputs"]["text"] = (
+            negative_prompt
+        )
         workflow[QWEN_IMAGE_NODES["empty_latent"]]["inputs"]["width"] = width
         workflow[QWEN_IMAGE_NODES["empty_latent"]]["inputs"]["height"] = height
         workflow[QWEN_IMAGE_NODES["empty_latent"]]["inputs"]["batch_size"] = n
@@ -409,9 +411,7 @@ async def qwen_image(
                 if use_lora:
                     quality_label += f" (Lightning {final_steps}-step)"
                 await ctx.report_progress(
-                    progress,
-                    100,
-                    f"Generating image ({quality_label})... {progress}%"
+                    progress, 100, f"Generating image ({quality_label})... {progress}%"
                 )
 
         # Collect outputs
@@ -427,11 +427,13 @@ async def qwen_image(
         ]
         if use_lora:
             summary_parts.append(f"Lightning LoRA: {lora_file}")
-        summary_parts.extend([
-            f"Size: {width}x{height}",
-            f"Seed: {seed}",
-            f"Prompt: {prompt}",
-        ])
+        summary_parts.extend(
+            [
+                f"Size: {width}x{height}",
+                f"Seed: {seed}",
+                f"Prompt: {prompt}",
+            ]
+        )
 
         summary_text = "\n".join(summary_parts)
         content_blocks.append(TextContent(type="text", text=summary_text))
@@ -447,25 +449,28 @@ async def qwen_image(
                         f"qwen_image_{quality}_{prompt_id}_{idx}.png",
                         "image/png",
                     )
-                    logger.info(f"Upload successful, file_id={file_id}, content_url={content_url}")
+                    logger.info(
+                        f"Upload successful, file_id={file_id}, content_url={content_url}"
+                    )
 
                     # Add markdown image link (renders inline without token overhead)
                     markdown_text = f"![Image {idx + 1}]({content_url})"
                     logger.info(f"Creating markdown content block: {markdown_text}")
-                    text_block = TextContent(
-                        type="text",
-                        text=markdown_text
+                    text_block = TextContent(type="text", text=markdown_text)
+                    logger.info(
+                        f"TextContent created: type={text_block.type}, text preview={text_block.text[:50]}"
                     )
-                    logger.info(f"TextContent created: type={text_block.type}, text preview={text_block.text[:50]}")
                     content_blocks.append(text_block)
-                    logger.info(f"Added to content_blocks, now {len(content_blocks)} items")
+                    logger.info(
+                        f"Added to content_blocks, now {len(content_blocks)} items"
+                    )
 
                 except Exception as e:
                     logger.error(f"Failed to upload image {idx}: {e}", exc_info=True)
                     content_blocks.append(
                         TextContent(
                             type="text",
-                            text=f"⚠️ Failed to upload image {idx + 1}: {str(e)}"
+                            text=f"⚠️ Failed to upload image {idx + 1}: {str(e)}",
                         )
                     )
         else:
@@ -474,15 +479,17 @@ async def qwen_image(
             content_blocks.append(
                 TextContent(
                     type="text",
-                    text=f"⚠️ Generated {len(output_files)} image(s) but upload disabled (OWUI_BASE_URL or OWUI_API_TOKEN not set)"
+                    text=f"⚠️ Generated {len(output_files)} image(s) but upload disabled (OWUI_BASE_URL or OWUI_API_TOKEN not set)",
                 )
             )
-        logger.info(f"qwen_image completed: {len(output_files)} image(s), quality={quality}")
+        logger.info(
+            f"qwen_image completed: {len(output_files)} image(s), quality={quality}"
+        )
         logger.info(f"Returning {len(content_blocks)} content blocks:")
         for idx, block in enumerate(content_blocks):
             block_type = type(block).__name__
             text_preview = ""
-            if hasattr(block, 'text'):
+            if hasattr(block, "text"):
                 text_preview = block.text[:100] if len(block.text) > 100 else block.text
             logger.info(f"  [{idx}] {block_type}: {text_preview}")
         return content_blocks
@@ -645,7 +652,7 @@ async def qwen_image_edit(
                 await ctx.report_progress(
                     scaled_progress,
                     100,
-                    f"Editing image ({quality_label})... {progress}%"
+                    f"Editing image ({quality_label})... {progress}%",
                 )
 
         # Collect outputs
@@ -661,11 +668,13 @@ async def qwen_image_edit(
         ]
         if use_lora:
             summary_parts.append(f"Lightning LoRA: {lora_file}")
-        summary_parts.extend([
-            f"Strength: {strength}",
-            f"Seed: {seed}",
-            f"Prompt: {prompt or '(none)'}",
-        ])
+        summary_parts.extend(
+            [
+                f"Strength: {strength}",
+                f"Seed: {seed}",
+                f"Prompt: {prompt or '(none)'}",
+            ]
+        )
 
         summary_text = "\n".join(summary_parts)
         content_blocks.append(TextContent(type="text", text=summary_text))
@@ -688,16 +697,18 @@ async def qwen_image_edit(
                     content_blocks.append(
                         TextContent(
                             type="text",
-                            text=f"![Edited Image {idx + 1}]({content_url})"
+                            text=f"![Edited Image {idx + 1}]({content_url})",
                         )
                     )
 
                 except Exception as e:
-                    logger.error(f"Failed to upload edited image {idx}: {e}", exc_info=True)
+                    logger.error(
+                        f"Failed to upload edited image {idx}: {e}", exc_info=True
+                    )
                     content_blocks.append(
                         TextContent(
                             type="text",
-                            text=f"⚠️ Failed to upload image {idx + 1}: {str(e)}"
+                            text=f"⚠️ Failed to upload image {idx + 1}: {str(e)}",
                         )
                     )
         else:
@@ -706,19 +717,21 @@ async def qwen_image_edit(
             content_blocks.append(
                 TextContent(
                     type="text",
-                    text=f"⚠️ Edited {len(output_files)} image(s) but upload disabled (OWUI_BASE_URL or OWUI_API_TOKEN not set)"
+                    text=f"⚠️ Edited {len(output_files)} image(s) but upload disabled (OWUI_BASE_URL or OWUI_API_TOKEN not set)",
                 )
             )
 
         if ctx:
             await ctx.report_progress(100, 100, "Complete!")
 
-        logger.info(f"qwen_image_edit completed: {len(output_files)} image(s), quality={quality}")
+        logger.info(
+            f"qwen_image_edit completed: {len(output_files)} image(s), quality={quality}"
+        )
         logger.info(f"Returning {len(content_blocks)} content blocks:")
         for idx, block in enumerate(content_blocks):
             block_type = type(block).__name__
             text_preview = ""
-            if hasattr(block, 'text'):
+            if hasattr(block, "text"):
                 text_preview = block.text[:100] if len(block.text) > 100 else block.text
             logger.info(f"  [{idx}] {block_type}: {text_preview}")
         return content_blocks
@@ -742,6 +755,7 @@ async def qwen_image_edit(
 # Server Instance (for launcher.py)
 # ============================================================================
 
+
 class ComfyQwenServer:
     """Wrapper class for launcher.py integration."""
 
@@ -761,6 +775,7 @@ server = ComfyQwenServer()
 # ============================================================================
 # Module-level get_mcp() for launcher.py compatibility
 # ============================================================================
+
 
 def get_mcp():
     """Get the FastMCP server instance - required by launcher.py."""

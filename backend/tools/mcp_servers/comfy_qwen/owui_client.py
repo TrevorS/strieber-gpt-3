@@ -10,7 +10,7 @@ Provides functionality to:
 import logging
 import os
 from typing import Optional, Tuple
-from urllib.parse import urljoin, urlparse
+from urllib.parse import urlparse
 
 import httpx
 
@@ -38,7 +38,9 @@ class OpenWebUIClient:
             timeout: Request timeout in seconds
         """
         self.base_url = (base_url or os.getenv("OWUI_BASE_URL", "")).rstrip("/")
-        self.public_url = (public_url or os.getenv("OWUI_PUBLIC_URL", "") or self.base_url).rstrip("/")
+        self.public_url = (
+            public_url or os.getenv("OWUI_PUBLIC_URL", "") or self.base_url
+        ).rstrip("/")
         self.api_token = api_token or os.getenv("OWUI_API_TOKEN", "")
         self.timeout = timeout
 
@@ -142,7 +144,9 @@ class OpenWebUIClient:
                 return file_id, content_url
 
         except httpx.HTTPStatusError as e:
-            logger.error(f"HTTP error uploading file: {e.response.status_code} - {e.response.text}")
+            logger.error(
+                f"HTTP error uploading file: {e.response.status_code} - {e.response.text}"
+            )
             raise ValueError(
                 f"Failed to upload file to Open WebUI: {e.response.status_code} - {e.response.text}"
             ) from e
@@ -183,7 +187,9 @@ class OpenWebUIClient:
                 )
                 response.raise_for_status()
 
-                logger.info(f"File downloaded successfully: {file_id} ({len(response.content)} bytes)")
+                logger.info(
+                    f"File downloaded successfully: {file_id} ({len(response.content)} bytes)"
+                )
                 return response.content
 
         except httpx.HTTPStatusError as e:
@@ -237,9 +243,13 @@ class OpenWebUIClient:
                 # Size limit: 30 MB
                 max_size = 30 * 1024 * 1024
                 if len(response.content) > max_size:
-                    raise ValueError(f"File too large: {len(response.content)} bytes (max {max_size})")
+                    raise ValueError(
+                        f"File too large: {len(response.content)} bytes (max {max_size})"
+                    )
 
-                logger.info(f"URL downloaded successfully ({len(response.content)} bytes)")
+                logger.info(
+                    f"URL downloaded successfully ({len(response.content)} bytes)"
+                )
                 return response.content
 
         except httpx.HTTPStatusError as e:

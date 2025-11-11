@@ -8,7 +8,6 @@ Provides functionality to:
 """
 
 import asyncio
-import json
 import logging
 import os
 import uuid
@@ -34,7 +33,9 @@ class ComfyUIClient:
             base_url: Base URL for ComfyUI (e.g., http://127.0.0.1:8188)
             timeout: Request timeout in seconds
         """
-        self.base_url = (base_url or os.getenv("COMFY_URL", "http://127.0.0.1:8188")).rstrip("/")
+        self.base_url = (
+            base_url or os.getenv("COMFY_URL", "http://127.0.0.1:8188")
+        ).rstrip("/")
         self.timeout = timeout
         self.client_id = str(uuid.uuid4())
 
@@ -59,8 +60,7 @@ class ComfyUIClient:
             async with httpx.AsyncClient(timeout=self.timeout) as client:
                 # Clean up workflow: remove comment keys (start with #) that ComfyUI doesn't understand
                 clean_workflow = {
-                    k: v for k, v in workflow.items()
-                    if not k.startswith("#")
+                    k: v for k, v in workflow.items() if not k.startswith("#")
                 }
 
                 payload = {
@@ -83,15 +83,19 @@ class ComfyUIClient:
                 return prompt_id
 
         except httpx.HTTPStatusError as e:
-            logger.error(f"HTTP error queueing workflow: {e.response.status_code} - {e.response.text}")
+            logger.error(
+                f"HTTP error queueing workflow: {e.response.status_code} - {e.response.text}"
+            )
             raise ValueError(
                 f"Failed to queue workflow: {e.response.status_code} - {e.response.text}"
             ) from e
         except httpx.HTTPError as e:
             logger.error(f"Network error queueing workflow: {e}")
-            raise ValueError(f"Failed to queue workflow: network error") from e
+            raise ValueError("Failed to queue workflow: network error") from e
 
-    async def progress(self, prompt_id: str, poll_interval: float = 1.0) -> AsyncIterator[int]:
+    async def progress(
+        self, prompt_id: str, poll_interval: float = 1.0
+    ) -> AsyncIterator[int]:
         """Track workflow progress.
 
         Yields progress values from 0-100. Uses polling fallback.
@@ -210,9 +214,13 @@ class ComfyUIClient:
                         continue
 
                     # Download the image
-                    img_bytes = await self._download_output(filename, subfolder, file_type)
+                    img_bytes = await self._download_output(
+                        filename, subfolder, file_type
+                    )
                     results.append((filename, img_bytes))
-                    logger.info(f"Collected output: {filename} ({len(img_bytes)} bytes)")
+                    logger.info(
+                        f"Collected output: {filename} ({len(img_bytes)} bytes)"
+                    )
 
             if not results:
                 raise ValueError("No output images found")
@@ -222,7 +230,7 @@ class ComfyUIClient:
 
         except httpx.HTTPError as e:
             logger.error(f"Network error collecting outputs: {e}")
-            raise ValueError(f"Failed to collect outputs: network error") from e
+            raise ValueError("Failed to collect outputs: network error") from e
 
     async def _download_output(
         self,
@@ -276,7 +284,9 @@ class ComfyUIClient:
         Raises:
             ValueError: If upload fails
         """
-        logger.info(f"Uploading {kind} to ComfyUI: {filename} ({len(image_bytes)} bytes)")
+        logger.info(
+            f"Uploading {kind} to ComfyUI: {filename} ({len(image_bytes)} bytes)"
+        )
 
         endpoint = f"/upload/{kind}" if kind == "mask" else "/upload/image"
 
@@ -304,7 +314,9 @@ class ComfyUIClient:
                 return uploaded_name
 
         except httpx.HTTPStatusError as e:
-            logger.error(f"HTTP error uploading image: {e.response.status_code} - {e.response.text}")
+            logger.error(
+                f"HTTP error uploading image: {e.response.status_code} - {e.response.text}"
+            )
             raise ValueError(
                 f"Failed to upload {kind}: {e.response.status_code}"
             ) from e
