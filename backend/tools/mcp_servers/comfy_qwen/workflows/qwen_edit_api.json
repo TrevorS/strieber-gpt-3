@@ -49,7 +49,7 @@
         "1",
         0
       ],
-      "lora_name": "Qwen-Image-Edit-Lightning-8steps-V1.0-bf16.safetensors",
+      "lora_name": "Qwen-Image-Edit-2509-Lightning-8steps-V1.0-bf16.safetensors",
       "strength_model": 1.0
     },
     "class_type": "LoraLoaderModelOnly",

@@ -245,7 +245,7 @@ def resolve_quality_settings(
         if model_type == "edit":
             if steps == 4:
                 preset["lora_file"] = (
-                    "Qwen-Image-Edit-Lightning-4steps-V1.0-bf16.safetensors"
+                    "Qwen-Image-Edit-2509-Lightning-4steps-V1.0-bf16.safetensors"
                 )
             else:  # 8-step
                 preset["lora_file"] = (
@@ -323,8 +323,35 @@ async def qwen_image(
     Results are uploaded to Open WebUI Files and returned as markdown image links
     for inline rendering in the UI, without token overhead from base64 encoding.
 
+    **PROMPT STRUCTURE BEST PRACTICES:**
+
+    Effective prompts follow: Subject → Environment → Style → Details
+    - Order matters: describe main subject first, then environment, then finer details
+    - Optimal length: 50-200 characters (too short lacks detail, too long causes confusion)
+    - Use 1-3 sentences: clear, detailed, but not overloaded
+    - Be specific: "SNK King of Fighters arcade graphics" vs "cool retro look"
+
+    **STYLE REFERENCES:**
+    Use established style references for better results:
+    - Good: "in the style of Studio Ghibli cel animation"
+    - Good: "photorealistic, 8K, cinematic lighting"
+    - Poor: "very artistic" or "nice looking"
+
+    **NEGATIVE PROMPT TIPS:**
+    Specify what to avoid in the generation:
+    - Quality issues: "blurry, distorted, low quality, artifacts"
+    - Text problems: "text, watermark, blurry text"
+    - Anatomy: "bad anatomy, malformed hands, extra fingers"
+    - Unwanted elements: "duplicate, multiple people, [unwanted object]"
+
+    **TEXT IN IMAGES:**
+    For in-image text, use short clear phrases in quotes:
+    - "Include text that reads 'AI Generated' in top right"
+    - "Add bold sans-serif text at bottom: 'Click here'"
+    - Specify font style and color if important
+
     Args:
-        prompt: Text description of the image to generate
+        prompt: Text description of the image to generate (subject → environment → style)
         quality: Generation quality preset (default: "fast")
         size: Output image size (default: "1024x1024")
         n: Number of images to generate (default: 1)
@@ -334,22 +361,23 @@ async def qwen_image(
 
     Returns:
         List of TextContent blocks:
-        - Generation summary and status
+        - Generation summary and status with file IDs
         - Markdown image links to full-resolution images on OWUI
 
     Example:
-        Generate a fast image:
+        Fast image with detailed prompt:
         {
-          "prompt": "sunset over mountains, dramatic lighting",
+          "prompt": "Market Street in front of the Ferry Building, San Francisco. SNK King of Fighters arcade graphics style. Neon signs, street vendors, dynamic perspective, bold colors, 1990s arcade aesthetic",
           "quality": "fast",
-          "size": "1280x720"
+          "size": "1280x720",
+          "negative_prompt": "blurry, low quality, modern style"
         }
 
         High-quality with custom seed:
         {
-          "prompt": "portrait of a wise elder",
+          "prompt": "portrait of a wise elder, wise expression, warm lighting, cinematic, 8K, oil painting style. Medieval fantasy setting",
           "quality": "high",
-          "negative_prompt": "blurry, distorted",
+          "negative_prompt": "blurry, distorted, bad anatomy, modern clothes",
           "seed": 42
         }
     """
@@ -387,6 +415,10 @@ async def qwen_image(
         else:
             # Bypass LoRA loader
             workflow[QWEN_IMAGE_NODES["lora_loader"]]["mode"] = 4
+            # Set to a valid LoRA name to pass validation even though it's bypassed
+            workflow[QWEN_IMAGE_NODES["lora_loader"]]["inputs"]["lora_name"] = (
+                "Qwen-Image-Lightning-8steps-V2.0-bf16.safetensors"
+            )
             logger.info("Lightning LoRA bypassed")
 
         # Update workflow nodes with parameters
@@ -454,7 +486,7 @@ async def qwen_image(
                     )
 
                     # Add markdown image link (renders inline without token overhead)
-                    markdown_text = f"![Image {idx + 1}]({content_url})"
+                    markdown_text = f"![Image {idx + 1} - file_id: {file_id}]({content_url})"
                     logger.info(f"Creating markdown content block: {markdown_text}")
                     text_block = TextContent(type="text", text=markdown_text)
                     logger.info(
@@ -532,27 +564,46 @@ async def qwen_image_edit(
     Accepts images via OWUI file IDs or URLs. Results are uploaded to Open WebUI
     Files and returned as markdown image links for inline rendering.
 
+    **EDIT INSTRUCTION BEST PRACTICES:**
+
+    Structure your edit prompts by clearly specifying what to KEEP vs CHANGE:
+    - Good: "Keep facial features, pose, lighting. Change shirt color to red."
+    - Poor: "Change the image"
+    - Optimal length: 50-200 characters, specific not vague
+    - For complex edits: break into steps (1. structure, 2. details, 3. polish)
+
+    **STRENGTH GUIDANCE:**
+    - 0.3-0.5: Minor tweaks (color adjustments, small details)
+    - 0.6-0.8: Moderate changes (clothing, pose, some background)
+    - 0.9-1.0: Major transformations (significant restructuring)
+
+    **NEGATIVE PROMPT TIPS:**
+    Use to remove unwanted artifacts or style elements:
+    - "blurry, distorted, bad anatomy" (quality issues)
+    - "text artifacts, watermark" (unwanted elements)
+    - "low quality, inconsistent lighting" (style/quality)
+
     Args:
-        prompt: Text description of the desired edit
+        prompt: Text description of the desired edit (specify what to keep/change)
         init_image_file_id: OWUI file ID for the base image
         init_image_url: URL to the base image (must be from OWUI domain)
         quality: Edit quality preset (default: "fast")
         strength: Denoising strength, 0.0-1.0 (default: 0.7)
         mask_file_id: OWUI file ID for inpainting mask (optional)
         mask_image_url: URL to mask image (optional)
-        negative_prompt: What to avoid (default: "")
+        negative_prompt: What to avoid in the edit (default: "")
         seed: Random seed for reproducibility (default: random)
         ctx: MCP context for progress notifications
 
     Returns:
         List of TextContent blocks:
-        - Edit summary and status
+        - Edit summary and status with file IDs
         - Markdown image links to edited images on OWUI
 
     Example:
         Fast edit with file ID:
         {
-          "prompt": "make the sky more dramatic with storm clouds",
+          "prompt": "Keep the arcade machines and street. Change sky to sunset with warm orange lighting",
           "init_image_file_id": "abc123",
           "quality": "fast",
           "strength": 0.65
@@ -560,7 +611,7 @@ async def qwen_image_edit(
 
         High-quality edit with URL:
         {
-          "prompt": "convert to autumn colors",
+          "prompt": "Keep background and people. Change character outfit to cyberpunk style with neon accents",
           "init_image_url": "https://webui.example.com/api/v1/files/xyz789/content",
           "quality": "high",
           "strength": 0.8,
@@ -624,6 +675,10 @@ async def qwen_image_edit(
         else:
             # Bypass LoRA loader
             workflow[QWEN_EDIT_NODES["lora_loader"]]["mode"] = 4
+            # Set to a valid LoRA name to pass validation even though it's bypassed
+            workflow[QWEN_EDIT_NODES["lora_loader"]]["inputs"]["lora_name"] = (
+                "Qwen-Image-Edit-2509-Lightning-8steps-V1.0-bf16.safetensors"
+            )
             logger.info("Lightning LoRA bypassed")
 
         # Update workflow nodes with parameters
@@ -697,7 +752,7 @@ async def qwen_image_edit(
                     content_blocks.append(
                         TextContent(
                             type="text",
-                            text=f"![Edited Image {idx + 1}]({content_url})",
+                            text=f"![Edited Image {idx + 1} - file_id: {file_id}]({content_url})",
                         )
                     )
 
