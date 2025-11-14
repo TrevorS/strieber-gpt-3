@@ -332,13 +332,15 @@ services:
       - "--host"
       - "0.0.0.0"
       - "-c"
-      - "8192"                                   # Context size: 8k tokens (EmbeddingGemma max)
+      - "2048"                                   # Context size: 2048 tokens (matches model training context)
       - "--n-gpu-layers"
       - "999"                                    # Auto-detect layers for GPU offload
       - "-b"
-      - "128"                                    # Batch size: embeddings can handle larger batches
+      - "4096"                                   # Batch size: large for embedding batches
       - "-ub"
-      - "128"                                    # Ubatch size: physical batch size
+      - "4096"                                   # Ubatch size: physical batch (must be >= max input tokens)
+      - "--parallel"
+      - "1"                                      # Concurrent requests: 1 for full context per request
       - "--no-mmap"                              # Disable mmap
 
     # Network configuration for inter-service communication
