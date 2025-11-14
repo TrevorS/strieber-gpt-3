@@ -17,6 +17,99 @@ This enables:
 
 ---
 
+## LLM & Embedding Services
+
+### **Port Allocation**
+
+| Port | Service | Model | Purpose |
+|------|---------|-------|---------|
+| 9010 | llama-server | gpt-oss-120b | Main inference engine (text generation) |
+| 9020 | llama-server-qwen-vl | Qwen3-VL-2B | Vision-language model (task routing, image analysis) |
+| 9030 | llama-server-readerlm | ReaderLM-v2 | HTML-to-Markdown conversion (privacy-first) |
+| **9050** | **embeddinggemma** | **EmbeddingGemma-300M** | **OpenAI-compatible embeddings for RAG/semantic search** |
+| 9040 | comfyui | Stable Diffusion | Image generation workflows |
+| 9100 | mcp-weather | Open-Meteo API | Weather forecasts |
+| 9110 | mcp-web-search | Brave Search | Web search integration |
+| 9120 | mcp-code-interpreter | Python | Sandboxed code execution |
+| 9130 | mcp-reader | Playwright + ReaderLM | Privacy-first web reader |
+| 9140 | mcp-comfy-qwen | ComfyUI | Image generation MCP tool |
+| 9200 | open-webui | Open WebUI | Chat interface |
+
+### **EmbeddingGemma Embeddings Service** ✅ (NEW)
+
+**Location**: `compose.yml:embeddinggemma`
+**Port**: 9050
+**Model**: `embeddinggemma-300M-qat-Q4_0.gguf` (265MB quantized)
+
+#### Features:
+- ✅ **OpenAI-compatible API**: `/v1/embeddings` endpoint
+- ✅ **Lightweight**: 300M parameters, runs on shared GPU
+- ✅ **Fast inference**: Q4_0 quantization, mean pooling
+- ✅ **High quality**: MTEB state-of-the-art for <500M models
+- ✅ **Multilingual**: 100+ languages supported
+- ✅ **Configurable output**: 768-dim embeddings (supports 512, 256, 128 via truncation)
+- ✅ **Context window**: 8K tokens (configurable, see compose.yml)
+
+#### API Usage:
+
+```bash
+# Single embedding
+curl -X POST http://localhost:9050/v1/embeddings \
+  -H "Content-Type: application/json" \
+  -d '{"model": "embeddinggemma", "input": "Hello world"}'
+
+# Multiple embeddings
+curl -X POST http://localhost:9050/v1/embeddings \
+  -H "Content-Type: application/json" \
+  -d '{"model": "embeddinggemma", "input": ["Text 1", "Text 2", "Text 3"]}'
+
+# With Python (OpenAI client)
+from openai import OpenAI
+
+client = OpenAI(base_url="http://localhost:9050/v1", api_key="not-needed")
+response = client.embeddings.create(
+    model="embeddinggemma",
+    input=["Document text for embedding"],
+    encoding_format="float"
+)
+embeddings = response.data[0].embedding  # 768-dimensional vector
+```
+
+#### Docker Compose Configuration:
+```yaml
+embeddinggemma:
+  image: strieber-llama-server:latest
+  container_name: strieber-embeddinggemma
+  ports:
+    - "9050:8000"
+  volumes:
+    - /home/trevor/models/llama-cpp/specialized:/models
+  environment:
+    - LLAMA_ARG_HOST=0.0.0.0
+    - LLAMA_ARG_PORT=8000
+  command:
+    - "-m"
+    - "/models/embeddinggemma-300M-qat-Q4_0.gguf"
+    - "--embedding"        # Enable embedding mode
+    - "--pooling"
+    - "mean"               # Mean pooling (required for /v1/embeddings)
+    - "--port"
+    - "8000"
+    - "-c"
+    - "8192"               # Context window: 8K tokens
+    - "--n-gpu-layers"
+    - "999"                # GPU offload
+    - "-b"
+    - "128"                # Batch size
+```
+
+#### Integration Points:
+- **RAG Pipeline**: Vectorize documents for semantic search
+- **Open WebUI**: Can be configured for document embedding in knowledge base
+- **Custom Applications**: Direct OpenAI-compatible HTTP API
+
+---
+
 ## What Was Converted
 
 ### **1. weather.py** ✅

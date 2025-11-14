@@ -49,6 +49,7 @@ Thumbs.db
 
 # Docker
 .docker/
+docker-compose.override.yml
 
 # Node (if needed for frontend)
 node_modules/
@@ -66,4 +67,5 @@ temp/
 
 # mounted data
 open-webui-data/
+open-webui-data.backup/
 comfyui-data/

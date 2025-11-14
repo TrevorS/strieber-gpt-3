@@ -278,6 +278,74 @@ services:
       - strieber-net
 
   # ==========================================================================
+  # embeddinggemma: EmbeddingGemma-300M embedding model server
+  # ABOUTME: Lightweight embedding inference for RAG and semantic search
+  # Provides OpenAI-compatible /v1/embeddings endpoint for document vectorization
+  # ==========================================================================
+  embeddinggemma:
+    image: strieber-llama-server:latest  # Reuse same custom-built image
+    container_name: strieber-embeddinggemma
+    restart: unless-stopped
+
+    # GPU configuration (shares GPU 0 with other services)
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1  # Request 1 GPU, will share with other instances
+              capabilities: [gpu]
+
+    # Shared memory for CUDA operations
+    shm_size: 2g  # Minimal for small embedding model (300M params)
+
+    # IPC mode for better GPU communication
+    ipc: host
+
+    # Port mapping: host:container (9050 = embedding range)
+    ports:
+      - "9050:8000"
+
+    # Volume mounts
+    volumes:
+      # Models directory: EmbeddingGemma embedding model
+      - /home/trevor/models/llama-cpp/specialized:/models
+
+    # Environment variables
+    environment:
+      - LLAMA_ARG_HOST=0.0.0.0
+      - LLAMA_ARG_PORT=8000
+      - LLAMA_LOG_VERBOSITY=0
+      - LLAMA_LOG_TIMESTAMPS=true
+      - LLAMA_LOG_PREFIX=true
+
+    # Server command optimized for EmbeddingGemma-300M
+    # Embedding mode with mean pooling for OpenAI API compatibility
+    command:
+      - "-m"
+      - "/models/embeddinggemma-300M-qat-Q4_0.gguf"
+      - "--embedding"                            # Enable embedding mode
+      - "--pooling"
+      - "mean"                                   # Pooling strategy: mean (required for /v1/embeddings)
+      - "--port"
+      - "8000"
+      - "--host"
+      - "0.0.0.0"
+      - "-c"
+      - "8192"                                   # Context size: 8k tokens (EmbeddingGemma max)
+      - "--n-gpu-layers"
+      - "999"                                    # Auto-detect layers for GPU offload
+      - "-b"
+      - "128"                                    # Batch size: embeddings can handle larger batches
+      - "-ub"
+      - "128"                                    # Ubatch size: physical batch size
+      - "--no-mmap"                              # Disable mmap
+
+    # Network configuration for inter-service communication
+    networks:
+      - strieber-net
+
+  # ==========================================================================
   # comfyui: Advanced image generation workflows and Stable Diffusion UI
   # ABOUTME: ComfyUI node-based interface for image generation and manipulation
   # Shares GPU 0 with other services, uses shared model storage
