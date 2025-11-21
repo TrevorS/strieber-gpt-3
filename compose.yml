@@ -431,7 +431,7 @@ services:
   # open-webui: Web interface for llama-server
   # ==========================================================================
   open-webui:
-    image: ghcr.io/open-webui/open-webui:v0.6.36
+    image: ghcr.io/open-webui/open-webui:dev
     container_name: strieber-open-webui
 
     # Restart policy
