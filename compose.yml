@@ -633,6 +633,50 @@ services:
     networks:
       - strieber-net
 
+  # ==========================================================================
+  # responses-api: OpenAI Responses API adapter for llama.cpp
+  # ABOUTME: Translates Responses API requests to Chat Completions for llama.cpp
+  # Includes server-side tool calling via MCP servers
+  # ==========================================================================
+  responses-api:
+    build:
+      context: ./backend/responses-api
+      dockerfile: Dockerfile
+    image: strieber-responses-api:latest
+    container_name: strieber-responses-api
+    restart: unless-stopped
+    ports:
+      - "9150:8000"
+    environment:
+      - PORT=8000
+      - HOST=0.0.0.0
+      - LLAMA_URL=http://llama-server:8000
+      # MCP servers: name:url[:prefix] comma-separated
+      - MCP_SERVERS=weather:http://mcp-weather:8000/mcp,web_search:http://mcp-web-search:8000/mcp,code_interpreter:http://mcp-code-interpreter:8000/mcp,reader:http://mcp-reader:8000/mcp
+      - MAX_TOOL_ITERATIONS=10
+      - TIMEOUT_SECS=300
+      - RESPONSE_TTL_SECS=3600
+      - RUST_LOG=responses_api=info,tower_http=info
+    depends_on:
+      llama-server:
+        condition: service_healthy
+      mcp-weather:
+        condition: service_started
+      mcp-web-search:
+        condition: service_started
+      mcp-code-interpreter:
+        condition: service_started
+      mcp-reader:
+        condition: service_started
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 5s
+      start_period: 10s
+      retries: 3
+    networks:
+      - strieber-net
+
 networks:
   strieber-net:
     driver: bridge
