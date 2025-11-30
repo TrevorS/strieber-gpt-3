@@ -48,7 +48,7 @@ pub enum ChatRole {
 }
 
 /// Content in a chat message - string or array of parts.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(untagged)]
 pub enum ChatContent {
     Text(String),
@@ -56,14 +56,14 @@ pub enum ChatContent {
 }
 
 /// A content part in a chat message.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum ChatContentPart {
     Text { text: String },
     ImageUrl { image_url: ChatImageUrl },
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct ChatImageUrl {
     pub url: String,
     #[serde(skip_serializing_if = "Option::is_none")]
