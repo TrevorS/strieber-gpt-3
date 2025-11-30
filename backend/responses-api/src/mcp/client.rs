@@ -61,12 +61,10 @@ struct ConnectedServer {
 }
 
 /// MCP client that manages connections to multiple MCP servers.
+#[derive(Clone)]
 pub struct McpClient {
-    /// Server configurations
     configs: Vec<McpServerConfig>,
-    /// Connected servers (lazily populated)
     connections: Arc<RwLock<HashMap<String, ConnectedServer>>>,
-    /// Tool routing: tool_name → server_name
     tool_routing: Arc<RwLock<HashMap<String, String>>>,
 }
 

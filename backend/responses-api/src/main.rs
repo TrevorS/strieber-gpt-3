@@ -38,19 +38,21 @@ async fn main() -> anyhow::Result<()> {
         tracing::info!("Available MCP tools: {:?}", tools);
     }
 
-    // Create executor
+    // Create executor (uses a clone of mcp_client)
     let executor_config = ExecutorConfig {
         llama_url: config.llama_url.clone(),
         max_tool_iterations: config.max_tool_iterations,
         timeout_secs: config.timeout.as_secs(),
     };
-    let executor = Executor::new(executor_config, mcp_client);
-
-    // Create response store
-    let store = InMemoryStore::new();
+    let executor = Executor::new(executor_config, mcp_client.clone());
 
     // Create application state
-    let state = Arc::new(AppState { executor, store });
+    let state = Arc::new(AppState {
+        executor,
+        store: InMemoryStore::new(),
+        config: config.clone(),
+        mcp: mcp_client,
+    });
 
     // Create router
     let app = server::create_router(state);

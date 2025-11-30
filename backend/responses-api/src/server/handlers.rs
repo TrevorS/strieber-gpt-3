@@ -1,16 +1,20 @@
 //! Request handlers for Responses API endpoints.
 
+use std::convert::Infallible;
 use std::sync::Arc;
 
 use axum::{
     Json,
     extract::{Path, State},
     http::StatusCode,
-    response::IntoResponse,
+    response::{IntoResponse, Sse, sse::Event},
 };
+use futures::stream::StreamExt;
 use serde_json::json;
 
-use crate::execution::{ExecutionError, Executor};
+use crate::config::Config;
+use crate::execution::{execute_streaming, ExecutionError, Executor, ExecutorConfig};
+use crate::mcp::McpClient;
 use crate::models::{CreateResponseRequest, DeleteResponse};
 use crate::state::{InMemoryStore, ResponseStore};
 
@@ -18,6 +22,8 @@ use crate::state::{InMemoryStore, ResponseStore};
 pub struct AppState {
     pub executor: Executor,
     pub store: InMemoryStore,
+    pub config: Config,
+    pub mcp: McpClient,
 }
 
 /// POST /v1/responses - Create a new response.
@@ -25,46 +31,73 @@ pub async fn create_response(
     State(state): State<Arc<AppState>>,
     Json(req): Json<CreateResponseRequest>,
 ) -> Result<impl IntoResponse, (StatusCode, Json<serde_json::Value>)> {
-    // Check if streaming is requested
     if req.stream {
-        // TODO: Implement SSE streaming
-        return Err((
-            StatusCode::NOT_IMPLEMENTED,
-            Json(json!({
-                "error": {
-                    "type": "not_implemented",
-                    "message": "Streaming not yet supported"
-                }
-            })),
-        ));
+        return create_streaming_response(state, req).await;
     }
 
-    // Execute the request
-    let response = state.executor.execute(&req).await.map_err(|e| {
-        let (status, error_type) = match &e {
-            ExecutionError::Llm(_) => (StatusCode::BAD_GATEWAY, "llm_error"),
-            ExecutionError::MaxIterationsExceeded(_) => {
-                (StatusCode::UNPROCESSABLE_ENTITY, "max_iterations_exceeded")
-            }
-            _ => (StatusCode::INTERNAL_SERVER_ERROR, "internal_error"),
-        };
-        (
-            status,
-            Json(json!({
-                "error": {
-                    "type": error_type,
-                    "message": e.to_string()
-                }
-            })),
-        )
-    })?;
+    let response = state.executor.execute(&req).await.map_err(execution_error)?;
 
-    // Store the response if store=true
     if req.store {
         state.store.store(response.clone(), req);
     }
 
-    Ok((StatusCode::OK, Json(response)))
+    Ok((StatusCode::OK, Json(response)).into_response())
+}
+
+async fn create_streaming_response(
+    state: Arc<AppState>,
+    req: CreateResponseRequest,
+) -> Result<axum::response::Response, (StatusCode, Json<serde_json::Value>)> {
+    let executor_config = ExecutorConfig {
+        llama_url: state.config.llama_url.clone(),
+        max_tool_iterations: state.config.max_tool_iterations,
+        timeout_secs: state.config.timeout.as_secs(),
+    };
+
+    let mcp = state.mcp.clone();
+    let stream = execute_streaming(executor_config, mcp, req);
+
+    let sse_stream = stream.map(|result| -> Result<Event, Infallible> {
+        match result {
+            Ok(sse_event) => {
+                let data = serde_json::to_string(&sse_event.data).unwrap_or_default();
+                Ok(Event::default().event(sse_event.event).data(data))
+            }
+            Err(e) => {
+                let error_data = json!({
+                    "type": "error",
+                    "error": {
+                        "code": "stream_error",
+                        "message": e.to_string()
+                    }
+                });
+                Ok(Event::default().event("error").data(error_data.to_string()))
+            }
+        }
+    });
+
+    Ok(Sse::new(sse_stream)
+        .keep_alive(axum::response::sse::KeepAlive::default())
+        .into_response())
+}
+
+fn execution_error(e: ExecutionError) -> (StatusCode, Json<serde_json::Value>) {
+    let (status, error_type) = match &e {
+        ExecutionError::Llm(_) => (StatusCode::BAD_GATEWAY, "llm_error"),
+        ExecutionError::MaxIterationsExceeded(_) => {
+            (StatusCode::UNPROCESSABLE_ENTITY, "max_iterations_exceeded")
+        }
+        _ => (StatusCode::INTERNAL_SERVER_ERROR, "internal_error"),
+    };
+    (
+        status,
+        Json(json!({
+            "error": {
+                "type": error_type,
+                "message": e.to_string()
+            }
+        })),
+    )
 }
 
 /// GET /v1/responses/{response_id} - Get a response by ID.
@@ -121,10 +154,8 @@ pub async fn health_check() -> impl IntoResponse {
     (StatusCode::OK, Json(json!({"status": "ok"})))
 }
 
-/// GET /v1/models - List available models (for compatibility).
+/// GET /v1/models - List available models.
 pub async fn list_models() -> impl IntoResponse {
-    // Return the model that llama.cpp is serving
-    // In practice, this should be configurable or fetched from llama.cpp
     (
         StatusCode::OK,
         Json(json!({

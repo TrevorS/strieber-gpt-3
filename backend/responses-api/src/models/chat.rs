@@ -159,8 +159,7 @@ pub struct ChatUsage {
     pub total_tokens: u32,
 }
 
-// Streaming chunk types for future SSE support.
-#[allow(dead_code)]
+// Streaming chunk types for SSE support.
 #[derive(Debug, Clone, Deserialize)]
 pub struct ChatCompletionChunk {
     pub id: String,
@@ -170,7 +169,6 @@ pub struct ChatCompletionChunk {
     pub choices: Vec<ChatChunkChoice>,
 }
 
-#[allow(dead_code)]
 #[derive(Debug, Clone, Deserialize)]
 pub struct ChatChunkChoice {
     pub index: u32,
@@ -178,7 +176,6 @@ pub struct ChatChunkChoice {
     pub finish_reason: Option<FinishReason>,
 }
 
-#[allow(dead_code)]
 #[derive(Debug, Clone, Default, Deserialize)]
 pub struct ChatDelta {
     pub role: Option<ChatRole>,
@@ -186,7 +183,6 @@ pub struct ChatDelta {
     pub tool_calls: Option<Vec<ChatToolCallDelta>>,
 }
 
-#[allow(dead_code)]
 #[derive(Debug, Clone, Deserialize)]
 pub struct ChatToolCallDelta {
     pub index: u32,
@@ -196,7 +192,6 @@ pub struct ChatToolCallDelta {
     pub function: Option<ChatFunctionCallDelta>,
 }
 
-#[allow(dead_code)]
 #[derive(Debug, Clone, Default, Deserialize)]
 pub struct ChatFunctionCallDelta {
     pub name: Option<String>,

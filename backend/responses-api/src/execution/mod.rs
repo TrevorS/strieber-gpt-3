@@ -1,12 +1,9 @@
-//! Tool execution loop for Responses API.
+//! Request execution for Responses API.
 //!
-//! Orchestrates the full request lifecycle:
-//! 1. Translate Responses API request → Chat Completions
-//! 2. Call llama.cpp
-//! 3. If tool calls returned, execute via MCP
-//! 4. Loop until completion or max iterations
-//! 5. Translate Chat Completions response → Responses API
+//! Provides both synchronous and streaming execution modes.
 
 mod executor;
+mod streaming;
 
 pub use executor::{Executor, ExecutorConfig, ExecutionError};
+pub use streaming::execute_streaming;

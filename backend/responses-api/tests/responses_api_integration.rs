@@ -406,9 +406,9 @@ async fn test_get_nonexistent_response() {
     assert_eq!(body.error.error_type, "not_found");
 }
 
-/// Test streaming not implemented.
+/// Test streaming response returns SSE events.
 #[tokio::test]
-async fn test_streaming_not_implemented() {
+async fn test_streaming_response() {
     skip_if_no_integration!();
 
     let client = create_client();
@@ -416,8 +416,9 @@ async fn test_streaming_not_implemented() {
 
     let req = json!({
         "model": "gpt-oss-120b",
-        "input": "Hello",
-        "stream": true
+        "input": "Say hello",
+        "stream": true,
+        "max_output_tokens": 20
     });
 
     let resp = client
@@ -427,10 +428,33 @@ async fn test_streaming_not_implemented() {
         .await
         .expect("failed to send request");
 
-    assert_eq!(resp.status(), 501); // NOT_IMPLEMENTED
+    // Streaming should return 200 with text/event-stream content type
+    assert!(
+        resp.status().is_success(),
+        "expected success, got {}",
+        resp.status()
+    );
 
-    let body: ErrorResponse = resp.json().await.unwrap();
-    assert_eq!(body.error.error_type, "not_implemented");
+    let content_type = resp
+        .headers()
+        .get("content-type")
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("");
+    assert!(
+        content_type.contains("text/event-stream"),
+        "expected text/event-stream, got {}",
+        content_type
+    );
+
+    // Read the SSE stream
+    let body = resp.text().await.unwrap();
+    println!("SSE Response:\n{}", body);
+
+    // Should contain response.created event
+    assert!(
+        body.contains("response.created") || body.contains("response.completed"),
+        "expected SSE events in response"
+    );
 }
 
 /// Test usage tokens are reported correctly.
