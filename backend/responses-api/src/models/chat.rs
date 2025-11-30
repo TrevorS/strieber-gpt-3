@@ -159,7 +159,8 @@ pub struct ChatUsage {
     pub total_tokens: u32,
 }
 
-/// Streaming chunk from llama.cpp
+// Streaming chunk types for future SSE support.
+#[allow(dead_code)]
 #[derive(Debug, Clone, Deserialize)]
 pub struct ChatCompletionChunk {
     pub id: String,
@@ -169,6 +170,7 @@ pub struct ChatCompletionChunk {
     pub choices: Vec<ChatChunkChoice>,
 }
 
+#[allow(dead_code)]
 #[derive(Debug, Clone, Deserialize)]
 pub struct ChatChunkChoice {
     pub index: u32,
@@ -176,31 +178,27 @@ pub struct ChatChunkChoice {
     pub finish_reason: Option<FinishReason>,
 }
 
+#[allow(dead_code)]
 #[derive(Debug, Clone, Default, Deserialize)]
 pub struct ChatDelta {
-    #[serde(skip_serializing_if = "Option::is_none")]
     pub role: Option<ChatRole>,
-    #[serde(skip_serializing_if = "Option::is_none")]
     pub content: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
     pub tool_calls: Option<Vec<ChatToolCallDelta>>,
 }
 
+#[allow(dead_code)]
 #[derive(Debug, Clone, Deserialize)]
 pub struct ChatToolCallDelta {
     pub index: u32,
-    #[serde(skip_serializing_if = "Option::is_none")]
     pub id: Option<String>,
-    #[serde(rename = "type", skip_serializing_if = "Option::is_none")]
+    #[serde(rename = "type")]
     pub tool_type: Option<ChatToolType>,
-    #[serde(skip_serializing_if = "Option::is_none")]
     pub function: Option<ChatFunctionCallDelta>,
 }
 
+#[allow(dead_code)]
 #[derive(Debug, Clone, Default, Deserialize)]
 pub struct ChatFunctionCallDelta {
-    #[serde(skip_serializing_if = "Option::is_none")]
     pub name: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
     pub arguments: Option<String>,
 }

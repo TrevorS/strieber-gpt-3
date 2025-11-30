@@ -65,28 +65,28 @@ impl Config {
             config.mcp_servers = parse_mcp_servers(&servers);
         }
 
-        if let Ok(max_iter) = env::var("MAX_TOOL_ITERATIONS") {
-            if let Ok(n) = max_iter.parse() {
-                config.max_tool_iterations = n;
-            }
+        if let Ok(v) = env::var("MAX_TOOL_ITERATIONS")
+            && let Ok(n) = v.parse()
+        {
+            config.max_tool_iterations = n;
         }
 
-        if let Ok(timeout) = env::var("TIMEOUT_SECS") {
-            if let Ok(secs) = timeout.parse() {
-                config.timeout = Duration::from_secs(secs);
-            }
+        if let Ok(v) = env::var("TIMEOUT_SECS")
+            && let Ok(secs) = v.parse()
+        {
+            config.timeout = Duration::from_secs(secs);
         }
 
-        if let Ok(ttl) = env::var("RESPONSE_TTL_SECS") {
-            if let Ok(secs) = ttl.parse() {
-                config.response_ttl = Duration::from_secs(secs);
-            }
+        if let Ok(v) = env::var("RESPONSE_TTL_SECS")
+            && let Ok(secs) = v.parse()
+        {
+            config.response_ttl = Duration::from_secs(secs);
         }
 
-        if let Ok(port) = env::var("PORT") {
-            if let Ok(p) = port.parse() {
-                config.port = p;
-            }
+        if let Ok(v) = env::var("PORT")
+            && let Ok(p) = v.parse()
+        {
+            config.port = p;
         }
 
         if let Ok(host) = env::var("HOST") {

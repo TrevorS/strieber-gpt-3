@@ -12,25 +12,22 @@ use crate::models::{
 
 use super::ids::{function_call_id, message_id, response_id};
 
-/// Build a complete Response object from a Chat Completion response.
+/// Build a Response object from a Chat Completion response.
 pub fn from_chat_completion(
     chat_resp: &ChatCompletionResponse,
     req: &CreateResponseRequest,
 ) -> Response {
-    let output = extract_output_items(chat_resp);
-    let usage = extract_usage(chat_resp);
-
     Response {
         id: response_id(),
         object: Response::OBJECT,
         created_at: unix_timestamp(),
-        status: determine_status(chat_resp),
+        status: ResponseStatus::Completed,
         error: None,
         incomplete_details: None,
         instructions: req.instructions.clone(),
         max_output_tokens: req.max_output_tokens,
         model: chat_resp.model.clone(),
-        output,
+        output: extract_output_items(chat_resp),
         parallel_tool_calls: req.parallel_tool_calls,
         previous_response_id: req.previous_response_id.clone(),
         reasoning: req.reasoning.clone(),
@@ -41,21 +38,10 @@ pub fn from_chat_completion(
         tools: req.tools.clone(),
         top_p: req.top_p,
         truncation: req.truncation,
-        usage,
+        usage: extract_usage(chat_resp),
         user: None,
         metadata: req.metadata.clone().unwrap_or(Value::Null),
     }
-}
-
-/// Build a Response object with custom ID (for state management).
-pub fn from_chat_completion_with_id(
-    chat_resp: &ChatCompletionResponse,
-    req: &CreateResponseRequest,
-    id: String,
-) -> Response {
-    let mut resp = from_chat_completion(chat_resp, req);
-    resp.id = id;
-    resp
 }
 
 /// Extract output items from Chat Completion response.
@@ -125,22 +111,6 @@ fn extract_usage(chat_resp: &ChatCompletionResponse) -> Usage {
         .unwrap_or_default()
 }
 
-/// Determine response status from Chat Completion.
-fn determine_status(chat_resp: &ChatCompletionResponse) -> ResponseStatus {
-    // Check finish reasons across all choices
-    let has_tool_calls = chat_resp.choices.iter().any(|c| {
-        c.finish_reason == Some(crate::models::FinishReason::ToolCalls)
-    });
-
-    if has_tool_calls {
-        // Tool calls need processing, but from API perspective it's complete
-        ResponseStatus::Completed
-    } else {
-        ResponseStatus::Completed
-    }
-}
-
-/// Get current Unix timestamp.
 fn unix_timestamp() -> i64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)

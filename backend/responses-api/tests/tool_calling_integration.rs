@@ -1,13 +1,8 @@
-//! Integration tests for tool calling via MCP servers.
+//! Integration tests for tool calling via MCP.
 //!
-//! These tests verify the full tool calling flow:
-//! 1. User request with tools
-//! 2. Model generates tool calls
-//! 3. MCP server executes tools
-//! 4. Model synthesizes final response
-//!
-//! Run these tests with:
-//!   RESPONSES_API_URL=http://responses-api:8000 cargo test --test tool_calling_integration
+//! Run with: RESPONSES_API_URL=http://localhost:8000 cargo test --test tool_calling_integration
+
+#![allow(dead_code)]
 
 mod common;
 
@@ -150,7 +145,7 @@ async fn test_weather_tool_call() {
             .output
             .iter()
             .filter(|o| o.item_type == "message")
-            .last()
+            .next_back()
             .expect("no final message");
 
         let text = final_message
@@ -251,7 +246,7 @@ async fn test_code_interpreter_tool_call() {
         .output
         .iter()
         .filter(|o| o.item_type == "message")
-        .last()
+        .next_back()
         .expect("no final message");
 
     let text = final_message
@@ -332,7 +327,7 @@ async fn test_web_search_tool_call() {
         .output
         .iter()
         .filter(|o| o.item_type == "message")
-        .last()
+        .next_back()
         .expect("no final message");
 
     let text = final_message
@@ -430,7 +425,7 @@ async fn test_multiple_tool_calls() {
         .output
         .iter()
         .filter(|o| o.item_type == "message")
-        .last()
+        .next_back()
         .expect("no final message");
 
     let text = final_message

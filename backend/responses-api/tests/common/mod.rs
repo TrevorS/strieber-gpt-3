@@ -1,39 +1,35 @@
-//! Common utilities for integration tests.
+//! Shared utilities for integration tests.
 //!
-//! These tests run against the actual llama.cpp server in the docker network.
-//! They are conditionally compiled and only run when LLAMA_INTEGRATION_URL is set.
+//! Run with: LLAMA_INTEGRATION_URL=http://localhost:8000 cargo test
+
+#![allow(dead_code)]
 
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
 use std::env;
 use std::time::Duration;
 
-/// Get the llama.cpp server URL from environment, defaulting to docker network URL.
 pub fn llama_url() -> Option<String> {
     env::var("LLAMA_INTEGRATION_URL")
         .or_else(|_| env::var("LLAMA_URL"))
         .ok()
 }
 
-/// Get the responses-api URL from environment.
 pub fn responses_api_url() -> Option<String> {
     env::var("RESPONSES_API_URL").ok()
 }
 
-/// Check if integration tests should run.
 pub fn should_run_integration_tests() -> bool {
     llama_url().is_some() || responses_api_url().is_some()
 }
 
-/// Create an HTTP client configured for integration tests.
 pub fn create_client() -> Client {
     Client::builder()
-        .timeout(Duration::from_secs(120)) // Long timeout for LLM responses
+        .timeout(Duration::from_secs(120))
         .build()
         .expect("failed to create HTTP client")
 }
 
-/// Simple chat completion request for testing.
 #[derive(Debug, Serialize)]
 pub struct SimpleChatRequest {
     pub model: String,
@@ -50,7 +46,6 @@ pub struct ChatMessage {
     pub content: String,
 }
 
-/// Chat completion response for testing.
 #[derive(Debug, Deserialize)]
 pub struct ChatCompletionResponse {
     pub id: String,
@@ -85,8 +80,8 @@ pub struct Usage {
 #[macro_export]
 macro_rules! skip_if_no_integration {
     () => {
-        if !crate::common::should_run_integration_tests() {
-            eprintln!("Skipping integration test: LLAMA_INTEGRATION_URL or RESPONSES_API_URL not set");
+        if !$crate::common::should_run_integration_tests() {
+            eprintln!("Skipping: set LLAMA_INTEGRATION_URL or RESPONSES_API_URL");
             return;
         }
     };

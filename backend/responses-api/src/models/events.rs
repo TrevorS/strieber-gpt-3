@@ -1,6 +1,7 @@
-//! Server-Sent Events types for streaming responses.
+//! SSE streaming event types (for future implementation).
 //!
-//! These events follow the OpenAI Responses API streaming format.
+//! These types match the OpenAI Responses API streaming format.
+//! Currently unused - streaming returns NOT_IMPLEMENTED.
 
 use serde::Serialize;
 

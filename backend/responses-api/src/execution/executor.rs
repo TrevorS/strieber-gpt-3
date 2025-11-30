@@ -143,12 +143,9 @@ impl Executor {
         Ok(chat_resp)
     }
 
-    /// Execute a single tool call via MCP.
     async fn execute_tool_call(&self, call: &PendingToolCall) -> String {
-        // Parse arguments as JSON
         let arguments: Value = serde_json::from_str(&call.arguments).unwrap_or(Value::Null);
 
-        // Call MCP
         match self.mcp.call_tool_text(&call.name, arguments).await {
             Ok(result) => result,
             Err(e) => {
@@ -156,16 +153,6 @@ impl Executor {
                 format!("Error: {}", e)
             }
         }
-    }
-
-    /// Execute with streaming (placeholder for future implementation).
-    #[allow(dead_code)]
-    pub async fn execute_streaming(
-        &self,
-        _req: &CreateResponseRequest,
-    ) -> Result<(), ExecutionError> {
-        // TODO: Implement SSE streaming
-        unimplemented!("Streaming not yet implemented")
     }
 }
 
