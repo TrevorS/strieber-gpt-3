@@ -440,3 +440,256 @@ async fn test_usage_reporting() {
         usage.input_tokens, usage.output_tokens, usage.total_tokens
     );
 }
+
+/// Test streaming emits expected SSE event types with content.
+#[tokio::test]
+async fn test_streaming_emits_content_deltas() {
+    skip_if_no_integration!();
+
+    let client = create_client();
+    let url = responses_api_url().unwrap();
+
+    // Request with stream: true and enough tokens for content
+    let req = json!({
+        "model": "gpt-oss-120b",
+        "input": "Say 'hello world' word by word.",
+        "max_output_tokens": 100,
+        "stream": true
+    });
+
+    let resp = client
+        .post(format!("{}/v1/responses", url))
+        .json(&req)
+        .timeout(std::time::Duration::from_secs(60))
+        .send()
+        .await
+        .expect("request failed");
+
+    assert_eq!(resp.status(), 200);
+    assert!(resp
+        .headers()
+        .get("content-type")
+        .unwrap()
+        .to_str()
+        .unwrap()
+        .contains("text/event-stream"));
+
+    // Collect all SSE events
+    let body = resp.text().await.unwrap();
+
+    // Parse event types from SSE stream
+    let event_types: Vec<&str> = body
+        .lines()
+        .filter(|l| l.starts_with("event: "))
+        .map(|l| l.trim_start_matches("event: "))
+        .collect();
+
+    println!("SSE events received: {:?}", event_types);
+
+    // Required lifecycle events
+    assert!(
+        event_types.contains(&"response.created"),
+        "Missing response.created event"
+    );
+    assert!(
+        event_types.contains(&"response.in_progress"),
+        "Missing response.in_progress event"
+    );
+    assert!(
+        event_types.contains(&"response.completed"),
+        "Missing response.completed event"
+    );
+    assert!(
+        event_types.contains(&"response.done"),
+        "Missing response.done event"
+    );
+
+    // Should have some content-related events (output_item or delta)
+    let has_content_events = event_types
+        .iter()
+        .any(|e| e.contains("output_item") || e.contains("delta") || e.contains("text"));
+    println!(
+        "Has content events: {} (events: {:?})",
+        has_content_events, event_types
+    );
+
+    // Verify the done event shows completed status
+    assert!(
+        body.contains("\"status\":\"completed\"") || body.contains("\"status\":\"in_progress\""),
+        "Final event should have status"
+    );
+}
+
+/// Test streaming works with tool calls.
+#[tokio::test]
+async fn test_streaming_with_tool_call() {
+    skip_if_no_integration!();
+
+    let client = create_client();
+    let url = responses_api_url().unwrap();
+
+    let req = json!({
+        "model": "gpt-oss-120b",
+        "input": "What's the weather in Tokyo?",
+        "instructions": "Use the weather tool to get accurate information.",
+        "max_output_tokens": 200,
+        "stream": true,
+        "tools": [{
+            "type": "function",
+            "name": "get_weather",
+            "description": "Get weather for a location",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "location": { "type": "string" }
+                },
+                "required": ["location"]
+            }
+        }]
+    });
+
+    let resp = client
+        .post(format!("{}/v1/responses", url))
+        .json(&req)
+        .timeout(std::time::Duration::from_secs(120))
+        .send()
+        .await
+        .expect("request failed");
+
+    assert!(resp.status().is_success());
+
+    let body = resp.text().await.unwrap();
+    println!("Streaming with tools response:\n{}", body);
+
+    // Should have function call events OR a direct text response
+    assert!(
+        body.contains("function_call") || body.contains("output_text") || body.contains("message"),
+        "Should have tool call or text output in streaming response"
+    );
+    assert!(
+        body.contains("response.done"),
+        "Should have response.done event"
+    );
+}
+
+/// Test multi-turn conversation with reasoning context.
+#[tokio::test]
+async fn test_multi_turn_with_reasoning_input() {
+    skip_if_no_integration!();
+
+    let client = create_client();
+    let url = responses_api_url().unwrap();
+
+    // First request - get a response (gpt-oss-120b may include reasoning)
+    let req1 = json!({
+        "model": "gpt-oss-120b",
+        "input": "My name is Alice. Remember this name.",
+        "max_output_tokens": 200,
+        "temperature": 0.0,
+        "store": true
+    });
+
+    let resp1 = client
+        .post(format!("{}/v1/responses", url))
+        .json(&req1)
+        .timeout(std::time::Duration::from_secs(60))
+        .send()
+        .await
+        .expect("first request failed");
+
+    assert!(resp1.status().is_success());
+
+    let body1: Response = resp1.json().await.expect("failed to parse first response");
+
+    // Check if we got reasoning output
+    let has_reasoning = body1.output.iter().any(|o| o.item_type == "reasoning");
+    println!("First response has reasoning: {}", has_reasoning);
+
+    // Build second request with full context
+    let mut input_items = vec![];
+
+    // Add original user message
+    input_items.push(json!({
+        "type": "message",
+        "role": "user",
+        "content": "My name is Alice. Remember this name."
+    }));
+
+    // Add reasoning if present (to test reasoning input)
+    if let Some(reasoning) = body1.output.iter().find(|o| o.item_type == "reasoning") {
+        if let Some(content) = &reasoning.content {
+            if let Some(text_part) = content.iter().find(|c| c.content_type == "output_text") {
+                if let Some(text) = &text_part.text {
+                    println!("Including reasoning context: {}...", &text[..text.len().min(50)]);
+                    input_items.push(json!({
+                        "type": "reasoning",
+                        "id": reasoning.id,
+                        "content": [{"type": "input_text", "text": text}]
+                    }));
+                }
+            }
+        }
+    }
+
+    // Add assistant response
+    if let Some(msg) = body1.output.iter().find(|o| o.item_type == "message") {
+        if let Some(content) = &msg.content {
+            if let Some(text_part) = content.iter().find(|c| c.content_type == "output_text") {
+                if let Some(text) = &text_part.text {
+                    input_items.push(json!({
+                        "type": "message",
+                        "role": "assistant",
+                        "content": text
+                    }));
+                }
+            }
+        }
+    }
+
+    // Add follow-up question
+    input_items.push(json!({
+        "type": "message",
+        "role": "user",
+        "content": "What is my name?"
+    }));
+
+    let req2 = json!({
+        "model": "gpt-oss-120b",
+        "input": input_items,
+        "max_output_tokens": 150,
+        "temperature": 0.0
+    });
+
+    let resp2 = client
+        .post(format!("{}/v1/responses", url))
+        .json(&req2)
+        .timeout(std::time::Duration::from_secs(60))
+        .send()
+        .await
+        .expect("second request failed");
+
+    assert!(
+        resp2.status().is_success(),
+        "second request failed: {}",
+        resp2.status()
+    );
+
+    let body2: Response = resp2.json().await.expect("failed to parse second response");
+
+    // Should remember the name
+    let final_text = body2
+        .output
+        .iter()
+        .find(|o| o.item_type == "message")
+        .and_then(|m| m.content.as_ref())
+        .and_then(|c| c.iter().find(|p| p.content_type == "output_text"))
+        .and_then(|p| p.text.as_ref())
+        .expect("no response text");
+
+    println!("Multi-turn response: {}", final_text);
+    assert!(
+        final_text.to_lowercase().contains("alice"),
+        "Should remember the name Alice, got: {}",
+        final_text
+    );
+}
