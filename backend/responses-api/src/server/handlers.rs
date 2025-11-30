@@ -175,5 +175,8 @@ pub async fn list_models(State(state): State<Arc<AppState>>) -> impl IntoRespons
         })
         .collect();
 
-    (StatusCode::OK, Json(json!({ "object": "list", "data": models })))
+    (
+        StatusCode::OK,
+        Json(json!({ "object": "list", "data": models })),
+    )
 }

@@ -293,10 +293,7 @@ mod tests {
         let config: McpConfigJson = serde_json::from_str(json).unwrap();
         assert_eq!(config.servers.len(), 1);
         assert_eq!(config.servers[0].name, "search");
-        assert_eq!(
-            config.servers[0].tool_prefix,
-            Some("search_".to_string())
-        );
+        assert_eq!(config.servers[0].tool_prefix, Some("search_".to_string()));
     }
 
     #[test]

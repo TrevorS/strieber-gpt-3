@@ -466,13 +466,14 @@ async fn test_streaming_emits_content_deltas() {
         .expect("request failed");
 
     assert_eq!(resp.status(), 200);
-    assert!(resp
-        .headers()
-        .get("content-type")
-        .unwrap()
-        .to_str()
-        .unwrap()
-        .contains("text/event-stream"));
+    assert!(
+        resp.headers()
+            .get("content-type")
+            .unwrap()
+            .to_str()
+            .unwrap()
+            .contains("text/event-stream")
+    );
 
     // Collect all SSE events
     let body = resp.text().await.unwrap();
@@ -620,7 +621,10 @@ async fn test_multi_turn_with_reasoning_input() {
         if let Some(content) = &reasoning.content {
             if let Some(text_part) = content.iter().find(|c| c.content_type == "output_text") {
                 if let Some(text) = &text_part.text {
-                    println!("Including reasoning context: {}...", &text[..text.len().min(50)]);
+                    println!(
+                        "Including reasoning context: {}...",
+                        &text[..text.len().min(50)]
+                    );
                     input_items.push(json!({
                         "type": "reasoning",
                         "id": reasoning.id,
