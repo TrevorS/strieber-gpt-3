@@ -2,58 +2,10 @@
 //!
 //! Run with: RESPONSES_API_URL=http://localhost:8000 cargo test --test tool_calling_integration
 
-#![allow(dead_code)]
-
 mod common;
 
-use common::{create_client, responses_api_url};
-use serde::{Deserialize, Serialize};
+use common::*;
 use serde_json::json;
-
-#[derive(Debug, Serialize)]
-struct CreateResponseRequest {
-    model: String,
-    input: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    instructions: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    max_output_tokens: Option<u32>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    temperature: Option<f32>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    store: Option<bool>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    tools: Option<Vec<serde_json::Value>>,
-}
-
-#[derive(Debug, Deserialize)]
-struct Response {
-    pub id: String,
-    pub object: String,
-    pub status: String,
-    pub output: Vec<OutputItem>,
-}
-
-#[derive(Debug, Deserialize)]
-struct OutputItem {
-    #[serde(rename = "type")]
-    pub item_type: String,
-    pub id: Option<String>,
-    pub role: Option<String>,
-    pub content: Option<Vec<ContentPart>>,
-    pub name: Option<String>,
-    pub call_id: Option<String>,
-    pub arguments: Option<String>,
-    pub output: Option<String>,
-    pub status: Option<String>,
-}
-
-#[derive(Debug, Deserialize)]
-struct ContentPart {
-    #[serde(rename = "type")]
-    pub content_type: String,
-    pub text: Option<String>,
-}
 
 /// Test weather tool calling flow.
 /// This test requires the weather MCP server to be running.
@@ -85,7 +37,7 @@ async fn test_weather_tool_call() {
 
     let req = CreateResponseRequest {
         model: "gpt-oss-120b".to_string(),
-        input: "What's the weather like in Tokyo?".to_string(),
+        input: Input::Text("What's the weather like in Tokyo?".to_string()),
         instructions: Some("Use the weather tool to get accurate weather information.".to_string()),
         max_output_tokens: Some(200),
         temperature: Some(0.0),
@@ -111,10 +63,7 @@ async fn test_weather_tool_call() {
     assert_eq!(body.status, "completed");
 
     // Check if there are function_call items in the output (tool was invoked)
-    let has_function_call = body
-        .output
-        .iter()
-        .any(|o| o.item_type == "function_call");
+    let has_function_call = body.output.iter().any(|o| o.item_type == "function_call");
 
     let has_function_call_output = body
         .output
@@ -138,7 +87,10 @@ async fn test_weather_tool_call() {
     // The model should have called the weather tool
     if has_function_call {
         println!("Tool was called!");
-        assert!(has_function_call_output, "function_call_output should be present");
+        assert!(
+            has_function_call_output,
+            "function_call_output should be present"
+        );
 
         // Check that the final message contains weather information
         let final_message = body
@@ -204,8 +156,10 @@ async fn test_code_interpreter_tool_call() {
 
     let req = CreateResponseRequest {
         model: "gpt-oss-120b".to_string(),
-        input: "Calculate the factorial of 7 using Python code.".to_string(),
-        instructions: Some("Use the execute_python tool to calculate and verify your answer.".to_string()),
+        input: Input::Text("Calculate the factorial of 7 using Python code.".to_string()),
+        instructions: Some(
+            "Use the execute_python tool to calculate and verify your answer.".to_string(),
+        ),
         max_output_tokens: Some(200),
         temperature: Some(0.0),
         store: Some(false),
@@ -292,7 +246,9 @@ async fn test_web_search_tool_call() {
 
     let req = CreateResponseRequest {
         model: "gpt-oss-120b".to_string(),
-        input: "Search for information about the Rust programming language.".to_string(),
+        input: Input::Text(
+            "Search for information about the Rust programming language.".to_string(),
+        ),
         instructions: Some("Use the web_search tool to find current information.".to_string()),
         max_output_tokens: Some(300),
         temperature: Some(0.0),
@@ -373,8 +329,13 @@ async fn test_multiple_tool_calls() {
 
     let req = CreateResponseRequest {
         model: "gpt-oss-120b".to_string(),
-        input: "Compare the weather in Tokyo and New York. Get the weather for both cities.".to_string(),
-        instructions: Some("Use the weather tool to get weather for both cities before comparing.".to_string()),
+        input: Input::Text(
+            "Compare the weather in Tokyo and New York. Get the weather for both cities."
+                .to_string(),
+        ),
+        instructions: Some(
+            "Use the weather tool to get weather for both cities before comparing.".to_string(),
+        ),
         max_output_tokens: Some(400),
         temperature: Some(0.0),
         store: Some(false),
@@ -471,7 +432,7 @@ async fn test_no_matching_tool() {
 
     let req = CreateResponseRequest {
         model: "gpt-oss-120b".to_string(),
-        input: "What is 2 + 2?".to_string(),
+        input: Input::Text("What is 2 + 2?".to_string()),
         instructions: None,
         max_output_tokens: Some(50),
         temperature: Some(0.0),
@@ -504,7 +465,11 @@ async fn test_no_matching_tool() {
     );
 
     // Should have a direct response with "4"
-    let message = body.output.iter().find(|o| o.item_type == "message").unwrap();
+    let message = body
+        .output
+        .iter()
+        .find(|o| o.item_type == "message")
+        .unwrap();
     let text = message
         .content
         .as_ref()

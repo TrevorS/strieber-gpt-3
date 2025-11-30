@@ -98,7 +98,11 @@ pub struct ChatFunction {
 #[serde(untagged)]
 pub enum ChatToolChoice {
     Mode(String),
-    Specific { #[serde(rename = "type")] tool_type: String, function: ChatFunctionName },
+    Specific {
+        #[serde(rename = "type")]
+        tool_type: String,
+        function: ChatFunctionName,
+    },
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

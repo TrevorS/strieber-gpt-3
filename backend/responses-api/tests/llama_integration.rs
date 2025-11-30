@@ -8,7 +8,7 @@
 
 mod common;
 
-use common::{create_client, llama_url, ChatMessage, SimpleChatRequest};
+use common::{ChatMessage, SimpleChatRequest, create_client, llama_url};
 
 /// Test basic connectivity to llama.cpp server.
 #[tokio::test]
@@ -49,9 +49,17 @@ async fn test_list_models() {
 
     let body: serde_json::Value = resp.json().await.expect("failed to parse response");
     assert_eq!(body["object"], "list");
-    assert!(body["data"].as_array().map(|a| !a.is_empty()).unwrap_or(false));
+    assert!(
+        body["data"]
+            .as_array()
+            .map(|a| !a.is_empty())
+            .unwrap_or(false)
+    );
 
-    println!("Available models: {}", serde_json::to_string_pretty(&body["data"]).unwrap());
+    println!(
+        "Available models: {}",
+        serde_json::to_string_pretty(&body["data"]).unwrap()
+    );
 }
 
 /// Test basic chat completion.
@@ -88,7 +96,11 @@ async fn test_basic_chat_completion() {
     let body: common::ChatCompletionResponse = resp.json().await.expect("failed to parse response");
 
     assert!(!body.choices.is_empty());
-    let content = body.choices[0].message.content.as_ref().expect("no content");
+    let content = body.choices[0]
+        .message
+        .content
+        .as_ref()
+        .expect("no content");
     println!("Response: {}", content);
     assert!(content.to_lowercase().contains("hello"));
 }
@@ -106,7 +118,8 @@ async fn test_chat_with_system_message() {
         messages: vec![
             ChatMessage {
                 role: "system".to_string(),
-                content: "You are a helpful assistant. Always respond in exactly 3 words.".to_string(),
+                content: "You are a helpful assistant. Always respond in exactly 3 words."
+                    .to_string(),
             },
             ChatMessage {
                 role: "user".to_string(),
@@ -127,7 +140,11 @@ async fn test_chat_with_system_message() {
     assert!(resp.status().is_success());
 
     let body: common::ChatCompletionResponse = resp.json().await.expect("failed to parse response");
-    let content = body.choices[0].message.content.as_ref().expect("no content");
+    let content = body.choices[0]
+        .message
+        .content
+        .as_ref()
+        .expect("no content");
     println!("Response: {}", content);
 }
 
@@ -191,7 +208,11 @@ async fn test_multi_turn_conversation() {
 
     assert!(resp2.status().is_success());
     let body2: common::ChatCompletionResponse = resp2.json().await.unwrap();
-    let content = body2.choices[0].message.content.as_ref().expect("no content");
+    let content = body2.choices[0]
+        .message
+        .content
+        .as_ref()
+        .expect("no content");
     println!("Response: {}", content);
     assert!(content.to_lowercase().contains("alice"));
 }
@@ -258,7 +279,10 @@ async fn test_usage_reporting() {
 
     // Verify usage is reported
     assert!(body.usage.prompt_tokens > 0, "prompt_tokens should be > 0");
-    assert!(body.usage.completion_tokens > 0, "completion_tokens should be > 0");
+    assert!(
+        body.usage.completion_tokens > 0,
+        "completion_tokens should be > 0"
+    );
     assert_eq!(
         body.usage.total_tokens,
         body.usage.prompt_tokens + body.usage.completion_tokens

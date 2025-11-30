@@ -5,4 +5,4 @@
 
 mod store;
 
-pub use store::{ResponseStore, InMemoryStore, StoredResponse};
+pub use store::{InMemoryStore, ResponseStore, StoredResponse};

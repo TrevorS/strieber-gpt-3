@@ -4,6 +4,10 @@
 # ============================================================================
 # Runs integration tests against the actual llama.cpp server and MCP services.
 #
+# IMPORTANT: This script runs from the host machine, not inside a container.
+# It uses docker compose to spin up a test container that connects to the
+# running services via the shared Docker network.
+#
 # Usage:
 #   ./run-integration-tests.sh              # Run all tests
 #   ./run-integration-tests.sh llama        # Run llama.cpp tests only

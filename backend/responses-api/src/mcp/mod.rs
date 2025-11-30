@@ -5,5 +5,5 @@
 
 mod client;
 
-pub use client::{McpClient, McpServerConfig, McpError};
-pub use rmcp::model::{Tool as McpTool, CallToolResult};
+pub use client::{McpClient, McpError, McpServerConfig};
+pub use rmcp::model::{CallToolResult, Tool as McpTool};

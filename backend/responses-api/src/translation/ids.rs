@@ -16,8 +16,7 @@ pub fn function_call_id() -> String {
     format!("fc_{}", short_id())
 }
 
-/// For future reasoning model support.
-#[allow(dead_code)]
+/// For reasoning model support.
 pub fn reasoning_id() -> String {
     format!("rs_{}", short_id())
 }

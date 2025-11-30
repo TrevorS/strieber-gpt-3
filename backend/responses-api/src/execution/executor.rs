@@ -8,8 +8,8 @@ use crate::models::{
     ChatCompletionRequest, ChatCompletionResponse, ChatMessage, CreateResponseRequest, Response,
 };
 use crate::translation::{
-    assistant_tool_call_message, extract_tool_calls, from_chat_completion, has_pending_tool_calls,
-    to_chat_completion, tool_result_message, PendingToolCall,
+    PendingToolCall, assistant_tool_call_message, extract_tool_calls, from_chat_completion,
+    has_pending_tool_calls, to_chat_completion, tool_result_message,
 };
 
 /// Configuration for the executor.
@@ -123,12 +123,7 @@ impl Executor {
     ) -> Result<ChatCompletionResponse, ExecutionError> {
         let url = format!("{}/v1/chat/completions", self.config.llama_url);
 
-        let response = self
-            .http
-            .post(&url)
-            .json(req)
-            .send()
-            .await?;
+        let response = self.http.post(&url).json(req).send().await?;
 
         if !response.status().is_success() {
             let status = response.status();

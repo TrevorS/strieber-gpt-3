@@ -77,5 +77,7 @@ services:
 
 networks:
   # Use external network from main compose.yml
+  # Network name follows Docker Compose naming convention: <project-dir>_<network-name>
+  # The project directory is "strieber-gpt-3" and the network is defined as "strieber-net"
   strieber-gpt-3_strieber-net:
     external: true

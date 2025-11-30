@@ -9,20 +9,19 @@ use tokio::sync::mpsc;
 
 use crate::mcp::McpClient;
 use crate::models::{
-    ChatCompletionChunk, ChatMessage, ChatRole, ChatToolCall,
-    ChatToolType, ChatFunctionCall, CreateResponseRequest, FinishReason,
-    FunctionCallOutput, MessageOutput, OutputContent, OutputItem, OutputRole, OutputStatus,
-    Response, ResponseStatus, SseEvent, Usage,
+    ChatCompletionChunk, ChatFunctionCall, ChatMessage, ChatRole, ChatToolCall, ChatToolType,
+    CreateResponseRequest, FinishReason, FunctionCallOutput, MessageOutput, OutputContent,
+    OutputItem, OutputRole, OutputStatus, Response, ResponseStatus, SseEvent, Usage,
 };
-use crate::translation::{response_id, message_id, function_call_id, to_chat_completion, tool_result_message};
+use crate::translation::{
+    function_call_id, message_id, response_id, to_chat_completion, tool_result_message,
+};
 
 use super::{ExecutionError, ExecutorConfig};
 
 /// State accumulated during streaming.
 #[derive(Default)]
 struct StreamState {
-    #[allow(dead_code)]
-    model: String,
     output_index: u32,
     current_message_id: Option<String>,
     accumulated_text: String,
@@ -33,9 +32,8 @@ struct StreamState {
 /// Tool call being accumulated from stream chunks.
 #[derive(Clone)]
 struct AccumulatedToolCall {
-    #[allow(dead_code)]
-    index: u32,
     id: String,
+    output_id: String, // The output item ID for this function call
     name: String,
     arguments: String,
 }
@@ -74,14 +72,22 @@ async fn run_streaming_loop(
     let total_output_tokens = 0u32;
 
     // Send initial response.created
-    let initial_response = build_response(&resp_id, &req, vec![], total_input_tokens, total_output_tokens);
+    let initial_response = build_response(
+        &resp_id,
+        &req,
+        vec![],
+        total_input_tokens,
+        total_output_tokens,
+    );
     send(&tx, SseEvent::response_created(initial_response.clone())).await?;
     send(&tx, SseEvent::response_in_progress(initial_response)).await?;
 
     loop {
         iteration += 1;
         if iteration > config.max_tool_iterations {
-            return Err(ExecutionError::MaxIterationsExceeded(config.max_tool_iterations));
+            return Err(ExecutionError::MaxIterationsExceeded(
+                config.max_tool_iterations,
+            ));
         }
 
         let mut chat_req = to_chat_completion(&req, Some(conversation.clone()));
@@ -93,7 +99,10 @@ async fn run_streaming_loop(
         if !response.status().is_success() {
             let status = response.status();
             let body = response.text().await.unwrap_or_default();
-            return Err(ExecutionError::Llm(format!("LLM returned {}: {}", status, body)));
+            return Err(ExecutionError::Llm(format!(
+                "LLM returned {}: {}",
+                status, body
+            )));
         }
 
         let mut state = StreamState::default();
@@ -124,8 +133,6 @@ async fn run_streaming_loop(
                 }
             };
 
-            state.model = chunk.model.clone();
-
             for choice in &chunk.choices {
                 // Handle text content delta
                 if let Some(content) = &choice.delta.content {
@@ -140,23 +147,27 @@ async fn run_streaming_loop(
                             role: OutputRole::Assistant,
                             content: vec![],
                         });
-                        send(&tx, SseEvent::output_item_added(
-                            resp_id.clone(),
-                            state.output_index,
-                            item,
-                        )).await?;
+                        send(
+                            &tx,
+                            SseEvent::output_item_added(resp_id.clone(), state.output_index, item),
+                        )
+                        .await?;
                     }
 
                     state.accumulated_text.push_str(content);
 
                     // Emit text delta
-                    send(&tx, SseEvent::output_text_delta(
-                        resp_id.clone(),
-                        state.current_message_id.clone().unwrap(),
-                        state.output_index,
-                        0,
-                        content.clone(),
-                    )).await?;
+                    send(
+                        &tx,
+                        SseEvent::output_text_delta(
+                            resp_id.clone(),
+                            state.current_message_id.clone().unwrap(),
+                            state.output_index,
+                            0,
+                            content.clone(),
+                        ),
+                    )
+                    .await?;
                 }
 
                 // Handle tool call deltas
@@ -167,8 +178,8 @@ async fn run_streaming_loop(
                         // Ensure we have space for this tool call
                         while state.accumulated_tool_calls.len() <= tc_index {
                             state.accumulated_tool_calls.push(AccumulatedToolCall {
-                                index: state.accumulated_tool_calls.len() as u32,
                                 id: String::new(),
+                                output_id: String::new(),
                                 name: String::new(),
                                 arguments: String::new(),
                             });
@@ -183,31 +194,41 @@ async fn run_streaming_loop(
                             if let Some(name) = &func.name {
                                 tc.name = name.clone();
 
-                                // Emit function call added
-                                let fc_id = function_call_id();
+                                // Emit function call added (only first time)
+                                if tc.output_id.is_empty() {
+                                    tc.output_id = function_call_id();
+                                }
                                 let item = OutputItem::FunctionCall(FunctionCallOutput {
-                                    id: fc_id.clone(),
+                                    id: tc.output_id.clone(),
                                     call_id: tc.id.clone(),
                                     name: tc.name.clone(),
                                     arguments: String::new(),
                                     status: OutputStatus::InProgress,
                                 });
-                                send(&tx, SseEvent::output_item_added(
-                                    resp_id.clone(),
-                                    state.output_index + tc_index as u32 + 1,
-                                    item,
-                                )).await?;
+                                send(
+                                    &tx,
+                                    SseEvent::output_item_added(
+                                        resp_id.clone(),
+                                        state.output_index + tc_index as u32 + 1,
+                                        item,
+                                    ),
+                                )
+                                .await?;
                             }
                             if let Some(args) = &func.arguments {
                                 tc.arguments.push_str(args);
 
                                 // Emit arguments delta
-                                send(&tx, SseEvent::function_call_arguments_delta(
-                                    resp_id.clone(),
-                                    function_call_id(),
-                                    state.output_index + tc_index as u32 + 1,
-                                    args.clone(),
-                                )).await?;
+                                send(
+                                    &tx,
+                                    SseEvent::function_call_arguments_delta(
+                                        resp_id.clone(),
+                                        tc.output_id.clone(),
+                                        state.output_index + tc_index as u32 + 1,
+                                        args.clone(),
+                                    ),
+                                )
+                                .await?;
                             }
                         }
                     }
@@ -223,13 +244,17 @@ async fn run_streaming_loop(
         if !state.accumulated_text.is_empty() {
             let msg_id = state.current_message_id.clone().unwrap_or_else(message_id);
 
-            send(&tx, SseEvent::output_text_done(
-                resp_id.clone(),
-                msg_id.clone(),
-                state.output_index,
-                0,
-                state.accumulated_text.clone(),
-            )).await?;
+            send(
+                &tx,
+                SseEvent::output_text_done(
+                    resp_id.clone(),
+                    msg_id.clone(),
+                    state.output_index,
+                    0,
+                    state.accumulated_text.clone(),
+                ),
+            )
+            .await?;
 
             let item = OutputItem::Message(MessageOutput {
                 id: msg_id,
@@ -240,56 +265,70 @@ async fn run_streaming_loop(
                     annotations: vec![],
                 }],
             });
-            send(&tx, SseEvent::output_item_done(
-                resp_id.clone(),
-                state.output_index,
-                item,
-            )).await?;
+            send(
+                &tx,
+                SseEvent::output_item_done(resp_id.clone(), state.output_index, item),
+            )
+            .await?;
         }
 
         // Handle tool calls if present
-        if state.finish_reason == Some(FinishReason::ToolCalls) && !state.accumulated_tool_calls.is_empty() {
+        if state.finish_reason == Some(FinishReason::ToolCalls)
+            && !state.accumulated_tool_calls.is_empty()
+        {
             // Finalize all tool calls
             for (i, tc) in state.accumulated_tool_calls.iter().enumerate() {
-                send(&tx, SseEvent::function_call_arguments_done(
-                    resp_id.clone(),
-                    function_call_id(),
-                    state.output_index + i as u32 + 1,
-                    tc.arguments.clone(),
-                )).await?;
+                send(
+                    &tx,
+                    SseEvent::function_call_arguments_done(
+                        resp_id.clone(),
+                        tc.output_id.clone(),
+                        state.output_index + i as u32 + 1,
+                        tc.arguments.clone(),
+                    ),
+                )
+                .await?;
 
                 let item = OutputItem::FunctionCall(FunctionCallOutput {
-                    id: function_call_id(),
+                    id: tc.output_id.clone(),
                     call_id: tc.id.clone(),
                     name: tc.name.clone(),
                     arguments: tc.arguments.clone(),
                     status: OutputStatus::Completed,
                 });
-                send(&tx, SseEvent::output_item_done(
-                    resp_id.clone(),
-                    state.output_index + i as u32 + 1,
-                    item,
-                )).await?;
+                send(
+                    &tx,
+                    SseEvent::output_item_done(
+                        resp_id.clone(),
+                        state.output_index + i as u32 + 1,
+                        item,
+                    ),
+                )
+                .await?;
             }
 
             // Build assistant message with tool calls for conversation
-            let tool_calls: Vec<ChatToolCall> = state.accumulated_tool_calls.iter().map(|tc| {
-                ChatToolCall {
+            let tool_calls: Vec<ChatToolCall> = state
+                .accumulated_tool_calls
+                .iter()
+                .map(|tc| ChatToolCall {
                     id: tc.id.clone(),
                     tool_type: ChatToolType::Function,
                     function: ChatFunctionCall {
                         name: tc.name.clone(),
                         arguments: tc.arguments.clone(),
                     },
-                }
-            }).collect();
+                })
+                .collect();
 
             conversation.push(ChatMessage {
                 role: ChatRole::Assistant,
                 content: if state.accumulated_text.is_empty() {
                     None
                 } else {
-                    Some(crate::models::ChatContent::Text(state.accumulated_text.clone()))
+                    Some(crate::models::ChatContent::Text(
+                        state.accumulated_text.clone(),
+                    ))
                 },
                 tool_calls: Some(tool_calls),
                 tool_call_id: None,
@@ -316,7 +355,13 @@ async fn run_streaming_loop(
 
         // No tool calls - we're done
         let final_output = build_final_output(&state);
-        let final_response = build_response(&resp_id, &req, final_output, total_input_tokens, total_output_tokens);
+        let final_response = build_response(
+            &resp_id,
+            &req,
+            final_output,
+            total_input_tokens,
+            total_output_tokens,
+        );
 
         send(&tx, SseEvent::response_completed(final_response.clone())).await?;
         send(&tx, SseEvent::response_done(final_response)).await?;
@@ -342,7 +387,7 @@ fn build_final_output(state: &StreamState) -> Vec<OutputItem> {
 
     for tc in &state.accumulated_tool_calls {
         output.push(OutputItem::FunctionCall(FunctionCallOutput {
-            id: function_call_id(),
+            id: tc.output_id.clone(),
             call_id: tc.id.clone(),
             name: tc.name.clone(),
             arguments: tc.arguments.clone(),
@@ -404,7 +449,7 @@ async fn send(
     tx: &mpsc::Sender<Result<SseEvent, ExecutionError>>,
     event: SseEvent,
 ) -> Result<(), ExecutionError> {
-    tx.send(Ok(event)).await.map_err(|_| {
-        ExecutionError::Llm("Stream receiver dropped".to_string())
-    })
+    tx.send(Ok(event))
+        .await
+        .map_err(|_| ExecutionError::Llm("Stream receiver dropped".to_string()))
 }

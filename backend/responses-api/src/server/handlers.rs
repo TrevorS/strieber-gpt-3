@@ -13,7 +13,7 @@ use futures::stream::StreamExt;
 use serde_json::json;
 
 use crate::config::Config;
-use crate::execution::{execute_streaming, ExecutionError, Executor, ExecutorConfig};
+use crate::execution::{ExecutionError, Executor, ExecutorConfig, execute_streaming};
 use crate::mcp::McpClient;
 use crate::models::{CreateResponseRequest, DeleteResponse};
 use crate::state::{InMemoryStore, ResponseStore};
@@ -35,7 +35,11 @@ pub async fn create_response(
         return create_streaming_response(state, req).await;
     }
 
-    let response = state.executor.execute(&req).await.map_err(execution_error)?;
+    let response = state
+        .executor
+        .execute(&req)
+        .await
+        .map_err(execution_error)?;
 
     if req.store {
         state.store.store(response.clone(), req);

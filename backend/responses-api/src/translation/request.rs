@@ -3,8 +3,8 @@
 use crate::models::{
     ChatCompletionRequest, ChatContent, ChatContentPart, ChatFunction, ChatFunctionName,
     ChatImageUrl, ChatMessage, ChatRole, ChatTool, ChatToolChoice, ChatToolType, ContentPart,
-    CreateResponseRequest, Input, InputItem, MessageContent, MessageInput, Role, Tool,
-    ToolChoice, ToolChoiceMode,
+    CreateResponseRequest, Input, InputItem, MessageContent, MessageInput, ReasoningContentInput,
+    ReasoningInput, Role, Tool, ToolChoice, ToolChoiceMode,
 };
 
 /// Translate a Responses API request into a Chat Completions request.
@@ -95,21 +95,64 @@ fn input_item_to_message(item: &InputItem) -> Option<ChatMessage> {
             }]),
             tool_call_id: None,
         }),
-        // Reasoning items are passed through as system context or skipped
-        // depending on model capabilities
-        InputItem::Reasoning(_) => None,
+        // Reasoning items are converted to assistant messages with <think> tags
+        InputItem::Reasoning(reasoning) => reasoning_input_to_chat(reasoning),
+        // Custom tool calls use free-form text input instead of JSON schema.
+        // We handle them the same way as function calls, converting to tool messages.
         InputItem::CustomToolCallOutput(output) => Some(ChatMessage {
             role: ChatRole::Tool,
             content: Some(ChatContent::Text(output.output.clone())),
             tool_calls: None,
             tool_call_id: Some(output.call_id.clone()),
         }),
+        // Computer use outputs contain screenshots and interaction results.
+        // llama.cpp doesn't support computer use capabilities, so we skip these.
+        // A full implementation would convert screenshots to image content parts.
         InputItem::ComputerCallOutput(_) => {
-            // Computer call outputs would need special handling
-            // For now, skip them as llama.cpp doesn't support computer use
+            tracing::warn!("Computer call outputs are not supported by llama.cpp; skipping");
             None
         }
     }
+}
+
+/// Convert ReasoningInput to a ChatMessage with <think> tags.
+fn reasoning_input_to_chat(reasoning: &ReasoningInput) -> Option<ChatMessage> {
+    // Check for encrypted content
+    if reasoning.encrypted_content.is_some() {
+        tracing::warn!(
+            "Encrypted reasoning content is not yet supported; skipping reasoning input"
+        );
+        return None;
+    }
+
+    // Extract reasoning text from content items
+    let reasoning_texts: Vec<String> = reasoning
+        .content
+        .iter()
+        .filter_map(|content_item| match content_item {
+            ReasoningContentInput::ReasoningText { text } => Some(text.clone()),
+            ReasoningContentInput::Redacted {} => {
+                // Skip redacted content
+                None
+            }
+        })
+        .collect();
+
+    // If no reasoning text was found, skip this item
+    if reasoning_texts.is_empty() {
+        return None;
+    }
+
+    // Combine all reasoning texts and wrap in <think> tags
+    let combined_reasoning = reasoning_texts.join("\n");
+    let wrapped_reasoning = format!("<think>{}</think>", combined_reasoning);
+
+    Some(ChatMessage {
+        role: ChatRole::Assistant,
+        content: Some(ChatContent::Text(wrapped_reasoning)),
+        tool_calls: None,
+        tool_call_id: None,
+    })
 }
 
 /// Convert a MessageInput to a ChatMessage.
@@ -197,7 +240,10 @@ fn tool_choice_to_chat(choice: &ToolChoice) -> ChatToolChoice {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::models::{FunctionCallInput, FunctionCallOutputInput, FunctionTool};
+    use crate::models::{
+        FunctionCallInput, FunctionCallOutputInput, FunctionTool, ReasoningContentInput,
+        ReasoningInput,
+    };
     use pretty_assertions::assert_eq;
     use serde_json::json;
 
@@ -261,7 +307,9 @@ mod tests {
         assert_eq!(chat_req.messages[0].role, ChatRole::System);
         assert_eq!(
             chat_req.messages[0].content,
-            Some(ChatContent::Text("You are a helpful assistant.".to_string()))
+            Some(ChatContent::Text(
+                "You are a helpful assistant.".to_string()
+            ))
         );
     }
 
@@ -358,7 +406,10 @@ mod tests {
 
         // Tool result
         assert_eq!(chat_req.messages[2].role, ChatRole::Tool);
-        assert_eq!(chat_req.messages[2].tool_call_id, Some("call_123".to_string()));
+        assert_eq!(
+            chat_req.messages[2].tool_call_id,
+            Some("call_123".to_string())
+        );
     }
 
     #[test]
@@ -409,5 +460,188 @@ mod tests {
             chat_req.messages[2].content,
             Some(ChatContent::Text("Follow up question".to_string()))
         );
+    }
+
+    #[test]
+    fn reasoning_input_wraps_in_think_tags() {
+        let req = CreateResponseRequest {
+            model: "gpt-4o".to_string(),
+            input: Input::Items(vec![
+                InputItem::Reasoning(ReasoningInput {
+                    id: Some("reasoning_1".to_string()),
+                    content: vec![ReasoningContentInput::ReasoningText {
+                        text: "Let me analyze this problem step by step...".to_string(),
+                    }],
+                    encrypted_content: None,
+                }),
+                InputItem::Message(MessageInput {
+                    role: Role::User,
+                    content: MessageContent::Text("Continue the analysis".to_string()),
+                }),
+            ]),
+            instructions: None,
+            tools: vec![],
+            tool_choice: ToolChoice::default(),
+            parallel_tool_calls: true,
+            previous_response_id: None,
+            max_output_tokens: None,
+            max_tool_calls: None,
+            temperature: 1.0,
+            top_p: 1.0,
+            stream: false,
+            store: true,
+            reasoning: None,
+            text: None,
+            truncation: Default::default(),
+            metadata: None,
+        };
+
+        let chat_req = to_chat_completion(&req, None);
+
+        assert_eq!(chat_req.messages.len(), 2);
+
+        // Reasoning becomes assistant message with <think> tags
+        assert_eq!(chat_req.messages[0].role, ChatRole::Assistant);
+        assert_eq!(
+            chat_req.messages[0].content,
+            Some(ChatContent::Text(
+                "<think>Let me analyze this problem step by step...</think>".to_string()
+            ))
+        );
+
+        // User message follows
+        assert_eq!(chat_req.messages[1].role, ChatRole::User);
+        assert_eq!(
+            chat_req.messages[1].content,
+            Some(ChatContent::Text("Continue the analysis".to_string()))
+        );
+    }
+
+    #[test]
+    fn reasoning_with_multiple_text_items_combines() {
+        let req = CreateResponseRequest {
+            model: "gpt-4o".to_string(),
+            input: Input::Items(vec![InputItem::Reasoning(ReasoningInput {
+                id: None,
+                content: vec![
+                    ReasoningContentInput::ReasoningText {
+                        text: "First thought".to_string(),
+                    },
+                    ReasoningContentInput::ReasoningText {
+                        text: "Second thought".to_string(),
+                    },
+                ],
+                encrypted_content: None,
+            })]),
+            instructions: None,
+            tools: vec![],
+            tool_choice: ToolChoice::default(),
+            parallel_tool_calls: true,
+            previous_response_id: None,
+            max_output_tokens: None,
+            max_tool_calls: None,
+            temperature: 1.0,
+            top_p: 1.0,
+            stream: false,
+            store: true,
+            reasoning: None,
+            text: None,
+            truncation: Default::default(),
+            metadata: None,
+        };
+
+        let chat_req = to_chat_completion(&req, None);
+
+        assert_eq!(chat_req.messages.len(), 1);
+        assert_eq!(
+            chat_req.messages[0].content,
+            Some(ChatContent::Text(
+                "<think>First thought\nSecond thought</think>".to_string()
+            ))
+        );
+    }
+
+    #[test]
+    fn reasoning_with_redacted_content_skips_redacted() {
+        let req = CreateResponseRequest {
+            model: "gpt-4o".to_string(),
+            input: Input::Items(vec![InputItem::Reasoning(ReasoningInput {
+                id: None,
+                content: vec![
+                    ReasoningContentInput::ReasoningText {
+                        text: "Visible thought".to_string(),
+                    },
+                    ReasoningContentInput::Redacted {},
+                    ReasoningContentInput::ReasoningText {
+                        text: "Another visible thought".to_string(),
+                    },
+                ],
+                encrypted_content: None,
+            })]),
+            instructions: None,
+            tools: vec![],
+            tool_choice: ToolChoice::default(),
+            parallel_tool_calls: true,
+            previous_response_id: None,
+            max_output_tokens: None,
+            max_tool_calls: None,
+            temperature: 1.0,
+            top_p: 1.0,
+            stream: false,
+            store: true,
+            reasoning: None,
+            text: None,
+            truncation: Default::default(),
+            metadata: None,
+        };
+
+        let chat_req = to_chat_completion(&req, None);
+
+        assert_eq!(chat_req.messages.len(), 1);
+        assert_eq!(
+            chat_req.messages[0].content,
+            Some(ChatContent::Text(
+                "<think>Visible thought\nAnother visible thought</think>".to_string()
+            ))
+        );
+    }
+
+    #[test]
+    fn reasoning_with_only_redacted_content_is_skipped() {
+        let req = CreateResponseRequest {
+            model: "gpt-4o".to_string(),
+            input: Input::Items(vec![
+                InputItem::Reasoning(ReasoningInput {
+                    id: None,
+                    content: vec![ReasoningContentInput::Redacted {}],
+                    encrypted_content: None,
+                }),
+                InputItem::Message(MessageInput {
+                    role: Role::User,
+                    content: MessageContent::Text("Hello".to_string()),
+                }),
+            ]),
+            instructions: None,
+            tools: vec![],
+            tool_choice: ToolChoice::default(),
+            parallel_tool_calls: true,
+            previous_response_id: None,
+            max_output_tokens: None,
+            max_tool_calls: None,
+            temperature: 1.0,
+            top_p: 1.0,
+            stream: false,
+            store: true,
+            reasoning: None,
+            text: None,
+            truncation: Default::default(),
+            metadata: None,
+        };
+
+        let chat_req = to_chat_completion(&req, None);
+
+        // Only the user message should be included
+        assert_eq!(chat_req.messages.len(), 1);
+        assert_eq!(chat_req.messages[0].role, ChatRole::User);
     }
 }

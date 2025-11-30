@@ -27,7 +27,14 @@ async fn main() -> anyhow::Result<()> {
     let config = Config::from_env();
     tracing::info!("Starting Responses API server");
     tracing::info!("LLaMA URL: {}", config.llama_url);
-    tracing::info!("MCP servers: {:?}", config.mcp_servers.iter().map(|s| &s.name).collect::<Vec<_>>());
+    tracing::info!(
+        "MCP servers: {:?}",
+        config
+            .mcp_servers
+            .iter()
+            .map(|s| &s.name)
+            .collect::<Vec<_>>()
+    );
 
     // Create MCP client and connect to servers
     let mcp_client = McpClient::new(config.mcp_servers.clone());

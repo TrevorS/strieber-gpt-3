@@ -9,7 +9,6 @@ use rmcp::transport::StreamableHttpClientTransport;
 use rmcp::{RoleClient, ServiceExt};
 use serde_json::Value;
 use tokio::sync::RwLock;
-use std::borrow::Cow;
 
 /// Configuration for an MCP server endpoint.
 #[derive(Debug, Clone)]
@@ -157,7 +156,11 @@ impl McpClient {
     }
 
     /// Call a tool by name.
-    pub async fn call_tool(&self, name: &str, arguments: Value) -> Result<CallToolResult, McpError> {
+    pub async fn call_tool(
+        &self,
+        name: &str,
+        arguments: Value,
+    ) -> Result<CallToolResult, McpError> {
         // Find which server handles this tool
         let routing = self.tool_routing.read().await;
         let server_name = routing
@@ -172,15 +175,15 @@ impl McpClient {
             .ok_or_else(|| McpError::ServerNotFound(server_name.clone()))?;
 
         // Strip prefix from tool name when calling
-        let actual_name: Cow<'static, str> = if let Some(prefix) = &server.config.tool_prefix {
-            name.strip_prefix(prefix).unwrap_or(name).to_string().into()
+        let actual_name = if let Some(prefix) = &server.config.tool_prefix {
+            name.strip_prefix(prefix).unwrap_or(name).to_string()
         } else {
-            name.to_string().into()
+            name.to_string()
         };
 
         // Call the tool
         let params = CallToolRequestParam {
-            name: actual_name,
+            name: actual_name.into(),
             arguments: if arguments.is_null() {
                 None
             } else {
@@ -241,8 +244,8 @@ mod tests {
 
     #[test]
     fn server_config_with_prefix() {
-        let config = McpServerConfig::new("weather", "http://mcp-weather:8000/mcp")
-            .with_prefix("weather_");
+        let config =
+            McpServerConfig::new("weather", "http://mcp-weather:8000/mcp").with_prefix("weather_");
         assert_eq!(config.name, "weather");
         assert_eq!(config.url, "http://mcp-weather:8000/mcp");
         assert_eq!(config.tool_prefix, Some("weather_".to_string()));

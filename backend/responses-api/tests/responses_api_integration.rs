@@ -8,76 +8,9 @@
 
 mod common;
 
-use common::{create_client, responses_api_url};
-use serde::{Deserialize, Serialize};
+use common::*;
+use serde::Deserialize;
 use serde_json::json;
-
-/// Input types for Responses API requests.
-#[derive(Debug, Serialize)]
-#[serde(untagged)]
-pub enum Input {
-    Text(String),
-    Messages(Vec<InputMessage>),
-}
-
-#[derive(Debug, Serialize)]
-pub struct InputMessage {
-    pub role: String,
-    pub content: String,
-}
-
-/// Create response request.
-#[derive(Debug, Serialize)]
-pub struct CreateResponseRequest {
-    pub model: String,
-    pub input: Input,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub instructions: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub max_output_tokens: Option<u32>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub temperature: Option<f32>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub store: Option<bool>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub tools: Option<Vec<serde_json::Value>>,
-}
-
-/// Response object from Responses API.
-#[derive(Debug, Deserialize)]
-pub struct Response {
-    pub id: String,
-    pub object: String,
-    pub created_at: i64,
-    pub status: String,
-    pub model: String,
-    pub output: Vec<OutputItem>,
-    pub usage: Usage,
-}
-
-#[derive(Debug, Deserialize)]
-pub struct OutputItem {
-    #[serde(rename = "type")]
-    pub item_type: String,
-    pub id: Option<String>,
-    pub role: Option<String>,
-    pub content: Option<Vec<ContentPart>>,
-    pub status: Option<String>,
-}
-
-#[derive(Debug, Deserialize)]
-pub struct ContentPart {
-    #[serde(rename = "type")]
-    pub content_type: String,
-    pub text: Option<String>,
-}
-
-#[derive(Debug, Deserialize)]
-pub struct Usage {
-    pub input_tokens: u32,
-    pub output_tokens: u32,
-    pub total_tokens: u32,
-}
 
 #[derive(Debug, Deserialize)]
 pub struct DeleteResponse {
@@ -136,7 +69,12 @@ async fn test_list_models() {
 
     let body: serde_json::Value = resp.json().await.unwrap();
     assert_eq!(body["object"], "list");
-    assert!(body["data"].as_array().map(|a| !a.is_empty()).unwrap_or(false));
+    assert!(
+        body["data"]
+            .as_array()
+            .map(|a| !a.is_empty())
+            .unwrap_or(false)
+    );
 }
 
 /// Test basic create response with text input.
@@ -206,12 +144,10 @@ async fn test_create_response_message_input() {
 
     let req = CreateResponseRequest {
         model: "gpt-oss-120b".to_string(),
-        input: Input::Messages(vec![
-            InputMessage {
-                role: "user".to_string(),
-                content: "What is 2+2? Answer with just the number.".to_string(),
-            },
-        ]),
+        input: Input::Messages(vec![InputMessage {
+            role: "user".to_string(),
+            content: "What is 2+2? Answer with just the number.".to_string(),
+        }]),
         instructions: None,
         max_output_tokens: Some(10),
         temperature: Some(0.0),
@@ -231,7 +167,11 @@ async fn test_create_response_message_input() {
     let body: Response = resp.json().await.unwrap();
     assert_eq!(body.status, "completed");
 
-    let message = body.output.iter().find(|o| o.item_type == "message").unwrap();
+    let message = body
+        .output
+        .iter()
+        .find(|o| o.item_type == "message")
+        .unwrap();
     let text = message
         .content
         .as_ref()
@@ -273,7 +213,11 @@ async fn test_create_response_with_instructions() {
     assert!(resp.status().is_success());
 
     let body: Response = resp.json().await.unwrap();
-    let message = body.output.iter().find(|o| o.item_type == "message").unwrap();
+    let message = body
+        .output
+        .iter()
+        .find(|o| o.item_type == "message")
+        .unwrap();
     let text = message
         .content
         .as_ref()
@@ -486,15 +430,13 @@ async fn test_usage_reporting() {
 
     let body: Response = resp.json().await.unwrap();
 
-    assert!(body.usage.input_tokens > 0, "input_tokens should be > 0");
-    assert!(body.usage.output_tokens > 0, "output_tokens should be > 0");
-    assert_eq!(
-        body.usage.total_tokens,
-        body.usage.input_tokens + body.usage.output_tokens
-    );
+    let usage = body.usage.as_ref().expect("usage should be present");
+    assert!(usage.input_tokens > 0, "input_tokens should be > 0");
+    assert!(usage.output_tokens > 0, "output_tokens should be > 0");
+    assert_eq!(usage.total_tokens, usage.input_tokens + usage.output_tokens);
 
     println!(
         "Usage: {} input + {} output = {} total",
-        body.usage.input_tokens, body.usage.output_tokens, body.usage.total_tokens
+        usage.input_tokens, usage.output_tokens, usage.total_tokens
     );
 }

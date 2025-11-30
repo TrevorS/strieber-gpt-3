@@ -368,15 +368,38 @@ pub struct ComputerCallOutput {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum ComputerAction {
-    Click { x: i32, y: i32, button: String },
-    DoubleClick { x: i32, y: i32 },
-    Move { x: i32, y: i32 },
-    Drag { path: Vec<CoordinatePair> },
-    Scroll { x: i32, y: i32, direction: String, amount: i32 },
-    Keypress { keys: Vec<String> },
-    Type { text: String },
+    Click {
+        x: i32,
+        y: i32,
+        button: String,
+    },
+    DoubleClick {
+        x: i32,
+        y: i32,
+    },
+    Move {
+        x: i32,
+        y: i32,
+    },
+    Drag {
+        path: Vec<CoordinatePair>,
+    },
+    Scroll {
+        x: i32,
+        y: i32,
+        direction: String,
+        amount: i32,
+    },
+    Keypress {
+        keys: Vec<String>,
+    },
+    Type {
+        text: String,
+    },
     Screenshot {},
-    Wait { ms: u32 },
+    Wait {
+        ms: u32,
+    },
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

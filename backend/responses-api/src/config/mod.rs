@@ -129,11 +129,15 @@ impl Config {
 
     /// Create default configuration with standard MCP servers.
     ///
+    /// This is primarily for testing and examples. In production, use `from_env()`
+    /// with the `MCP_SERVERS` environment variable.
+    ///
     /// Includes:
     /// - mcp-weather on port 9100
     /// - mcp-web-search on port 9110
     /// - mcp-code-interpreter on port 9120
     /// - mcp-reader on port 9130
+    #[cfg(test)]
     pub fn with_standard_mcp_servers() -> Self {
         Self::default()
             .add_mcp_server("weather", "http://mcp-weather:8000/mcp")
@@ -179,7 +183,9 @@ fn parse_mcp_servers(env_value: &str) -> Vec<McpServerConfig> {
                                 {
                                     let url = &rest[..last_colon];
                                     let prefix = after_last_colon;
-                                    return Some(McpServerConfig::new(name, url).with_prefix(prefix));
+                                    return Some(
+                                        McpServerConfig::new(name, url).with_prefix(prefix),
+                                    );
                                 }
                             }
                             return Some(McpServerConfig::new(name, rest));

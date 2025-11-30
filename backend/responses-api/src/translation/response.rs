@@ -7,10 +7,11 @@ use serde_json::Value;
 use crate::models::{
     ChatCompletionResponse, ChatContent, ChatMessage, ChatRole, CreateResponseRequest,
     FunctionCallOutput as FunctionCallOutputItem, InputTokensDetails, MessageOutput, OutputContent,
-    OutputItem, OutputRole, OutputStatus, OutputTokensDetails, Response, ResponseStatus, Usage,
+    OutputItem, OutputRole, OutputStatus, OutputTokensDetails, ReasoningContent, ReasoningOutput,
+    Response, ResponseStatus, Usage,
 };
 
-use super::ids::{function_call_id, message_id, response_id};
+use super::ids::{function_call_id, message_id, reasoning_id, response_id};
 
 /// Build a Response object from a Chat Completion response.
 pub fn from_chat_completion(
@@ -44,7 +45,37 @@ pub fn from_chat_completion(
     }
 }
 
+/// Parse reasoning tags from text and return (reasoning_text, remaining_text).
+/// Returns (None, original_text) if no <think> tags found.
+fn parse_reasoning_tags(text: &str) -> (Option<String>, String) {
+    // Look for <think>...</think> tags
+    if let Some(start_idx) = text.find("<think>")
+        && let Some(end_idx) = text.find("</think>")
+    {
+        let think_start = start_idx + "<think>".len();
+        let reasoning_text = text[think_start..end_idx].to_string();
+
+        // Remove the <think>...</think> portion from the original text
+        let before = &text[..start_idx];
+        let after = &text[end_idx + "</think>".len()..];
+        let remaining = format!("{}{}", before, after).trim().to_string();
+
+        return (Some(reasoning_text), remaining);
+    }
+
+    (None, text.to_string())
+}
+
 /// Extract output items from Chat Completion response.
+///
+/// This extracts output items that can be directly produced by Chat Completions:
+/// - FunctionCall: Converted from tool_calls in the response
+/// - Message: Converted from text content
+/// - Reasoning: Extracted from <think> tags in content
+///
+/// Other OutputItem variants (CustomToolCall, WebSearchCall, FileSearchCall,
+/// CodeInterpreterCall, ComputerCall) are specialized types that would be
+/// produced by external tool systems, not directly by llama.cpp.
 fn extract_output_items(chat_resp: &ChatCompletionResponse) -> Vec<OutputItem> {
     let mut items = Vec::new();
 
@@ -80,15 +111,34 @@ fn extract_output_items(chat_resp: &ChatCompletionResponse) -> Vec<OutputItem> {
             };
 
             if !text.is_empty() {
-                items.push(OutputItem::Message(MessageOutput {
-                    id: message_id(),
-                    status: OutputStatus::Completed,
-                    role: OutputRole::Assistant,
-                    content: vec![OutputContent::OutputText {
-                        text,
-                        annotations: vec![],
-                    }],
-                }));
+                // Parse reasoning tags if present
+                let (reasoning, remaining_text) = parse_reasoning_tags(&text);
+
+                // If we found reasoning, emit it first
+                if let Some(reasoning_text) = reasoning {
+                    items.push(OutputItem::Reasoning(ReasoningOutput {
+                        id: reasoning_id(),
+                        status: OutputStatus::Completed,
+                        content: vec![ReasoningContent::ReasoningText {
+                            text: reasoning_text,
+                        }],
+                        summary: vec![],
+                        encrypted_content: None,
+                    }));
+                }
+
+                // Then emit the message if there's remaining text
+                if !remaining_text.is_empty() {
+                    items.push(OutputItem::Message(MessageOutput {
+                        id: message_id(),
+                        status: OutputStatus::Completed,
+                        role: OutputRole::Assistant,
+                        content: vec![OutputContent::OutputText {
+                            text: remaining_text,
+                            annotations: vec![],
+                        }],
+                    }));
+                }
             }
         }
     }
@@ -105,7 +155,9 @@ fn extract_usage(chat_resp: &ChatCompletionResponse) -> Usage {
             input_tokens: u.prompt_tokens,
             input_tokens_details: Some(InputTokensDetails { cached_tokens: 0 }),
             output_tokens: u.completion_tokens,
-            output_tokens_details: Some(OutputTokensDetails { reasoning_tokens: 0 }),
+            output_tokens_details: Some(OutputTokensDetails {
+                reasoning_tokens: 0,
+            }),
             total_tokens: u.total_tokens,
         })
         .unwrap_or_default()
@@ -121,7 +173,10 @@ fn unix_timestamp() -> i64 {
 /// Check if response contains tool calls that need execution.
 pub fn has_pending_tool_calls(chat_resp: &ChatCompletionResponse) -> bool {
     chat_resp.choices.iter().any(|c| {
-        c.message.tool_calls.as_ref().is_some_and(|tc| !tc.is_empty())
+        c.message
+            .tool_calls
+            .as_ref()
+            .is_some_and(|tc| !tc.is_empty())
     })
 }
 
@@ -431,5 +486,118 @@ mod tests {
 
         assert!(has_pending_tool_calls(&with_tools));
         assert!(!has_pending_tool_calls(&without_tools));
+    }
+
+    #[test]
+    fn reasoning_tags_are_parsed_correctly() {
+        let (reasoning, remaining) =
+            parse_reasoning_tags("<think>Let me think step by step...</think>The answer is 42.");
+
+        assert_eq!(reasoning, Some("Let me think step by step...".to_string()));
+        assert_eq!(remaining, "The answer is 42.");
+    }
+
+    #[test]
+    fn no_reasoning_tags_returns_original_text() {
+        let (reasoning, remaining) = parse_reasoning_tags("Just a normal response.");
+
+        assert_eq!(reasoning, None);
+        assert_eq!(remaining, "Just a normal response.");
+    }
+
+    #[test]
+    fn reasoning_response_creates_both_reasoning_and_message_output() {
+        let chat_resp = ChatCompletionResponse {
+            id: "chatcmpl-123".to_string(),
+            object: "chat.completion".to_string(),
+            created: 1234567890,
+            model: "deepseek-r1".to_string(),
+            choices: vec![ChatChoice {
+                index: 0,
+                message: ChatMessage {
+                    role: ChatRole::Assistant,
+                    content: Some(ChatContent::Text(
+                        "<think>Let me analyze this problem step by step...</think>The answer is 42."
+                            .to_string(),
+                    )),
+                    tool_calls: None,
+                    tool_call_id: None,
+                },
+                finish_reason: Some(FinishReason::Stop),
+            }],
+            usage: None,
+        };
+
+        let resp = from_chat_completion(&chat_resp, &make_request());
+
+        assert_eq!(resp.output.len(), 2);
+
+        // First item should be reasoning
+        match &resp.output[0] {
+            OutputItem::Reasoning(reasoning) => {
+                assert_eq!(reasoning.status, OutputStatus::Completed);
+                assert_eq!(reasoning.content.len(), 1);
+                match &reasoning.content[0] {
+                    ReasoningContent::ReasoningText { text } => {
+                        assert_eq!(text, "Let me analyze this problem step by step...");
+                    }
+                    _ => panic!("expected ReasoningText"),
+                }
+            }
+            _ => panic!("expected Reasoning output"),
+        }
+
+        // Second item should be message
+        match &resp.output[1] {
+            OutputItem::Message(msg) => {
+                assert_eq!(msg.role, OutputRole::Assistant);
+                assert_eq!(msg.status, OutputStatus::Completed);
+                match &msg.content[0] {
+                    OutputContent::OutputText { text, .. } => {
+                        assert_eq!(text, "The answer is 42.");
+                    }
+                    _ => panic!("expected OutputText"),
+                }
+            }
+            _ => panic!("expected Message output"),
+        }
+    }
+
+    #[test]
+    fn reasoning_only_response_creates_only_reasoning_output() {
+        let chat_resp = ChatCompletionResponse {
+            id: "chatcmpl-123".to_string(),
+            object: "chat.completion".to_string(),
+            created: 1234567890,
+            model: "deepseek-r1".to_string(),
+            choices: vec![ChatChoice {
+                index: 0,
+                message: ChatMessage {
+                    role: ChatRole::Assistant,
+                    content: Some(ChatContent::Text(
+                        "<think>Just thinking, no response</think>".to_string(),
+                    )),
+                    tool_calls: None,
+                    tool_call_id: None,
+                },
+                finish_reason: Some(FinishReason::Stop),
+            }],
+            usage: None,
+        };
+
+        let resp = from_chat_completion(&chat_resp, &make_request());
+
+        // Should only have reasoning output, no message
+        assert_eq!(resp.output.len(), 1);
+
+        match &resp.output[0] {
+            OutputItem::Reasoning(reasoning) => match &reasoning.content[0] {
+                ReasoningContent::ReasoningText { text } => {
+                    assert_eq!(text, "Just thinking, no response");
+                }
+                _ => panic!("expected ReasoningText"),
+            },
+            _ => panic!("expected Reasoning output"),
+        }
     }
 }
