@@ -8,7 +8,7 @@ use super::{ReasoningConfig, TextConfig, Tool, ToolChoice, Truncation};
 /// Request body for POST /v1/responses
 #[derive(Debug, Clone, Deserialize)]
 pub struct CreateResponseRequest {
-    /// Model ID (e.g., "gpt-4o", mapped to llama.cpp model)
+    /// Model ID (e.g., "gpt-4o", passed to the Chat Completions backend)
     pub model: String,
 
     /// Input to the model - either a string or array of input items

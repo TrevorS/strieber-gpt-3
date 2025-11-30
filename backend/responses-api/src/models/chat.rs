@@ -1,12 +1,12 @@
-//! Chat Completions API types for llama.cpp.
+//! Chat Completions API types.
 //!
-//! These types represent the OpenAI Chat Completions format that llama.cpp
-//! natively supports with `--jinja` mode enabled.
+//! These types represent the OpenAI Chat Completions format supported by
+//! any compatible inference engine (llama.cpp, vLLM, TGI, etc.).
 
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
-/// Request body for llama.cpp /v1/chat/completions
+/// Request body for Chat Completions API /v1/chat/completions
 #[derive(Debug, Clone, Serialize)]
 pub struct ChatCompletionRequest {
     pub model: String,
@@ -125,7 +125,7 @@ pub struct ChatFunctionCall {
     pub arguments: String,
 }
 
-/// Response from llama.cpp /v1/chat/completions
+/// Response from Chat Completions API /v1/chat/completions
 #[derive(Debug, Clone, Deserialize)]
 pub struct ChatCompletionResponse {
     pub id: String,

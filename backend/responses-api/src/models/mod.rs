@@ -2,7 +2,7 @@
 //!
 //! This module contains all the serde-compatible types needed to implement
 //! the OpenAI Responses API, translating between the Responses format and
-//! the Chat Completions format used by llama.cpp.
+//! the Chat Completions format used by any compatible inference engine.
 
 mod chat;
 mod events;
