@@ -94,7 +94,14 @@ pub struct ResponsesUsage {
 #[serde(untagged)]
 pub enum Input {
     Text(String),
-    Messages(Vec<InputMessage>),
+    Items(Vec<InputItem>),
+}
+
+/// Input item for Responses API (requires type tag).
+#[derive(Debug, Serialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum InputItem {
+    Message(InputMessage),
 }
 
 #[derive(Debug, Serialize)]

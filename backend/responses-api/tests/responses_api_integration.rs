@@ -89,7 +89,7 @@ async fn test_create_response_text_input() {
         model: "gpt-oss-120b".to_string(),
         input: Input::Text("Say 'hello world' and nothing else.".to_string()),
         instructions: None,
-        max_output_tokens: Some(20),
+        max_output_tokens: Some(100), // Reasoning models need more tokens for thinking
         temperature: Some(0.0),
         store: Some(false),
         tools: None,
@@ -144,12 +144,12 @@ async fn test_create_response_message_input() {
 
     let req = CreateResponseRequest {
         model: "gpt-oss-120b".to_string(),
-        input: Input::Messages(vec![InputMessage {
+        input: Input::Items(vec![InputItem::Message(InputMessage {
             role: "user".to_string(),
             content: "What is 2+2? Answer with just the number.".to_string(),
-        }]),
+        })]),
         instructions: None,
-        max_output_tokens: Some(10),
+        max_output_tokens: Some(100), // Reasoning models need more tokens for thinking
         temperature: Some(0.0),
         store: Some(false),
         tools: None,

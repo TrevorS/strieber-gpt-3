@@ -16,22 +16,20 @@ async fn test_weather_tool_call() {
     let client = create_client();
     let url = responses_api_url().unwrap();
 
-    // Define the weather tool
+    // Define the weather tool (Responses API uses flat format, not nested under "function")
     let weather_tool = json!({
         "type": "function",
-        "function": {
-            "name": "get_weather",
-            "description": "Get current weather for a location",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "location": {
-                        "type": "string",
-                        "description": "City name or location"
-                    }
-                },
-                "required": ["location"]
-            }
+        "name": "get_weather",
+        "description": "Get current weather for a location",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "location": {
+                    "type": "string",
+                    "description": "City name or location"
+                }
+            },
+            "required": ["location"]
         }
     });
 
@@ -138,19 +136,17 @@ async fn test_code_interpreter_tool_call() {
 
     let code_tool = json!({
         "type": "function",
-        "function": {
-            "name": "execute_python",
-            "description": "Execute Python code and return the result",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "code": {
-                        "type": "string",
-                        "description": "Python code to execute"
-                    }
-                },
-                "required": ["code"]
-            }
+        "name": "execute_python",
+        "description": "Execute Python code and return the result",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "code": {
+                    "type": "string",
+                    "description": "Python code to execute"
+                }
+            },
+            "required": ["code"]
         }
     });
 
@@ -228,19 +224,17 @@ async fn test_web_search_tool_call() {
 
     let search_tool = json!({
         "type": "function",
-        "function": {
-            "name": "web_search",
-            "description": "Search the web for information",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "query": {
-                        "type": "string",
-                        "description": "Search query"
-                    }
-                },
-                "required": ["query"]
-            }
+        "name": "web_search",
+        "description": "Search the web for information",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "query": {
+                    "type": "string",
+                    "description": "Search query"
+                }
+            },
+            "required": ["query"]
         }
     });
 
@@ -311,19 +305,17 @@ async fn test_multiple_tool_calls() {
 
     let weather_tool = json!({
         "type": "function",
-        "function": {
-            "name": "get_weather",
-            "description": "Get current weather for a location",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "location": {
-                        "type": "string",
-                        "description": "City name"
-                    }
-                },
-                "required": ["location"]
-            }
+        "name": "get_weather",
+        "description": "Get current weather for a location",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "location": {
+                    "type": "string",
+                    "description": "City name"
+                }
+            },
+            "required": ["location"]
         }
     });
 
@@ -415,18 +407,16 @@ async fn test_no_matching_tool() {
     // Provide an unrelated tool
     let unrelated_tool = json!({
         "type": "function",
-        "function": {
-            "name": "send_email",
-            "description": "Send an email to someone",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "to": { "type": "string" },
-                    "subject": { "type": "string" },
-                    "body": { "type": "string" }
-                },
-                "required": ["to", "subject", "body"]
-            }
+        "name": "send_email",
+        "description": "Send an email to someone",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "to": { "type": "string" },
+                "subject": { "type": "string" },
+                "body": { "type": "string" }
+            },
+            "required": ["to", "subject", "body"]
         }
     });
 
@@ -434,7 +424,7 @@ async fn test_no_matching_tool() {
         model: "gpt-oss-120b".to_string(),
         input: Input::Text("What is 2 + 2?".to_string()),
         instructions: None,
-        max_output_tokens: Some(50),
+        max_output_tokens: Some(100), // Reasoning models need more tokens
         temperature: Some(0.0),
         store: Some(false),
         tools: Some(vec![unrelated_tool]),
@@ -492,16 +482,14 @@ async fn test_max_tool_iterations() {
     // Use a tool that might cause many iterations
     let endless_tool = json!({
         "type": "function",
-        "function": {
-            "name": "get_more_info",
-            "description": "Get more information about a topic",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "topic": { "type": "string" }
-                },
-                "required": ["topic"]
-            }
+        "name": "get_more_info",
+        "description": "Get more information about a topic",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "topic": { "type": "string" }
+            },
+            "required": ["topic"]
         }
     });
 

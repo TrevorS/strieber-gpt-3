@@ -76,7 +76,7 @@ async fn test_basic_chat_completion() {
             role: "user".to_string(),
             content: "Say 'hello' and nothing else.".to_string(),
         }],
-        max_tokens: Some(10),
+        max_tokens: Some(100), // Reasoning models need more tokens for thinking
         temperature: Some(0.0),
     };
 
@@ -163,7 +163,7 @@ async fn test_multi_turn_conversation() {
             role: "user".to_string(),
             content: "My name is Alice. Remember this.".to_string(),
         }],
-        max_tokens: Some(50),
+        max_tokens: Some(150), // Reasoning models need more tokens for thinking
         temperature: Some(0.0),
     };
 
@@ -195,7 +195,7 @@ async fn test_multi_turn_conversation() {
                 content: "What is my name?".to_string(),
             },
         ],
-        max_tokens: Some(30),
+        max_tokens: Some(150), // Reasoning models need more tokens for thinking
         temperature: Some(0.0),
     };
 
