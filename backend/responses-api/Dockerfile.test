@@ -73,7 +73,6 @@ ENV RUSTUP_HOME="/usr/local/rustup"
 ENV CARGO_HOME="/usr/local/cargo"
 
 # Default environment variables
-ENV CHAT_COMPLETIONS_URL=http://llama-server:8000
 ENV RESPONSES_API_URL=http://responses-api:8000
 ENV RUST_LOG=info
 

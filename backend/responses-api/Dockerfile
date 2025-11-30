@@ -53,8 +53,9 @@ RUN useradd -r -s /bin/false appuser
 USER appuser
 
 # Default environment variables
-ENV CHAT_COMPLETIONS_URL=http://localhost:8000 \
-    PORT=8000 \
+# Note: MODELS_CONFIG is required and must be set at runtime
+# Example: MODELS_CONFIG={"models":[{"id":"gpt-4","url":"http://llama:8000"}]}
+ENV PORT=8000 \
     HOST=0.0.0.0 \
     MAX_TOOL_ITERATIONS=10 \
     TIMEOUT_SECS=300 \

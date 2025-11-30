@@ -53,7 +53,7 @@ async fn create_streaming_response(
     req: CreateResponseRequest,
 ) -> Result<axum::response::Response, (StatusCode, Json<serde_json::Value>)> {
     let executor_config = ExecutorConfig {
-        chat_completions_url: state.config.chat_completions_url.clone(),
+        models: state.config.models.clone(),
         max_tool_iterations: state.config.max_tool_iterations,
         timeout_secs: state.config.timeout.as_secs(),
     };
@@ -91,6 +91,7 @@ fn execution_error(e: ExecutionError) -> (StatusCode, Json<serde_json::Value>) {
         ExecutionError::MaxIterationsExceeded(_) => {
             (StatusCode::UNPROCESSABLE_ENTITY, "max_iterations_exceeded")
         }
+        ExecutionError::ModelNotFound(_) => (StatusCode::BAD_REQUEST, "model_not_found"),
         _ => (StatusCode::INTERNAL_SERVER_ERROR, "internal_error"),
     };
     (
@@ -159,19 +160,20 @@ pub async fn health_check() -> impl IntoResponse {
 }
 
 /// GET /v1/models - List available models.
-pub async fn list_models() -> impl IntoResponse {
-    (
-        StatusCode::OK,
-        Json(json!({
-            "object": "list",
-            "data": [
-                {
-                    "id": "gpt-oss-120b",
-                    "object": "model",
-                    "created": 1234567890,
-                    "owned_by": "local"
-                }
-            ]
-        })),
-    )
+pub async fn list_models(State(state): State<Arc<AppState>>) -> impl IntoResponse {
+    let models: Vec<_> = state
+        .config
+        .models
+        .iter()
+        .map(|m| {
+            json!({
+                "id": m.id,
+                "object": "model",
+                "created": 1234567890,
+                "owned_by": m.owned_by
+            })
+        })
+        .collect();
+
+    (StatusCode::OK, Json(json!({ "object": "list", "data": models })))
 }

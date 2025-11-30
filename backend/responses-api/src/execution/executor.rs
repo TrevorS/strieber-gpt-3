@@ -3,6 +3,7 @@
 use reqwest::Client;
 use serde_json::Value;
 
+use crate::config::ModelConfig;
 use crate::mcp::{McpClient, McpError};
 use crate::models::{
     ChatCompletionRequest, ChatCompletionResponse, ChatMessage, CreateResponseRequest, Response,
@@ -15,8 +16,8 @@ use crate::translation::{
 /// Configuration for the executor.
 #[derive(Debug, Clone)]
 pub struct ExecutorConfig {
-    /// URL of the Chat Completions API backend
-    pub chat_completions_url: String,
+    /// Available models and their backend configurations
+    pub models: Vec<ModelConfig>,
     /// Maximum number of tool call iterations
     pub max_tool_iterations: usize,
     /// HTTP request timeout in seconds
@@ -26,7 +27,7 @@ pub struct ExecutorConfig {
 impl Default for ExecutorConfig {
     fn default() -> Self {
         Self {
-            chat_completions_url: "http://localhost:8000".to_string(),
+            models: Vec::new(),
             max_tool_iterations: 10,
             timeout_secs: 300,
         }
@@ -44,6 +45,8 @@ pub enum ExecutionError {
     Json(#[from] serde_json::Error),
     #[error("Max tool iterations ({0}) exceeded")]
     MaxIterationsExceeded(usize),
+    #[error("Model not found: {0}")]
+    ModelNotFound(String),
     #[error("LLM error: {0}")]
     Llm(String),
 }
@@ -66,6 +69,11 @@ impl Executor {
         Self { config, http, mcp }
     }
 
+    /// Get a model configuration by ID.
+    fn get_model(&self, model_id: &str) -> Option<&ModelConfig> {
+        self.config.models.iter().find(|m| m.id == model_id)
+    }
+
     /// Execute a Responses API request.
     ///
     /// This is the main entry point that:
@@ -75,6 +83,11 @@ impl Executor {
     /// 4. Loops until completion
     /// 5. Returns the final Response
     pub async fn execute(&self, req: &CreateResponseRequest) -> Result<Response, ExecutionError> {
+        // Validate model exists before starting
+        if self.get_model(&req.model).is_none() {
+            return Err(ExecutionError::ModelNotFound(req.model.clone()));
+        }
+
         let mut conversation: Vec<ChatMessage> = Vec::new();
         let mut iteration = 0;
 
@@ -121,9 +134,20 @@ impl Executor {
         &self,
         req: &ChatCompletionRequest,
     ) -> Result<ChatCompletionResponse, ExecutionError> {
-        let url = format!("{}/v1/chat/completions", self.config.chat_completions_url);
+        // Look up model configuration
+        let model_config = self
+            .get_model(&req.model)
+            .ok_or_else(|| ExecutionError::ModelNotFound(req.model.clone()))?;
 
-        let response = self.http.post(&url).json(req).send().await?;
+        let url = format!("{}/v1/chat/completions", model_config.url);
+
+        // Build request with optional auth
+        let mut request = self.http.post(&url).json(req);
+        if let Some(api_key) = &model_config.api_key {
+            request = request.header("Authorization", format!("Bearer {}", api_key));
+        }
+
+        let response = request.send().await?;
 
         if !response.status().is_success() {
             let status = response.status();
@@ -160,6 +184,23 @@ mod tests {
         let config = ExecutorConfig::default();
         assert_eq!(config.max_tool_iterations, 10);
         assert_eq!(config.timeout_secs, 300);
-        assert!(config.chat_completions_url.contains("localhost"));
+        assert!(config.models.is_empty());
+    }
+
+    #[test]
+    fn get_model_lookup() {
+        let config = ExecutorConfig {
+            models: vec![
+                ModelConfig::new("model-a", "http://a:8000"),
+                ModelConfig::new("model-b", "http://b:8000"),
+            ],
+            ..Default::default()
+        };
+        let mcp = McpClient::new(vec![]);
+        let executor = Executor::new(config, mcp);
+
+        assert!(executor.get_model("model-a").is_some());
+        assert!(executor.get_model("model-b").is_some());
+        assert!(executor.get_model("model-c").is_none());
     }
 }

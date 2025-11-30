@@ -31,8 +31,8 @@ services:
 
     # Environment for tests
     environment:
-      # Chat Completions backend URL for direct API tests
-      - CHAT_COMPLETIONS_URL=http://strieber-llama-server:8000
+      # Models config for direct API tests
+      - MODELS_CONFIG={"models":[{"id":"gpt-oss-120b","url":"http://strieber-llama-server:8000"}]}
       # Responses API URL for full flow tests
       - RESPONSES_API_URL=http://strieber-responses-api:8000
       # Logging

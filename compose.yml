@@ -650,7 +650,8 @@ services:
     environment:
       - PORT=8000
       - HOST=0.0.0.0
-      - CHAT_COMPLETIONS_URL=http://llama-server:8000
+      # Models: JSON format {"models":[{"id":"...","url":"...","api_key":"...","owned_by":"..."}]}
+      - MODELS_CONFIG={"models":[{"id":"gpt-oss-120b","url":"http://llama-server:8000"}]}
       # MCP servers: JSON format {"servers":[{"name":"...","url":"..."}]}
       - MCP_CONFIG={"servers":[{"name":"weather","url":"http://mcp-weather:8000/mcp"},{"name":"web_search","url":"http://mcp-web-search:8000/mcp"},{"name":"code_interpreter","url":"http://mcp-code-interpreter:8000/mcp"},{"name":"reader","url":"http://mcp-reader:8000/mcp"}]}
       - MAX_TOOL_ITERATIONS=10

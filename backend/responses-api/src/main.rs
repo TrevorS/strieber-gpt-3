@@ -25,8 +25,18 @@ async fn main() -> anyhow::Result<()> {
 
     // Load configuration
     let config = Config::from_env();
+
+    // Validate required configuration
+    if config.models.is_empty() {
+        tracing::error!("MODELS_CONFIG must define at least one model");
+        std::process::exit(1);
+    }
+
     tracing::info!("Starting Responses API server");
-    tracing::info!("Chat Completions URL: {}", config.chat_completions_url);
+    tracing::info!(
+        "Configured models: {:?}",
+        config.models.iter().map(|m| &m.id).collect::<Vec<_>>()
+    );
     tracing::info!(
         "MCP servers: {:?}",
         config
@@ -47,7 +57,7 @@ async fn main() -> anyhow::Result<()> {
 
     // Create executor (uses a clone of mcp_client)
     let executor_config = ExecutorConfig {
-        chat_completions_url: config.chat_completions_url.clone(),
+        models: config.models.clone(),
         max_tool_iterations: config.max_tool_iterations,
         timeout_secs: config.timeout.as_secs(),
     };

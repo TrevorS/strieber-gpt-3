@@ -61,6 +61,14 @@ async fn run_streaming_loop(
     req: CreateResponseRequest,
     tx: mpsc::Sender<Result<SseEvent, ExecutionError>>,
 ) -> Result<(), ExecutionError> {
+    // Look up model configuration
+    let model_config = config
+        .models
+        .iter()
+        .find(|m| m.id == req.model)
+        .ok_or_else(|| ExecutionError::ModelNotFound(req.model.clone()))?
+        .clone();
+
     let http = reqwest::Client::builder()
         .timeout(std::time::Duration::from_secs(config.timeout_secs))
         .build()?;
@@ -93,8 +101,15 @@ async fn run_streaming_loop(
         let mut chat_req = to_chat_completion(&req, Some(conversation.clone()));
         chat_req.stream = true;
 
-        let url = format!("{}/v1/chat/completions", config.chat_completions_url);
-        let response = http.post(&url).json(&chat_req).send().await?;
+        let url = format!("{}/v1/chat/completions", model_config.url);
+
+        // Build request with optional auth
+        let mut request = http.post(&url).json(&chat_req);
+        if let Some(api_key) = &model_config.api_key {
+            request = request.header("Authorization", format!("Bearer {}", api_key));
+        }
+
+        let response = request.send().await?;
 
         if !response.status().is_success() {
             let status = response.status();

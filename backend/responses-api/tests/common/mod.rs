@@ -1,6 +1,6 @@
 //! Shared utilities for integration tests.
 //!
-//! Run with: CHAT_COMPLETIONS_URL=http://localhost:8000 cargo test
+//! Run with: MODELS_CONFIG='{"models":[{"id":"test","url":"http://localhost:8000"}]}' cargo test
 
 #![allow(dead_code)]
 
@@ -9,8 +9,24 @@ use serde::{Deserialize, Serialize};
 use std::env;
 use std::time::Duration;
 
+/// Model configuration from MODELS_CONFIG JSON.
+#[derive(Debug, Deserialize)]
+struct ModelsConfig {
+    models: Vec<ModelConfig>,
+}
+
+#[derive(Debug, Deserialize)]
+struct ModelConfig {
+    #[allow(dead_code)]
+    id: String,
+    url: String,
+}
+
+/// Get the Chat Completions URL from MODELS_CONFIG (first model's URL).
 pub fn chat_completions_url() -> Option<String> {
-    env::var("CHAT_COMPLETIONS_URL").ok()
+    let json = env::var("MODELS_CONFIG").ok()?;
+    let config: ModelsConfig = serde_json::from_str(&json).ok()?;
+    config.models.first().map(|m| m.url.clone())
 }
 
 pub fn responses_api_url() -> Option<String> {
@@ -199,7 +215,7 @@ pub fn extract_final_message_text(output: &[OutputItem]) -> Option<&str> {
 macro_rules! skip_if_no_integration {
     () => {
         if !$crate::common::should_run_integration_tests() {
-            eprintln!("Skipping: set CHAT_COMPLETIONS_URL or RESPONSES_API_URL");
+            eprintln!("Skipping: set MODELS_CONFIG or RESPONSES_API_URL");
             return;
         }
     };
