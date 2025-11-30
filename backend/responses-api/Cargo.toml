@@ -4,6 +4,7 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
+anyhow = "1.0.100"
 async-stream = "0.3.6"
 axum = { version = "0.8.7", features = ["macros"] }
 dashmap = "6.1.0"
