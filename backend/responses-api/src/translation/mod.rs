@@ -1,7 +1,7 @@
 //! Translation between Responses API and Chat Completions formats.
 //!
 //! This module handles bidirectional conversion:
-//! - Responses API requests → Chat Completions requests (for llama.cpp)
+//! - Responses API requests → Chat Completions requests
 //! - Chat Completions responses → Responses API responses (for clients)
 
 mod ids;

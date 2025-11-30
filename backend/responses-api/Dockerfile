@@ -1,6 +1,6 @@
 # ============================================================================
 # Responses API Dockerfile
-# Multi-stage build for OpenAI Responses API adapter for llama.cpp
+# Multi-stage build for OpenAI Responses API adapter
 # ============================================================================
 
 # Build stage
@@ -53,7 +53,7 @@ RUN useradd -r -s /bin/false appuser
 USER appuser
 
 # Default environment variables
-ENV LLAMA_URL=http://llama-server:8000 \
+ENV CHAT_COMPLETIONS_URL=http://localhost:8000 \
     PORT=8000 \
     HOST=0.0.0.0 \
     MAX_TOOL_ITERATIONS=10 \

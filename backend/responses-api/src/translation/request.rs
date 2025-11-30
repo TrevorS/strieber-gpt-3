@@ -106,10 +106,10 @@ fn input_item_to_message(item: &InputItem) -> Option<ChatMessage> {
             tool_call_id: Some(output.call_id.clone()),
         }),
         // Computer use outputs contain screenshots and interaction results.
-        // llama.cpp doesn't support computer use capabilities, so we skip these.
+        // Standard Chat Completions API doesn't support computer use capabilities, so we skip these.
         // A full implementation would convert screenshots to image content parts.
         InputItem::ComputerCallOutput(_) => {
-            tracing::warn!("Computer call outputs are not supported by llama.cpp; skipping");
+            tracing::warn!("Computer call outputs are not supported; skipping");
             None
         }
     }

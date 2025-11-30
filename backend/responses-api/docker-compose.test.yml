@@ -1,7 +1,7 @@
 # ============================================================================
 # Docker Compose for Integration Tests
 # ============================================================================
-# Run integration tests against the actual llama.cpp server and MCP services.
+# Run integration tests against the Chat Completions backend and MCP services.
 #
 # Usage:
 #   # Run all tests
@@ -9,7 +9,7 @@
 #
 #   # Run specific test suite
 #   docker compose -f docker-compose.test.yml run --rm responses-api-test \
-#     cargo test --release --test llama_integration -- --nocapture
+#     cargo test --release --test chat_completions_integration -- --nocapture
 #
 #   # Run with existing network (use main compose.yml services)
 #   docker compose -f docker-compose.test.yml run --rm responses-api-test
@@ -31,8 +31,8 @@ services:
 
     # Environment for tests
     environment:
-      # llama.cpp server URL for direct LLM tests
-      - LLAMA_INTEGRATION_URL=http://strieber-llama-server:8000
+      # Chat Completions backend URL for direct API tests
+      - CHAT_COMPLETIONS_URL=http://strieber-llama-server:8000
       # Responses API URL for full flow tests
       - RESPONSES_API_URL=http://strieber-responses-api:8000
       # Logging
@@ -61,11 +61,11 @@ services:
     entrypoint: ["/bin/sh", "-c"]
     command:
       - |
-        echo "Waiting for llama-server..."
+        echo "Waiting for Chat Completions backend..."
         until curl -sf http://strieber-llama-server:8000/health; do
           sleep 5
         done
-        echo "llama-server is healthy"
+        echo "Chat Completions backend is healthy"
 
         echo "Waiting for responses-api..."
         until curl -sf http://strieber-responses-api:8000/health; do

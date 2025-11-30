@@ -1,6 +1,6 @@
 //! Shared utilities for integration tests.
 //!
-//! Run with: LLAMA_INTEGRATION_URL=http://localhost:8000 cargo test
+//! Run with: CHAT_COMPLETIONS_URL=http://localhost:8000 cargo test
 
 #![allow(dead_code)]
 
@@ -9,10 +9,8 @@ use serde::{Deserialize, Serialize};
 use std::env;
 use std::time::Duration;
 
-pub fn llama_url() -> Option<String> {
-    env::var("LLAMA_INTEGRATION_URL")
-        .or_else(|_| env::var("LLAMA_URL"))
-        .ok()
+pub fn chat_completions_url() -> Option<String> {
+    env::var("CHAT_COMPLETIONS_URL").ok()
 }
 
 pub fn responses_api_url() -> Option<String> {
@@ -20,7 +18,7 @@ pub fn responses_api_url() -> Option<String> {
 }
 
 pub fn should_run_integration_tests() -> bool {
-    llama_url().is_some() || responses_api_url().is_some()
+    chat_completions_url().is_some() || responses_api_url().is_some()
 }
 
 pub fn create_client() -> Client {
@@ -201,7 +199,7 @@ pub fn extract_final_message_text(output: &[OutputItem]) -> Option<&str> {
 macro_rules! skip_if_no_integration {
     () => {
         if !$crate::common::should_run_integration_tests() {
-            eprintln!("Skipping: set LLAMA_INTEGRATION_URL or RESPONSES_API_URL");
+            eprintln!("Skipping: set CHAT_COMPLETIONS_URL or RESPONSES_API_URL");
             return;
         }
     };

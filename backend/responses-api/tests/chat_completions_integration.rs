@@ -1,43 +1,43 @@
-//! Integration tests for llama.cpp server.
+//! Integration tests for Chat Completions backend.
 //!
 //! Run these tests with:
-//!   LLAMA_INTEGRATION_URL=http://llama-server:8000 cargo test --test llama_integration
+//!   CHAT_COMPLETIONS_URL=http://localhost:8000 cargo test --test chat_completions_integration
 //!
 //! Or from within the docker network:
-//!   docker compose run --rm responses-api cargo test --test llama_integration
+//!   docker compose run --rm responses-api cargo test --test chat_completions_integration
 
 mod common;
 
-use common::{ChatMessage, SimpleChatRequest, create_client, llama_url};
+use common::{ChatMessage, SimpleChatRequest, chat_completions_url, create_client};
 
-/// Test basic connectivity to llama.cpp server.
+/// Test basic connectivity to the backend.
 #[tokio::test]
-async fn test_llama_health() {
+async fn test_backend_health() {
     skip_if_no_integration!();
 
     let client = create_client();
-    let url = llama_url().unwrap();
+    let url = chat_completions_url().unwrap();
 
     let resp = client
         .get(format!("{}/health", url))
         .send()
         .await
-        .expect("failed to connect to llama server");
+        .expect("failed to connect to backend");
 
     assert!(
         resp.status().is_success(),
-        "llama server health check failed: {}",
+        "backend health check failed: {}",
         resp.status()
     );
 }
 
-/// Test listing models from llama.cpp.
+/// Test listing models from the backend.
 #[tokio::test]
 async fn test_list_models() {
     skip_if_no_integration!();
 
     let client = create_client();
-    let url = llama_url().unwrap();
+    let url = chat_completions_url().unwrap();
 
     let resp = client
         .get(format!("{}/v1/models", url))
@@ -68,7 +68,7 @@ async fn test_basic_chat_completion() {
     skip_if_no_integration!();
 
     let client = create_client();
-    let url = llama_url().unwrap();
+    let url = chat_completions_url().unwrap();
 
     let req = SimpleChatRequest {
         model: "gpt-oss-120b".to_string(),
@@ -111,7 +111,7 @@ async fn test_chat_with_system_message() {
     skip_if_no_integration!();
 
     let client = create_client();
-    let url = llama_url().unwrap();
+    let url = chat_completions_url().unwrap();
 
     let req = SimpleChatRequest {
         model: "gpt-oss-120b".to_string(),
@@ -154,7 +154,7 @@ async fn test_multi_turn_conversation() {
     skip_if_no_integration!();
 
     let client = create_client();
-    let url = llama_url().unwrap();
+    let url = chat_completions_url().unwrap();
 
     // First turn
     let req1 = SimpleChatRequest {
@@ -223,7 +223,7 @@ async fn test_invalid_request() {
     skip_if_no_integration!();
 
     let client = create_client();
-    let url = llama_url().unwrap();
+    let url = chat_completions_url().unwrap();
 
     // Empty messages should fail
     let req = SimpleChatRequest {
@@ -254,7 +254,7 @@ async fn test_usage_reporting() {
     skip_if_no_integration!();
 
     let client = create_client();
-    let url = llama_url().unwrap();
+    let url = chat_completions_url().unwrap();
 
     let req = SimpleChatRequest {
         model: "gpt-oss-120b".to_string(),

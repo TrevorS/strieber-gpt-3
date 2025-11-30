@@ -1,8 +1,8 @@
-//! OpenAI Responses API adapter for llama.cpp.
+//! OpenAI Responses API adapter.
 //!
 //! This crate provides a translation layer that converts OpenAI Responses API
-//! requests into Chat Completions format for llama.cpp, and converts the
-//! responses back. It includes server-side tool calling execution via MCP.
+//! requests into Chat Completions format for any compatible inference backend,
+//! and converts the responses back. It includes server-side tool calling via MCP.
 
 pub mod config;
 pub mod execution;

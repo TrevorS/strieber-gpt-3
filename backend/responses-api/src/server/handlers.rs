@@ -53,7 +53,7 @@ async fn create_streaming_response(
     req: CreateResponseRequest,
 ) -> Result<axum::response::Response, (StatusCode, Json<serde_json::Value>)> {
     let executor_config = ExecutorConfig {
-        llama_url: state.config.llama_url.clone(),
+        chat_completions_url: state.config.chat_completions_url.clone(),
         max_tool_iterations: state.config.max_tool_iterations,
         timeout_secs: state.config.timeout.as_secs(),
     };

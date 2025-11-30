@@ -93,7 +93,7 @@ async fn run_streaming_loop(
         let mut chat_req = to_chat_completion(&req, Some(conversation.clone()));
         chat_req.stream = true;
 
-        let url = format!("{}/v1/chat/completions", config.llama_url);
+        let url = format!("{}/v1/chat/completions", config.chat_completions_url);
         let response = http.post(&url).json(&chat_req).send().await?;
 
         if !response.status().is_success() {
@@ -107,7 +107,7 @@ async fn run_streaming_loop(
 
         let mut state = StreamState::default();
 
-        // Process SSE stream from llama.cpp
+        // Process SSE stream from the backend
         let byte_stream = response.bytes_stream();
         let mut event_stream = byte_stream.eventsource();
 

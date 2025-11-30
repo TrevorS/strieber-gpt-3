@@ -75,7 +75,7 @@ fn parse_reasoning_tags(text: &str) -> (Option<String>, String) {
 ///
 /// Other OutputItem variants (CustomToolCall, WebSearchCall, FileSearchCall,
 /// CodeInterpreterCall, ComputerCall) are specialized types that would be
-/// produced by external tool systems, not directly by llama.cpp.
+/// produced by external tool systems, not directly by the inference backend.
 fn extract_output_items(chat_resp: &ChatCompletionResponse) -> Vec<OutputItem> {
     let mut items = Vec::new();
 

@@ -7,11 +7,12 @@ use rmcp::model::{CallToolRequestParam, CallToolResult, ListToolsResult, RawCont
 use rmcp::service::RunningService;
 use rmcp::transport::StreamableHttpClientTransport;
 use rmcp::{RoleClient, ServiceExt};
+use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use tokio::sync::RwLock;
 
 /// Configuration for an MCP server endpoint.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct McpServerConfig {
     /// Server name (for identification)
     pub name: String,

@@ -2,17 +2,17 @@
 # ============================================================================
 # Integration Test Runner Script
 # ============================================================================
-# Runs integration tests against the actual llama.cpp server and MCP services.
+# Runs integration tests against the Chat Completions backend and MCP services.
 #
 # IMPORTANT: This script runs from the host machine, not inside a container.
 # It uses docker compose to spin up a test container that connects to the
 # running services via the shared Docker network.
 #
 # Usage:
-#   ./run-integration-tests.sh              # Run all tests
-#   ./run-integration-tests.sh llama        # Run llama.cpp tests only
-#   ./run-integration-tests.sh responses    # Run responses API tests only
-#   ./run-integration-tests.sh tools        # Run tool calling tests only
+#   ./run-integration-tests.sh                  # Run all tests
+#   ./run-integration-tests.sh chat_completions # Run Chat Completions backend tests only
+#   ./run-integration-tests.sh responses        # Run responses API tests only
+#   ./run-integration-tests.sh tools            # Run tool calling tests only
 #
 # Prerequisites:
 #   The main services must be running:
@@ -46,7 +46,7 @@ check_services() {
     echo_info "Checking if required services are running..."
 
     if ! docker ps | grep -q strieber-llama-server; then
-        echo_warn "llama-server is not running. Start it with: docker compose up -d llama-server"
+        echo_warn "Chat Completions backend is not running. Start it with: docker compose up -d llama-server"
         return 1
     fi
 
@@ -89,10 +89,10 @@ run_tests() {
     docker compose -f docker-compose.test.yml build responses-api-test
 
     case "$test_filter" in
-        llama)
-            echo_info "Running llama.cpp integration tests..."
+        chat_completions)
+            echo_info "Running Chat Completions backend tests..."
             docker compose -f docker-compose.test.yml run --rm responses-api-test \
-                cargo test --release --test llama_integration -- --test-threads=1 --nocapture
+                cargo test --release --test chat_completions_integration -- --test-threads=1 --nocapture
             ;;
         responses)
             echo_info "Running responses API integration tests..."
@@ -110,7 +110,7 @@ run_tests() {
             ;;
         *)
             echo_error "Unknown test filter: $test_filter"
-            echo "Usage: $0 [llama|responses|tools|all]"
+            echo "Usage: $0 [chat_completions|responses|tools|all]"
             exit 1
             ;;
     esac

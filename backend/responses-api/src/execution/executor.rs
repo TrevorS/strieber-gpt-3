@@ -15,8 +15,8 @@ use crate::translation::{
 /// Configuration for the executor.
 #[derive(Debug, Clone)]
 pub struct ExecutorConfig {
-    /// URL of the llama.cpp server (e.g., "http://llama-server:8000")
-    pub llama_url: String,
+    /// URL of the Chat Completions API backend
+    pub chat_completions_url: String,
     /// Maximum number of tool call iterations
     pub max_tool_iterations: usize,
     /// HTTP request timeout in seconds
@@ -26,7 +26,7 @@ pub struct ExecutorConfig {
 impl Default for ExecutorConfig {
     fn default() -> Self {
         Self {
-            llama_url: "http://llama-server:8000".to_string(),
+            chat_completions_url: "http://localhost:8000".to_string(),
             max_tool_iterations: 10,
             timeout_secs: 300,
         }
@@ -70,7 +70,7 @@ impl Executor {
     ///
     /// This is the main entry point that:
     /// 1. Translates the request to Chat Completions format
-    /// 2. Calls llama.cpp
+    /// 2. Calls the Chat Completions backend
     /// 3. Executes any tool calls via MCP
     /// 4. Loops until completion
     /// 5. Returns the final Response
@@ -89,7 +89,7 @@ impl Executor {
             // Translate request to Chat Completions
             let chat_req = to_chat_completion(req, Some(conversation.clone()));
 
-            // Call llama.cpp
+            // Call the backend
             let chat_resp = self.call_llm(&chat_req).await?;
 
             // Check if we have tool calls to execute
@@ -116,12 +116,12 @@ impl Executor {
         }
     }
 
-    /// Call llama.cpp Chat Completions endpoint.
+    /// Call the Chat Completions endpoint.
     async fn call_llm(
         &self,
         req: &ChatCompletionRequest,
     ) -> Result<ChatCompletionResponse, ExecutionError> {
-        let url = format!("{}/v1/chat/completions", self.config.llama_url);
+        let url = format!("{}/v1/chat/completions", self.config.chat_completions_url);
 
         let response = self.http.post(&url).json(req).send().await?;
 
@@ -160,6 +160,6 @@ mod tests {
         let config = ExecutorConfig::default();
         assert_eq!(config.max_tool_iterations, 10);
         assert_eq!(config.timeout_secs, 300);
-        assert!(config.llama_url.contains("llama-server"));
+        assert!(config.chat_completions_url.contains("localhost"));
     }
 }

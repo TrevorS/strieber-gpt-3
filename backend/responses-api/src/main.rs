@@ -1,4 +1,4 @@
-//! OpenAI Responses API server for llama.cpp.
+//! OpenAI Responses API server.
 
 use std::sync::Arc;
 
@@ -26,7 +26,7 @@ async fn main() -> anyhow::Result<()> {
     // Load configuration
     let config = Config::from_env();
     tracing::info!("Starting Responses API server");
-    tracing::info!("LLaMA URL: {}", config.llama_url);
+    tracing::info!("Chat Completions URL: {}", config.chat_completions_url);
     tracing::info!(
         "MCP servers: {:?}",
         config
@@ -47,7 +47,7 @@ async fn main() -> anyhow::Result<()> {
 
     // Create executor (uses a clone of mcp_client)
     let executor_config = ExecutorConfig {
-        llama_url: config.llama_url.clone(),
+        chat_completions_url: config.chat_completions_url.clone(),
         max_tool_iterations: config.max_tool_iterations,
         timeout_secs: config.timeout.as_secs(),
     };
