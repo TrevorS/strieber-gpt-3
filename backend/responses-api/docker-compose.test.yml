@@ -1,0 +1,83 @@
+# ============================================================================
+# Docker Compose for Integration Tests
+# ============================================================================
+# Run integration tests against the Chat Completions backend and MCP services.
+#
+# Usage:
+#   # Run all tests
+#   docker compose -f docker-compose.test.yml up --build
+#
+#   # Run specific test suite
+#   docker compose -f docker-compose.test.yml run --rm responses-api-test \
+#     cargo test --release --test chat_completions_integration -- --nocapture
+#
+#   # Run with existing network (use main compose.yml services)
+#   docker compose -f docker-compose.test.yml run --rm responses-api-test
+#
+# Prerequisites:
+#   The main compose.yml services should be running:
+#     docker compose up -d llama-server responses-api mcp-weather mcp-code-interpreter
+
+services:
+  # ==========================================================================
+  # Integration Test Runner
+  # ==========================================================================
+  responses-api-test:
+    build:
+      context: .
+      dockerfile: Dockerfile.test
+    image: strieber-responses-api-test:latest
+    container_name: strieber-responses-api-test
+
+    # Environment for tests
+    environment:
+      # Models config for direct API tests
+      - MODELS_CONFIG={"models":[{"id":"gpt-oss-120b","url":"http://strieber-llama-server:8000"}]}
+      # Responses API URL for full flow tests
+      - RESPONSES_API_URL=http://strieber-responses-api:8000
+      # Logging
+      - RUST_LOG=info
+      - RUST_BACKTRACE=1
+
+    # Connect to the main network where services are running
+    networks:
+      - strieber-gpt-3_strieber-net
+
+    # Dependencies (optional, tests will skip if services unavailable)
+    depends_on:
+      - responses-api-healthcheck
+
+    # Reasonable timeout for LLM operations
+    stop_grace_period: 30s
+
+  # ==========================================================================
+  # Health Check Service (waits for dependencies)
+  # ==========================================================================
+  responses-api-healthcheck:
+    image: curlimages/curl:latest
+    container_name: strieber-responses-api-healthcheck
+    networks:
+      - strieber-gpt-3_strieber-net
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        echo "Waiting for Chat Completions backend..."
+        until curl -sf http://strieber-llama-server:8000/health; do
+          sleep 5
+        done
+        echo "Chat Completions backend is healthy"
+
+        echo "Waiting for responses-api..."
+        until curl -sf http://strieber-responses-api:8000/health; do
+          sleep 2
+        done
+        echo "responses-api is healthy"
+
+        echo "All services ready for testing!"
+
+networks:
+  # Use external network from main compose.yml
+  # Network name follows Docker Compose naming convention: <project-dir>_<network-name>
+  # The project directory is "strieber-gpt-3" and the network is defined as "strieber-net"
+  strieber-gpt-3_strieber-net:
+    external: true

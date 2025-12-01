@@ -1,8 +1,8 @@
 # Benchmarks and performance results (exclude logs, include analysis)
 benchmarks/*.log
 
-# Models (large files)
-models/
+# Models (large files) - root level only
+/models/
 *.gguf
 
 # Environment configuration

@@ -1,0 +1,80 @@
+# ============================================================================
+# Integration Test Runner for responses-api
+# ============================================================================
+# This Dockerfile builds the test environment and runs integration tests
+# against the Chat Completions backend in the docker network.
+#
+# Usage:
+#   docker compose -f docker-compose.test.yml up --build responses-api-test
+#
+# Or run specific tests:
+#   docker compose -f docker-compose.test.yml run --rm responses-api-test \
+#     cargo test --test chat_completions_integration
+
+FROM rust:1.91-bookworm AS builder
+
+WORKDIR /app
+
+# Install build dependencies
+RUN apt-get update && apt-get install -y \
+    pkg-config \
+    libssl-dev \
+    && rm -rf /var/lib/apt/lists/*
+
+# Copy manifests first for dependency caching
+COPY Cargo.toml Cargo.lock ./
+
+# Create dummy source files for dependency compilation
+RUN mkdir -p src tests/common && \
+    echo "fn main() {}" > src/main.rs && \
+    echo "pub fn lib() {}" > src/lib.rs && \
+    echo "pub fn should_run_integration_tests() -> bool { false }" > tests/common/mod.rs && \
+    touch tests/chat_completions_integration.rs tests/responses_api_integration.rs tests/tool_calling_integration.rs
+
+# Build dependencies only (this layer will be cached)
+RUN cargo build --release --tests 2>/dev/null || true
+RUN rm -rf src tests
+
+# Copy actual source code
+COPY src ./src
+COPY tests ./tests
+
+# Touch files to invalidate cache for source changes only
+RUN touch src/main.rs src/lib.rs tests/*.rs
+
+# Build tests
+RUN cargo build --release --tests
+
+# ============================================================================
+# Runtime image
+# ============================================================================
+FROM debian:bookworm-slim
+
+# Install runtime dependencies (CA certificates for HTTPS)
+RUN apt-get update && apt-get install -y \
+    ca-certificates \
+    curl \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /app
+
+# Copy the compiled test binaries
+COPY --from=builder /app/target/release/deps/chat_completions_integration-* /app/
+COPY --from=builder /app/target/release/deps/responses_api_integration-* /app/
+COPY --from=builder /app/target/release/deps/tool_calling_integration-* /app/
+
+# Also copy cargo and source for running tests via cargo test
+COPY --from=builder /usr/local/cargo /usr/local/cargo
+COPY --from=builder /usr/local/rustup /usr/local/rustup
+COPY --from=builder /app /app
+
+ENV PATH="/usr/local/cargo/bin:${PATH}"
+ENV RUSTUP_HOME="/usr/local/rustup"
+ENV CARGO_HOME="/usr/local/cargo"
+
+# Default environment variables
+ENV RESPONSES_API_URL=http://responses-api:8000
+ENV RUST_LOG=info
+
+# Run all integration tests by default
+CMD ["cargo", "test", "--release", "--test", "chat_completions_integration", "--test", "responses_api_integration", "--test", "tool_calling_integration", "--", "--test-threads=1", "--nocapture"]
