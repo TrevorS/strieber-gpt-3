@@ -93,6 +93,7 @@ async fn test_create_response_text_input() {
         temperature: Some(0.0),
         store: Some(false),
         tools: None,
+        previous_response_id: None,
     };
 
     let resp = client
@@ -153,6 +154,7 @@ async fn test_create_response_message_input() {
         temperature: Some(0.0),
         store: Some(false),
         tools: None,
+        previous_response_id: None,
     };
 
     let resp = client
@@ -201,6 +203,7 @@ async fn test_create_response_with_instructions() {
         temperature: Some(0.0),
         store: Some(false),
         tools: None,
+        previous_response_id: None,
     };
 
     let resp = client
@@ -249,6 +252,7 @@ async fn test_store_and_retrieve_response() {
         temperature: Some(0.0),
         store: Some(true), // Store the response
         tools: None,
+        previous_response_id: None,
     };
 
     let resp = client
@@ -295,6 +299,7 @@ async fn test_delete_response() {
         temperature: Some(0.0),
         store: Some(true),
         tools: None,
+        previous_response_id: None,
     };
 
     let resp = client
@@ -417,6 +422,7 @@ async fn test_usage_reporting() {
         temperature: Some(0.0),
         store: Some(false),
         tools: None,
+        previous_response_id: None,
     };
 
     let resp = client

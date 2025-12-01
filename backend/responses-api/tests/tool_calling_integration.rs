@@ -41,6 +41,7 @@ async fn test_weather_tool_call() {
         temperature: Some(0.0),
         store: Some(false),
         tools: Some(vec![weather_tool]),
+        previous_response_id: None,
     };
 
     let resp = client
@@ -160,6 +161,7 @@ async fn test_code_interpreter_tool_call() {
         temperature: Some(0.0),
         store: Some(false),
         tools: Some(vec![code_tool]),
+        previous_response_id: None,
     };
 
     let resp = client
@@ -248,6 +250,7 @@ async fn test_web_search_tool_call() {
         temperature: Some(0.0),
         store: Some(false),
         tools: Some(vec![search_tool]),
+        previous_response_id: None,
     };
 
     let resp = client
@@ -332,6 +335,7 @@ async fn test_multiple_tool_calls() {
         temperature: Some(0.0),
         store: Some(false),
         tools: Some(vec![weather_tool]),
+        previous_response_id: None,
     };
 
     let resp = client
@@ -428,6 +432,7 @@ async fn test_no_matching_tool() {
         temperature: Some(0.0),
         store: Some(false),
         tools: Some(vec![unrelated_tool]),
+        previous_response_id: None,
     };
 
     let resp = client

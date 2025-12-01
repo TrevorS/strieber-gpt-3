@@ -39,15 +39,23 @@ struct AccumulatedToolCall {
 }
 
 /// Execute a streaming request, yielding SSE events.
+///
+/// # Arguments
+///
+/// * `config` - Executor configuration
+/// * `mcp` - MCP client for tool calls
+/// * `req` - The request to execute
+/// * `previous_messages` - Messages from resolved previous_response_id chain
 pub fn execute_streaming(
     config: ExecutorConfig,
     mcp: McpClient,
     req: CreateResponseRequest,
+    previous_messages: Vec<ChatMessage>,
 ) -> Pin<Box<dyn Stream<Item = Result<SseEvent, ExecutionError>> + Send>> {
     let (tx, rx) = mpsc::channel(32);
 
     tokio::spawn(async move {
-        if let Err(e) = run_streaming_loop(config, mcp, req, tx.clone()).await {
+        if let Err(e) = run_streaming_loop(config, mcp, req, previous_messages, tx.clone()).await {
             let _ = tx.send(Err(e)).await;
         }
     });
@@ -59,6 +67,7 @@ async fn run_streaming_loop(
     config: ExecutorConfig,
     mcp: McpClient,
     req: CreateResponseRequest,
+    previous_messages: Vec<ChatMessage>,
     tx: mpsc::Sender<Result<SseEvent, ExecutionError>>,
 ) -> Result<(), ExecutionError> {
     // Look up model configuration
@@ -74,7 +83,8 @@ async fn run_streaming_loop(
         .build()?;
 
     let resp_id = response_id();
-    let mut conversation: Vec<ChatMessage> = Vec::new();
+    // Initialize conversation with previous messages from chain
+    let mut conversation: Vec<ChatMessage> = previous_messages;
     let mut iteration = 0;
     let total_input_tokens = 0u32;
     let total_output_tokens = 0u32;

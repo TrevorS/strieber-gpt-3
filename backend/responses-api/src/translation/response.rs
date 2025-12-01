@@ -7,9 +7,10 @@ use serde_json::Value;
 use crate::execution::GeneratedFile;
 use crate::models::{
     Annotation, ChatCompletionResponse, ChatContent, ChatMessage, ChatRole, CreateResponseRequest,
-    FunctionCallOutput as FunctionCallOutputItem, InputTokensDetails, MessageOutput, OutputContent,
-    OutputItem, OutputRole, OutputStatus, OutputTokensDetails, ReasoningContent, ReasoningOutput,
-    Response, ResponseStatus, Usage,
+    CustomToolCallOutputInput, FunctionCallInput, FunctionCallOutput as FunctionCallOutputItem,
+    InputItem, InputTokensDetails, MessageInput, MessageOutput, OutputContent, OutputItem,
+    OutputRole, OutputStatus, OutputTokensDetails, ReasoningContent, ReasoningContentInput,
+    ReasoningInput, ReasoningOutput, Response, ResponseStatus, Role, Usage,
 };
 
 use super::ids::{function_call_id, message_id, reasoning_id, response_id};
@@ -240,6 +241,108 @@ pub fn tool_result_message(call_id: String, result: String) -> ChatMessage {
         tool_calls: None,
         tool_call_id: Some(call_id),
     }
+}
+
+// ============================================================================
+// Output-to-Input Conversion (for previous_response_id chaining)
+// ============================================================================
+
+/// Convert a single output item to an input item for context reconstruction.
+///
+/// Returns `None` for built-in tool calls (web_search, file_search, code_interpreter, computer)
+/// since their results are already incorporated into the conversation context.
+pub fn output_item_to_input_item(item: &OutputItem) -> Option<InputItem> {
+    match item {
+        OutputItem::Message(msg) => Some(InputItem::Message(MessageInput {
+            role: output_role_to_input_role(msg.role),
+            content: output_content_to_message_content(&msg.content),
+        })),
+        OutputItem::Reasoning(reasoning) => Some(InputItem::Reasoning(ReasoningInput {
+            id: Some(reasoning.id.clone()),
+            content: reasoning
+                .content
+                .iter()
+                .map(reasoning_content_to_input)
+                .collect(),
+            encrypted_content: reasoning.encrypted_content.clone(),
+        })),
+        OutputItem::FunctionCall(fc) => Some(InputItem::FunctionCall(FunctionCallInput {
+            call_id: fc.call_id.clone(),
+            name: fc.name.clone(),
+            arguments: fc.arguments.clone(),
+            id: Some(fc.id.clone()),
+            status: Some(format!("{:?}", fc.status).to_lowercase()),
+        })),
+        OutputItem::CustomToolCall(ctc) => {
+            // Custom tool calls convert to CustomToolCallOutput with the input as output
+            // This preserves the tool call in context
+            Some(InputItem::CustomToolCallOutput(CustomToolCallOutputInput {
+                call_id: ctc.call_id.clone(),
+                output: ctc.input.clone(),
+                id: Some(ctc.id.clone()),
+            }))
+        }
+        // Built-in tools are skipped - their results are already in the context
+        OutputItem::WebSearchCall(_) => None,
+        OutputItem::FileSearchCall(_) => None,
+        OutputItem::CodeInterpreterCall(_) => None,
+        OutputItem::ComputerCall(_) => None,
+    }
+}
+
+/// Convert output role to input role.
+fn output_role_to_input_role(role: OutputRole) -> Role {
+    match role {
+        OutputRole::Assistant => Role::Assistant,
+    }
+}
+
+/// Convert output content to message content for input.
+fn output_content_to_message_content(content: &[OutputContent]) -> crate::models::MessageContent {
+    // If there's a single text item, return it as Text
+    // Otherwise, convert to Parts (though messages typically have single content)
+    if content.len() == 1 {
+        if let OutputContent::OutputText { text, .. } = &content[0] {
+            return crate::models::MessageContent::Text(text.clone());
+        }
+    }
+
+    // For multiple parts or non-text content, build Parts
+    let parts: Vec<crate::models::ContentPart> = content
+        .iter()
+        .filter_map(|c| match c {
+            OutputContent::OutputText { text, .. } => {
+                Some(crate::models::ContentPart::InputText { text: text.clone() })
+            }
+            OutputContent::Refusal { refusal } => Some(crate::models::ContentPart::InputText {
+                text: format!("[Refusal: {}]", refusal),
+            }),
+        })
+        .collect();
+
+    crate::models::MessageContent::Parts(parts)
+}
+
+/// Convert reasoning content from output to input format.
+fn reasoning_content_to_input(content: &ReasoningContent) -> ReasoningContentInput {
+    match content {
+        ReasoningContent::ReasoningText { text } => {
+            ReasoningContentInput::ReasoningText { text: text.clone() }
+        }
+        ReasoningContent::Redacted {} => ReasoningContentInput::Redacted {},
+    }
+}
+
+/// Convert all output items from a response to input items.
+///
+/// This is used when reconstructing conversation context from previous responses.
+/// Built-in tool calls are filtered out as their results are already in context.
+pub fn response_outputs_to_input_items(response: &Response) -> Vec<InputItem> {
+    response
+        .output
+        .iter()
+        .filter_map(output_item_to_input_item)
+        .collect()
 }
 
 #[cfg(test)]
@@ -614,5 +717,212 @@ mod tests {
             },
             _ => panic!("expected Reasoning output"),
         }
+    }
+
+    // ========================================================================
+    // Output-to-Input Conversion Tests
+    // ========================================================================
+
+    use crate::models::{
+        CodeInterpreterCallOutput, CustomToolCallOutput, FileSearchCallOutput, MessageContent,
+        WebSearchCallOutput,
+    };
+
+    #[test]
+    fn message_output_converts_to_message_input() {
+        let output = OutputItem::Message(MessageOutput {
+            id: "msg_123".to_string(),
+            status: OutputStatus::Completed,
+            role: OutputRole::Assistant,
+            content: vec![OutputContent::OutputText {
+                text: "Hello, world!".to_string(),
+                annotations: vec![],
+            }],
+        });
+
+        let input = output_item_to_input_item(&output).expect("should convert");
+
+        match input {
+            InputItem::Message(msg) => {
+                assert_eq!(msg.role, Role::Assistant);
+                match msg.content {
+                    MessageContent::Text(text) => assert_eq!(text, "Hello, world!"),
+                    _ => panic!("expected Text content"),
+                }
+            }
+            _ => panic!("expected Message input"),
+        }
+    }
+
+    #[test]
+    fn reasoning_output_converts_to_reasoning_input() {
+        let output = OutputItem::Reasoning(ReasoningOutput {
+            id: "reasoning_123".to_string(),
+            status: OutputStatus::Completed,
+            content: vec![ReasoningContent::ReasoningText {
+                text: "Let me think...".to_string(),
+            }],
+            summary: vec![],
+            encrypted_content: None,
+        });
+
+        let input = output_item_to_input_item(&output).expect("should convert");
+
+        match input {
+            InputItem::Reasoning(reasoning) => {
+                assert_eq!(reasoning.id, Some("reasoning_123".to_string()));
+                assert_eq!(reasoning.content.len(), 1);
+                match &reasoning.content[0] {
+                    ReasoningContentInput::ReasoningText { text } => {
+                        assert_eq!(text, "Let me think...");
+                    }
+                    _ => panic!("expected ReasoningText"),
+                }
+            }
+            _ => panic!("expected Reasoning input"),
+        }
+    }
+
+    #[test]
+    fn function_call_output_converts_to_function_call_input() {
+        let output = OutputItem::FunctionCall(FunctionCallOutputItem {
+            id: "fc_123".to_string(),
+            call_id: "call_abc".to_string(),
+            name: "get_weather".to_string(),
+            arguments: r#"{"location":"Paris"}"#.to_string(),
+            status: OutputStatus::Completed,
+        });
+
+        let input = output_item_to_input_item(&output).expect("should convert");
+
+        match input {
+            InputItem::FunctionCall(fc) => {
+                assert_eq!(fc.call_id, "call_abc");
+                assert_eq!(fc.name, "get_weather");
+                assert_eq!(fc.arguments, r#"{"location":"Paris"}"#);
+                assert_eq!(fc.id, Some("fc_123".to_string()));
+            }
+            _ => panic!("expected FunctionCall input"),
+        }
+    }
+
+    #[test]
+    fn custom_tool_call_converts_to_custom_tool_call_output_input() {
+        let output = OutputItem::CustomToolCall(CustomToolCallOutput {
+            id: "ctc_123".to_string(),
+            call_id: "call_xyz".to_string(),
+            name: "custom_tool".to_string(),
+            input: "some free form input".to_string(),
+            status: OutputStatus::Completed,
+        });
+
+        let input = output_item_to_input_item(&output).expect("should convert");
+
+        match input {
+            InputItem::CustomToolCallOutput(ctc) => {
+                assert_eq!(ctc.call_id, "call_xyz");
+                assert_eq!(ctc.output, "some free form input");
+                assert_eq!(ctc.id, Some("ctc_123".to_string()));
+            }
+            _ => panic!("expected CustomToolCallOutput input"),
+        }
+    }
+
+    #[test]
+    fn web_search_call_returns_none() {
+        let output = OutputItem::WebSearchCall(WebSearchCallOutput {
+            id: "ws_123".to_string(),
+            status: OutputStatus::Completed,
+            action: None,
+        });
+
+        assert!(output_item_to_input_item(&output).is_none());
+    }
+
+    #[test]
+    fn file_search_call_returns_none() {
+        let output = OutputItem::FileSearchCall(FileSearchCallOutput {
+            id: "fs_123".to_string(),
+            status: OutputStatus::Completed,
+            results: vec![],
+        });
+
+        assert!(output_item_to_input_item(&output).is_none());
+    }
+
+    #[test]
+    fn code_interpreter_call_returns_none() {
+        let output = OutputItem::CodeInterpreterCall(CodeInterpreterCallOutput {
+            id: "ci_123".to_string(),
+            status: OutputStatus::Completed,
+            code: None,
+            outputs: vec![],
+        });
+
+        assert!(output_item_to_input_item(&output).is_none());
+    }
+
+    #[test]
+    fn response_outputs_to_input_items_filters_builtin_tools() {
+        let response = Response {
+            id: "resp_123".to_string(),
+            object: Response::OBJECT,
+            created_at: 0,
+            status: ResponseStatus::Completed,
+            error: None,
+            incomplete_details: None,
+            instructions: None,
+            max_output_tokens: None,
+            model: "gpt-4".to_string(),
+            output: vec![
+                OutputItem::Reasoning(ReasoningOutput {
+                    id: "r_1".to_string(),
+                    status: OutputStatus::Completed,
+                    content: vec![ReasoningContent::ReasoningText {
+                        text: "thinking".to_string(),
+                    }],
+                    summary: vec![],
+                    encrypted_content: None,
+                }),
+                OutputItem::WebSearchCall(WebSearchCallOutput {
+                    id: "ws_1".to_string(),
+                    status: OutputStatus::Completed,
+                    action: None,
+                }),
+                OutputItem::Message(MessageOutput {
+                    id: "m_1".to_string(),
+                    status: OutputStatus::Completed,
+                    role: OutputRole::Assistant,
+                    content: vec![OutputContent::OutputText {
+                        text: "response".to_string(),
+                        annotations: vec![],
+                    }],
+                }),
+            ],
+            parallel_tool_calls: true,
+            previous_response_id: None,
+            reasoning: None,
+            store: true,
+            temperature: 1.0,
+            text: None,
+            tool_choice: ToolChoice::default(),
+            tools: vec![],
+            top_p: 1.0,
+            truncation: Truncation::default(),
+            usage: Usage::default(),
+            user: None,
+            metadata: serde_json::Value::Null,
+        };
+
+        let inputs = response_outputs_to_input_items(&response);
+
+        // Should have 2 items (reasoning + message), not the web search
+        assert_eq!(inputs.len(), 2);
+
+        // First should be reasoning
+        assert!(matches!(inputs[0], InputItem::Reasoning(_)));
+
+        // Second should be message
+        assert!(matches!(inputs[1], InputItem::Message(_)));
     }
 }

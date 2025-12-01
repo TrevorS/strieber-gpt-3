@@ -140,6 +140,8 @@ pub struct CreateResponseRequest {
     pub store: Option<bool>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub tools: Option<Vec<serde_json::Value>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub previous_response_id: Option<String>,
 }
 
 /// Response object from Responses API.
@@ -156,6 +158,8 @@ pub struct Response {
     pub model: Option<String>,
     #[serde(default)]
     pub usage: Option<ResponsesUsage>,
+    #[serde(default)]
+    pub previous_response_id: Option<String>,
 }
 
 #[derive(Debug, Deserialize, Serialize)]
