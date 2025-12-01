@@ -4,6 +4,29 @@ Breaking down `PROJECT.md` into specific, implementable development tasks.
 
 ---
 
+## Testing Infrastructure
+
+Unit and component testing with Vitest. Run tests with `npm test`.
+
+**Setup (completed)**:
+- Vitest configured with jsdom environment
+- `@testing-library/svelte` for component testing
+- Test files: `src/**/*.{test,spec}.ts`
+
+**Commands**:
+```bash
+npm test           # Run tests once
+npm run test:watch # Watch mode
+npm run test:coverage # With coverage
+```
+
+**Test Conventions**:
+- Unit tests in `__tests__/` directories next to source
+- Name: `<module>.test.ts`
+- Use `describe`/`it` blocks with clear descriptions
+
+---
+
 ## Slice 1: Minimal Streaming Chat (MVP)
 
 Get end-to-end streaming chat working with minimal UI.
@@ -51,106 +74,47 @@ npx shadcn-svelte@latest init
 
 ---
 
-### Task 1.2: OpenAI Client Wrapper
+### Task 1.2: OpenAI Client Wrapper ✅
+
+**Status**: Complete
 
 **Description**: Create API client using openai npm package with custom baseURL
 
 **Acceptance Criteria**:
-- OpenAI client configured with environment variable baseURL
-- TypeScript types properly exported
-- Client works in browser context (`dangerouslyAllowBrowser: true`)
-- Non-streaming request/response works
+- [x] OpenAI client configured with environment variable baseURL
+- [x] TypeScript types properly exported
+- [x] Client works in browser context (`dangerouslyAllowBrowser: true`)
+- [x] Non-streaming request/response works
 
-**Implementation Approach**:
-```typescript
-// src/lib/api/client.ts
-import OpenAI from 'openai';
-
-export function createClient() {
-  return new OpenAI({
-    baseURL: import.meta.env.VITE_RESPONSES_API_URL || 'http://localhost:9150/v1',
-    apiKey: 'not-needed',
-    dangerouslyAllowBrowser: true,
-  });
-}
-
-export const client = createClient();
-```
-
-**Files**:
-- `src/lib/api/client.ts`
-- `src/lib/api/types.ts` - Re-export openai types
-
-**Dependencies**:
-```bash
-pnpm add openai
-```
-
-**Test Requirements**:
-- Unit test client creation
-- Integration test against running backend (manual)
+**Files Created**:
+- `src/lib/api/client.ts` - Client wrapper with `createClient()`, `getApiBaseUrl()`
+- `src/lib/api/types.ts` - Re-exported OpenAI types (Response, ChatCompletion, errors)
+- `src/lib/api/index.ts` - Barrel export
 
 ---
 
-### Task 1.3: SSE Stream Parser
+### Task 1.3: SSE Stream Parser ✅
+
+**Status**: Complete
 
 **Description**: Implement Server-Sent Events parser for streaming responses
 
 **Acceptance Criteria**:
-- Parses SSE format (`event:`, `data:`)
-- Handles all event types from spec (response.*, output_text.delta, etc.)
-- Detects `[DONE]` terminator
-- Provides typed event objects
-- Handles connection errors gracefully
+- [x] Parses SSE format (`event:`, `data:`)
+- [x] Handles all event types from spec (response.*, output_text.delta, etc.)
+- [x] Detects `[DONE]` terminator
+- [x] Provides typed event objects
+- [x] Handles connection errors gracefully
 
-**Implementation Approach**:
-```typescript
-// src/lib/api/streaming.ts
-export type StreamEvent =
-  | { type: 'response.created'; response: Response }
-  | { type: 'response.in_progress'; response: Response }
-  | { type: 'response.completed'; response: Response }
-  | { type: 'response.failed'; response: Response }
-  | { type: 'response.output_item.added'; item: OutputItem; output_index: number }
-  | { type: 'response.output_item.done'; item: OutputItem; output_index: number }
-  | { type: 'response.output_text.delta'; delta: string; output_index: number; content_index: number }
-  | { type: 'response.output_text.done'; text: string; output_index: number; content_index: number }
-  // ... other event types
+**Files Created**:
+- `src/lib/api/streaming.ts` - SSE parser with type guards
+- `src/lib/api/__tests__/streaming.test.ts` - 25 unit tests
 
-export async function* parseSSEStream(
-  response: globalThis.Response
-): AsyncGenerator<StreamEvent> {
-  const reader = response.body!.getReader();
-  const decoder = new TextDecoder();
-  let buffer = '';
-
-  while (true) {
-    const { done, value } = await reader.read();
-    if (done) break;
-
-    buffer += decoder.decode(value, { stream: true });
-    const lines = buffer.split('\n');
-    buffer = lines.pop() ?? '';
-
-    for (const line of lines) {
-      if (line.startsWith('data: ')) {
-        const data = line.slice(6);
-        if (data === '[DONE]') return;
-        yield JSON.parse(data) as StreamEvent;
-      }
-    }
-  }
-}
-```
-
-**Files**:
-- `src/lib/api/streaming.ts`
-
-**Test Requirements**:
-- Unit tests with mock SSE data
-- Test each event type parsing
-- Test `[DONE]` detection
-- Test partial line buffering
+**Test Coverage** (25 tests):
+- `parseSSEData`: JSON parsing, [DONE] detection, error handling
+- `parseSSEStream`: Single/multiple events, buffering, termination
+- Type guards: `isTextDeltaEvent`, `isCompletedEvent`, `isFailedEvent`, `isErrorEvent`
+- Edge cases: Partial chunks, comments, unicode, special characters
 
 ---
 
