@@ -702,6 +702,52 @@ services:
     profiles:
       - test
 
+  # ==========================================================================
+  # frontend-dev: Development container for frontend work
+  # ABOUTME: Runs as host user to avoid permission issues with mounted volumes
+  # Usage: docker compose run --rm frontend-dev npm install
+  # ==========================================================================
+  frontend-dev:
+    image: node:22-alpine
+    container_name: strieber-frontend-dev
+    user: "1000:1000"
+    working_dir: /app
+    volumes:
+      - ./frontend:/app
+    networks:
+      - strieber-net
+    profiles:
+      - dev
+
+  # ==========================================================================
+  # chat-ui: Svelte-based chat interface for Responses API
+  # ABOUTME: Modern streaming chat UI with tool visualization
+  # ==========================================================================
+  chat-ui:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    image: strieber-chat-ui:latest
+    container_name: strieber-chat-ui
+    restart: unless-stopped
+    ports:
+      - "${CHAT_UI_PORT:-9300}:3000"
+    environment:
+      - PORT=3000
+      - ORIGIN=http://localhost:9300
+      - PUBLIC_RESPONSES_API_URL=http://responses-api:8000
+    depends_on:
+      responses-api:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "http://localhost:3000/health"]
+      interval: 30s
+      timeout: 5s
+      start_period: 10s
+      retries: 3
+    networks:
+      - strieber-net
+
 networks:
   strieber-net:
     driver: bridge
