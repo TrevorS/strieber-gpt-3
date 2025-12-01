@@ -19,7 +19,12 @@ pub struct McpServerConfig {
     /// Base URL (e.g., "http://mcp-weather:8000/mcp")
     pub url: String,
     /// Tool name prefix to add (e.g., "weather_" for disambiguation)
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub tool_prefix: Option<String>,
+    /// Built-in tool type (e.g., "weather", "web_search", "code_interpreter")
+    /// Allows clients to enable this server's tools with `{"type": "weather"}`
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub builtin_type: Option<String>,
 }
 
 impl McpServerConfig {
@@ -28,11 +33,17 @@ impl McpServerConfig {
             name: name.into(),
             url: url.into(),
             tool_prefix: None,
+            builtin_type: None,
         }
     }
 
     pub fn with_prefix(mut self, prefix: impl Into<String>) -> Self {
         self.tool_prefix = Some(prefix.into());
+        self
+    }
+
+    pub fn with_builtin_type(mut self, builtin_type: impl Into<String>) -> Self {
+        self.builtin_type = Some(builtin_type.into());
         self
     }
 }
@@ -66,15 +77,26 @@ pub struct McpClient {
     configs: Vec<McpServerConfig>,
     connections: Arc<RwLock<HashMap<String, ConnectedServer>>>,
     tool_routing: Arc<RwLock<HashMap<String, String>>>,
+    /// Maps builtin_type (e.g., "weather") to server name
+    builtin_type_routing: Arc<RwLock<HashMap<String, String>>>,
 }
 
 impl McpClient {
     /// Create a new MCP client with server configurations.
     pub fn new(configs: Vec<McpServerConfig>) -> Self {
+        // Build builtin_type routing from configs
+        let mut builtin_routing = HashMap::new();
+        for config in &configs {
+            if let Some(builtin_type) = &config.builtin_type {
+                builtin_routing.insert(builtin_type.clone(), config.name.clone());
+            }
+        }
+
         Self {
             configs,
             connections: Arc::new(RwLock::new(HashMap::new())),
             tool_routing: Arc::new(RwLock::new(HashMap::new())),
+            builtin_type_routing: Arc::new(RwLock::new(builtin_routing)),
         }
     }
 
@@ -235,6 +257,45 @@ impl McpClient {
     /// Get list of available tool names.
     pub async fn available_tools(&self) -> Vec<String> {
         let routing = self.tool_routing.read().await;
+        routing.keys().cloned().collect()
+    }
+
+    /// Get tools from the MCP server with the given builtin_type.
+    /// Returns None if no server is registered with that builtin_type.
+    pub async fn get_tools_by_builtin_type(
+        &self,
+        builtin_type: &str,
+    ) -> Option<Vec<rmcp::model::Tool>> {
+        // Find server name for this builtin_type
+        let routing = self.builtin_type_routing.read().await;
+        let server_name = routing.get(builtin_type)?.clone();
+        drop(routing);
+
+        // Get the server connection
+        let connections = self.connections.read().await;
+        let server = connections.get(&server_name)?;
+
+        // Get tools from this server
+        let result: ListToolsResult = server.peer.list_tools(Default::default()).await.ok()?;
+
+        // Apply prefix if configured
+        let tools: Vec<rmcp::model::Tool> = result
+            .tools
+            .into_iter()
+            .map(|mut tool| {
+                if let Some(prefix) = &server.config.tool_prefix {
+                    tool.name = format!("{}{}", prefix, tool.name).into();
+                }
+                tool
+            })
+            .collect();
+
+        Some(tools)
+    }
+
+    /// Get list of available builtin tool types.
+    pub async fn available_builtin_types(&self) -> Vec<String> {
+        let routing = self.builtin_type_routing.read().await;
         routing.keys().cloned().collect()
     }
 }

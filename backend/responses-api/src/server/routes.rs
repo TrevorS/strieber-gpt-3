@@ -10,6 +10,7 @@ use tower_http::cors::{Any, CorsLayer};
 use tower_http::trace::TraceLayer;
 
 use super::handlers::{self, AppState};
+use crate::containers;
 
 /// Create the API router with all routes.
 pub fn create_router(state: Arc<AppState>) -> Router {
@@ -26,6 +27,15 @@ pub fn create_router(state: Arc<AppState>) -> Router {
         .route(
             "/v1/responses/{response_id}",
             delete(handlers::delete_response),
+        )
+        // Container file endpoints
+        .route(
+            "/v1/containers/{container_id}/files/{file_id}/content",
+            get(containers::download_file),
+        )
+        .route(
+            "/v1/containers/{container_id}/files",
+            get(containers::list_container_files),
         )
         // Compatibility endpoints
         .route("/v1/models", get(handlers::list_models))

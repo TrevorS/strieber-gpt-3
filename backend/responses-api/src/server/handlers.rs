@@ -13,6 +13,7 @@ use futures::stream::StreamExt;
 use serde_json::json;
 
 use crate::config::Config;
+use crate::containers::ContainerStore;
 use crate::execution::{ExecutionError, Executor, ExecutorConfig, execute_streaming};
 use crate::mcp::McpClient;
 use crate::models::{CreateResponseRequest, DeleteResponse};
@@ -24,6 +25,7 @@ pub struct AppState {
     pub store: InMemoryStore,
     pub config: Config,
     pub mcp: McpClient,
+    pub containers: ContainerStore,
 }
 
 /// POST /v1/responses - Create a new response.

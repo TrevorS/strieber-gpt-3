@@ -5,5 +5,5 @@
 mod executor;
 mod streaming;
 
-pub use executor::{ExecutionError, Executor, ExecutorConfig};
+pub use executor::{ExecutionError, Executor, ExecutorConfig, GeneratedFile};
 pub use streaming::execute_streaming;

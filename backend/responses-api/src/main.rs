@@ -4,6 +4,7 @@ use std::sync::Arc;
 
 use responses_api::{
     config::Config,
+    containers::ContainerStore,
     execution::{Executor, ExecutorConfig},
     mcp::McpClient,
     server::{self, AppState},
@@ -55,13 +56,16 @@ async fn main() -> anyhow::Result<()> {
         tracing::info!("Available MCP tools: {:?}", tools);
     }
 
-    // Create executor (uses a clone of mcp_client)
+    // Create container store for code interpreter file outputs
+    let containers = ContainerStore::new();
+
+    // Create executor (uses a clone of mcp_client and containers)
     let executor_config = ExecutorConfig {
         models: config.models.clone(),
         max_tool_iterations: config.max_tool_iterations,
         timeout_secs: config.timeout.as_secs(),
     };
-    let executor = Executor::new(executor_config, mcp_client.clone());
+    let executor = Executor::new(executor_config, mcp_client.clone(), containers.clone());
 
     // Create application state
     let state = Arc::new(AppState {
@@ -69,6 +73,7 @@ async fn main() -> anyhow::Result<()> {
         store: InMemoryStore::new(),
         config: config.clone(),
         mcp: mcp_client,
+        containers,
     });
 
     // Create router

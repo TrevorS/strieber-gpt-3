@@ -36,7 +36,12 @@ pub fn to_chat_completion(
     let tools = if req.tools.is_empty() {
         None
     } else {
-        Some(req.tools.iter().map(tool_to_chat_tool).collect())
+        let chat_tools: Vec<_> = req.tools.iter().filter_map(tool_to_chat_tool).collect();
+        if chat_tools.is_empty() {
+            None
+        } else {
+            Some(chat_tools)
+        }
     };
 
     // 5. Convert tool_choice
@@ -204,16 +209,21 @@ fn content_part_to_chat(part: &ContentPart) -> ChatContentPart {
 }
 
 /// Convert a Responses API tool to Chat Completions format.
-fn tool_to_chat_tool(tool: &Tool) -> ChatTool {
+fn tool_to_chat_tool(tool: &Tool) -> Option<ChatTool> {
     match tool {
-        Tool::Function(func) => ChatTool {
+        Tool::Function(func) => Some(ChatTool {
             tool_type: ChatToolType::Function,
             function: ChatFunction {
                 name: func.name.clone(),
                 description: func.description.clone(),
                 parameters: func.parameters.clone(),
             },
-        },
+        }),
+        Tool::Builtin(_) => {
+            // Built-in tools should be expanded before reaching this point
+            // If we get here, the tool wasn't expanded - skip it
+            None
+        }
     }
 }
 
@@ -241,8 +251,8 @@ fn tool_choice_to_chat(choice: &ToolChoice) -> ChatToolChoice {
 mod tests {
     use super::*;
     use crate::models::{
-        FunctionCallInput, FunctionCallOutputInput, FunctionTool, ReasoningContentInput,
-        ReasoningInput,
+        FunctionCallInput, FunctionCallOutputInput, FunctionTool, FunctionToolWrapper,
+        ReasoningContentInput, ReasoningInput,
     };
     use pretty_assertions::assert_eq;
     use serde_json::json;
@@ -319,7 +329,8 @@ mod tests {
             model: "gpt-4".to_string(),
             input: Input::Text("What's the weather?".to_string()),
             instructions: None,
-            tools: vec![Tool::Function(FunctionTool {
+            tools: vec![Tool::Function(FunctionToolWrapper {
+                tool_type: "function".to_string(),
                 name: "get_weather".to_string(),
                 description: Some("Get current weather".to_string()),
                 parameters: Some(json!({

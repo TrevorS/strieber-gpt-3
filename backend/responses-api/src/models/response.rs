@@ -249,6 +249,12 @@ pub enum Annotation {
         file_id: String,
         index: u32,
     },
+    /// Citation for a file generated in a code interpreter container.
+    ContainerFileCitation {
+        container_id: String,
+        file_id: String,
+        filename: String,
+    },
 }
 
 // ============================================================================

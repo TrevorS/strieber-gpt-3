@@ -4,8 +4,9 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use serde_json::Value;
 
+use crate::execution::GeneratedFile;
 use crate::models::{
-    ChatCompletionResponse, ChatContent, ChatMessage, ChatRole, CreateResponseRequest,
+    Annotation, ChatCompletionResponse, ChatContent, ChatMessage, ChatRole, CreateResponseRequest,
     FunctionCallOutput as FunctionCallOutputItem, InputTokensDetails, MessageOutput, OutputContent,
     OutputItem, OutputRole, OutputStatus, OutputTokensDetails, ReasoningContent, ReasoningOutput,
     Response, ResponseStatus, Usage,
@@ -17,6 +18,7 @@ use super::ids::{function_call_id, message_id, reasoning_id, response_id};
 pub fn from_chat_completion(
     chat_resp: &ChatCompletionResponse,
     req: &CreateResponseRequest,
+    generated_files: Vec<GeneratedFile>,
 ) -> Response {
     Response {
         id: response_id(),
@@ -28,7 +30,7 @@ pub fn from_chat_completion(
         instructions: req.instructions.clone(),
         max_output_tokens: req.max_output_tokens,
         model: chat_resp.model.clone(),
-        output: extract_output_items(chat_resp),
+        output: extract_output_items(chat_resp, &generated_files),
         parallel_tool_calls: req.parallel_tool_calls,
         previous_response_id: req.previous_response_id.clone(),
         reasoning: req.reasoning.clone(),
@@ -76,7 +78,10 @@ fn parse_reasoning_tags(text: &str) -> (Option<String>, String) {
 /// Other OutputItem variants (CustomToolCall, WebSearchCall, FileSearchCall,
 /// CodeInterpreterCall, ComputerCall) are specialized types that would be
 /// produced by external tool systems, not directly by the inference backend.
-fn extract_output_items(chat_resp: &ChatCompletionResponse) -> Vec<OutputItem> {
+fn extract_output_items(
+    chat_resp: &ChatCompletionResponse,
+    generated_files: &[GeneratedFile],
+) -> Vec<OutputItem> {
     let mut items = Vec::new();
 
     for choice in &chat_resp.choices {
@@ -127,6 +132,16 @@ fn extract_output_items(chat_resp: &ChatCompletionResponse) -> Vec<OutputItem> {
                     }));
                 }
 
+                // Build annotations for generated files
+                let annotations: Vec<Annotation> = generated_files
+                    .iter()
+                    .map(|f| Annotation::ContainerFileCitation {
+                        container_id: f.container_id.clone(),
+                        file_id: f.file_id.clone(),
+                        filename: f.filename.clone(),
+                    })
+                    .collect();
+
                 // Then emit the message if there's remaining text
                 if !remaining_text.is_empty() {
                     items.push(OutputItem::Message(MessageOutput {
@@ -135,7 +150,7 @@ fn extract_output_items(chat_resp: &ChatCompletionResponse) -> Vec<OutputItem> {
                         role: OutputRole::Assistant,
                         content: vec![OutputContent::OutputText {
                             text: remaining_text,
-                            annotations: vec![],
+                            annotations,
                         }],
                     }));
                 }
@@ -282,7 +297,7 @@ mod tests {
             }),
         };
 
-        let resp = from_chat_completion(&chat_resp, &make_request());
+        let resp = from_chat_completion(&chat_resp, &make_request(), vec![]);
 
         assert_eq!(resp.status, ResponseStatus::Completed);
         assert_eq!(resp.output.len(), 1);
@@ -333,7 +348,7 @@ mod tests {
             }),
         };
 
-        let resp = from_chat_completion(&chat_resp, &make_request());
+        let resp = from_chat_completion(&chat_resp, &make_request(), vec![]);
 
         assert_eq!(resp.output.len(), 1);
 
@@ -416,7 +431,7 @@ mod tests {
             }),
         };
 
-        let resp = from_chat_completion(&chat_resp, &make_request());
+        let resp = from_chat_completion(&chat_resp, &make_request(), vec![]);
 
         assert_eq!(resp.usage.input_tokens, 100);
         assert_eq!(resp.usage.output_tokens, 50);
@@ -434,7 +449,7 @@ mod tests {
             usage: None,
         };
 
-        let resp = from_chat_completion(&chat_resp, &make_request());
+        let resp = from_chat_completion(&chat_resp, &make_request(), vec![]);
 
         assert!(resp.id.starts_with("resp_"), "got: {}", resp.id);
     }
@@ -528,7 +543,7 @@ mod tests {
             usage: None,
         };
 
-        let resp = from_chat_completion(&chat_resp, &make_request());
+        let resp = from_chat_completion(&chat_resp, &make_request(), vec![]);
 
         assert_eq!(resp.output.len(), 2);
 
@@ -585,7 +600,7 @@ mod tests {
             usage: None,
         };
 
-        let resp = from_chat_completion(&chat_resp, &make_request());
+        let resp = from_chat_completion(&chat_resp, &make_request(), vec![]);
 
         // Should only have reasoning output, no message
         assert_eq!(resp.output.len(), 1);

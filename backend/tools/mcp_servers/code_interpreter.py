@@ -387,7 +387,7 @@ async def execute_python(code: str, ctx: Context = None) -> CallToolResult:
         # Container exited with non-zero code (execution error)
         execution_time_ms = int((time.time() - start_time) * 1000)
         stderr = e.stderr.decode('utf-8') if e.stderr else str(e)
-        stdout = e.stdout.decode('utf-8') if e.stdout else ""
+        stdout = ""  # ContainerError only captures stderr, not stdout
 
         logger.warning(f"Container execution error (exit code {e.exit_status}): {stderr[:200]}")
         if ctx:

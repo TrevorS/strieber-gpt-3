@@ -1,0 +1,1 @@
+- when you need to execute tools for projects, they are likely in the docker container, not the host system
