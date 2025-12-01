@@ -62,7 +62,9 @@ export class StreamParseError extends Error {
  * @returns Parsed event object, or null for [DONE] terminator
  * @throws StreamParseError if JSON parsing fails
  */
-export function parseSSEData(data: string): import('openai/lib/responses/EventTypes').ParsedResponseStreamEvent | null {
+export function parseSSEData(
+	data: string
+): import('openai/lib/responses/EventTypes').ParsedResponseStreamEvent | null {
 	if (data === '[DONE]') {
 		return null;
 	}

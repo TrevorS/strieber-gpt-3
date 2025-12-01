@@ -403,7 +403,9 @@ describe('edge cases', () => {
 		}
 
 		expect(events).toHaveLength(1);
-		expect((events[0] as any).delta).toBe('Code: `const x = "hello\\nworld";`\n\nNewlines and "quotes"');
+		expect((events[0] as any).delta).toBe(
+			'Code: `const x = "hello\\nworld";`\n\nNewlines and "quotes"'
+		);
 	});
 
 	it('should handle unicode content', async () => {

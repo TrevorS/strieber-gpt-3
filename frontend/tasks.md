@@ -27,6 +27,39 @@ npm run test:coverage # With coverage
 
 ---
 
+## Linting & Formatting
+
+Code quality with Biome (fast Rust-based linter/formatter).
+
+**Setup (completed)**:
+- Biome 2.x configured for TypeScript files
+- Svelte files excluded (Biome doesn't understand Svelte template syntax)
+- Test files have relaxed `any` rules
+
+**Commands**:
+```bash
+npm run lint        # Check for lint issues
+npm run lint:fix    # Fix auto-fixable lint issues
+npm run format      # Format code
+npm run format:check # Check formatting without changing
+npm run ci          # Combined lint + format check (for CI)
+```
+
+**Configuration** (`biome.json`):
+- Tabs for indentation
+- Single quotes
+- No trailing commas
+- 100 char line width
+- Recommended rules with sensible overrides
+
+**Docker Usage**:
+```bash
+docker compose run --rm frontend-dev npm run lint
+docker compose run --rm frontend-dev npm run format
+```
+
+---
+
 ## Slice 1: Minimal Streaming Chat (MVP)
 
 Get end-to-end streaming chat working with minimal UI.
