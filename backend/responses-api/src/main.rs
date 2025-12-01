@@ -65,7 +65,7 @@ async fn main() -> anyhow::Result<()> {
         max_tool_iterations: config.max_tool_iterations,
         timeout_secs: config.timeout.as_secs(),
     };
-    let executor = Executor::new(executor_config, mcp_client.clone(), containers.clone());
+    let executor = Executor::new(executor_config, mcp_client.clone(), containers.clone())?;
 
     // Create application state
     let state = Arc::new(AppState {

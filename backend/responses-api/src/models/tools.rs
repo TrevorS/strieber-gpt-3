@@ -102,7 +102,7 @@ pub struct BuiltinTool {
 }
 
 /// How the model should select tools.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(untagged)]
 pub enum ToolChoice {
     /// A string mode: "auto", "required", or "none"
@@ -127,7 +127,7 @@ pub enum ToolChoiceMode {
 }
 
 /// Force the model to call a specific function.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct SpecificToolChoice {
     #[serde(rename = "type")]
     pub tool_type: SpecificToolType,
@@ -138,4 +138,115 @@ pub struct SpecificToolChoice {
 #[serde(rename_all = "snake_case")]
 pub enum SpecificToolType {
     Function,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn function_tool_deserializes_correctly() {
+        let json = json!({
+            "type": "function",
+            "name": "get_weather",
+            "description": "Get weather for a location",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "location": { "type": "string" }
+                }
+            }
+        });
+
+        let tool: Tool = serde_json::from_value(json).expect("should deserialize");
+        match tool {
+            Tool::Function(f) => {
+                assert_eq!(f.tool_type, "function");
+                assert_eq!(f.name, "get_weather");
+                assert_eq!(f.description, Some("Get weather for a location".to_string()));
+                assert!(f.parameters.is_some());
+            }
+            Tool::Builtin(_) => panic!("expected Function, got Builtin"),
+        }
+    }
+
+    #[test]
+    fn builtin_tool_deserializes_correctly() {
+        let test_cases = vec!["code_interpreter", "weather", "web_search", "reader"];
+
+        for tool_type in test_cases {
+            let json = json!({ "type": tool_type });
+            let tool: Tool = serde_json::from_value(json).expect("should deserialize");
+            match tool {
+                Tool::Builtin(b) => assert_eq!(b.tool_type, tool_type),
+                Tool::Function(_) => panic!("expected Builtin, got Function"),
+            }
+        }
+    }
+
+    #[test]
+    fn missing_type_field_errors() {
+        let json = json!({
+            "name": "get_weather",
+            "description": "No type field here"
+        });
+
+        let result: Result<Tool, _> = serde_json::from_value(json);
+        assert!(result.is_err());
+        let err = result.unwrap_err().to_string();
+        assert!(err.contains("type"), "error should mention 'type' field");
+    }
+
+    #[test]
+    fn function_tool_wrapper_conversion() {
+        let wrapper = FunctionToolWrapper {
+            tool_type: "function".to_string(),
+            name: "test_fn".to_string(),
+            description: Some("A test function".to_string()),
+            parameters: Some(json!({"type": "object"})),
+            strict: true,
+        };
+
+        let function: FunctionTool = wrapper.clone().into();
+        assert_eq!(function.name, "test_fn");
+        assert_eq!(function.description, Some("A test function".to_string()));
+        assert!(function.strict);
+
+        let back: FunctionToolWrapper = function.into();
+        assert_eq!(back.tool_type, "function");
+        assert_eq!(back.name, "test_fn");
+    }
+
+    #[test]
+    fn tool_choice_modes() {
+        assert_eq!(
+            serde_json::from_str::<ToolChoice>("\"auto\"").unwrap(),
+            ToolChoice::Mode(ToolChoiceMode::Auto)
+        );
+        assert_eq!(
+            serde_json::from_str::<ToolChoice>("\"required\"").unwrap(),
+            ToolChoice::Mode(ToolChoiceMode::Required)
+        );
+        assert_eq!(
+            serde_json::from_str::<ToolChoice>("\"none\"").unwrap(),
+            ToolChoice::Mode(ToolChoiceMode::None)
+        );
+    }
+
+    #[test]
+    fn specific_tool_choice() {
+        let json = json!({
+            "type": "function",
+            "name": "specific_function"
+        });
+        let choice: ToolChoice = serde_json::from_value(json).expect("should deserialize");
+        match choice {
+            ToolChoice::Specific(s) => {
+                assert_eq!(s.tool_type, SpecificToolType::Function);
+                assert_eq!(s.name, "specific_function");
+            }
+            ToolChoice::Mode(_) => panic!("expected Specific, got Mode"),
+        }
+    }
 }

@@ -176,7 +176,7 @@ async fn run_streaming_loop(
                         &tx,
                         SseEvent::output_text_delta(
                             resp_id.clone(),
-                            state.current_message_id.clone().unwrap(),
+                            state.current_message_id.clone().unwrap_or_else(message_id),
                             state.output_index,
                             0,
                             content.clone(),

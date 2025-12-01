@@ -680,6 +680,28 @@ services:
     networks:
       - strieber-net
 
+  # ==========================================================================
+  # responses-api-test: Run integration tests for responses-api
+  # ABOUTME: Runs cargo test against the live responses-api service
+  # Usage: docker compose run --rm responses-api-test
+  # ==========================================================================
+  responses-api-test:
+    build:
+      context: ./backend/responses-api
+      dockerfile: Dockerfile
+      target: test
+    environment:
+      - RESPONSES_API_URL=http://responses-api:8000
+      - MODELS_CONFIG={"models":[{"id":"gpt-oss-120b","url":"http://llama-server:8000"},{"id":"qwen3-vl-2b","url":"http://llama-server-qwen-vl:8000"}]}
+      - RUST_BACKTRACE=1
+    depends_on:
+      responses-api:
+        condition: service_healthy
+    networks:
+      - strieber-net
+    profiles:
+      - test
+
 networks:
   strieber-net:
     driver: bridge

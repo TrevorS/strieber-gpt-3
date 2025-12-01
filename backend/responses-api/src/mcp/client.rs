@@ -312,4 +312,76 @@ mod tests {
         assert_eq!(config.url, "http://mcp-weather:8000/mcp");
         assert_eq!(config.tool_prefix, Some("weather_".to_string()));
     }
+
+    #[test]
+    fn server_config_with_builtin_type() {
+        let config = McpServerConfig::new("code_interpreter", "http://mcp:8000/mcp")
+            .with_builtin_type("code_interpreter");
+        assert_eq!(config.name, "code_interpreter");
+        assert_eq!(config.builtin_type, Some("code_interpreter".to_string()));
+    }
+
+    #[test]
+    fn builtin_type_routing_initialized_from_config() {
+        let configs = vec![
+            McpServerConfig::new("weather-server", "http://mcp-weather:8000/mcp")
+                .with_builtin_type("weather"),
+            McpServerConfig::new("code-server", "http://mcp-code:8000/mcp")
+                .with_builtin_type("code_interpreter"),
+            McpServerConfig::new("generic-server", "http://mcp-generic:8000/mcp"),
+        ];
+
+        let client = McpClient::new(configs);
+
+        // Access the builtin_type_routing directly via blocking read
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        let routing = rt.block_on(async {
+            let routing = client.builtin_type_routing.read().await;
+            routing.clone()
+        });
+
+        assert_eq!(routing.get("weather"), Some(&"weather-server".to_string()));
+        assert_eq!(
+            routing.get("code_interpreter"),
+            Some(&"code-server".to_string())
+        );
+        assert!(routing.get("nonexistent").is_none());
+        // generic-server has no builtin_type so shouldn't be in routing
+        assert!(!routing.values().any(|v| v == "generic-server"));
+    }
+
+    #[tokio::test]
+    async fn available_builtin_types() {
+        let configs = vec![
+            McpServerConfig::new("weather", "http://mcp:8000/mcp").with_builtin_type("weather"),
+            McpServerConfig::new("code", "http://mcp:8000/mcp").with_builtin_type("code_interpreter"),
+        ];
+        let client = McpClient::new(configs);
+
+        let types = client.available_builtin_types().await;
+        assert!(types.contains(&"weather".to_string()));
+        assert!(types.contains(&"code_interpreter".to_string()));
+        assert_eq!(types.len(), 2);
+    }
+
+    #[tokio::test]
+    async fn get_tools_by_unknown_builtin_type_returns_none() {
+        let configs = vec![
+            McpServerConfig::new("weather", "http://mcp:8000/mcp").with_builtin_type("weather"),
+        ];
+        let client = McpClient::new(configs);
+
+        // Unknown type should return None (no panic)
+        let result = client.get_tools_by_builtin_type("nonexistent").await;
+        assert!(result.is_none());
+    }
+
+    #[tokio::test]
+    async fn empty_client_has_no_tools() {
+        let client = McpClient::new(vec![]);
+
+        assert!(client.available_tools().await.is_empty());
+        assert!(client.available_builtin_types().await.is_empty());
+        assert!(!client.has_tool("anything").await);
+    }
 }

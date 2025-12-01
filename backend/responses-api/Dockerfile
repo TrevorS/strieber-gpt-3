@@ -34,6 +34,11 @@ RUN touch src/main.rs src/lib.rs
 # Build the actual application
 RUN cargo build --release
 
+# Test stage - includes cargo for running tests
+FROM builder AS test
+COPY tests ./tests
+CMD ["cargo", "test", "--", "--nocapture"]
+
 # Runtime stage
 FROM debian:bookworm-slim
 

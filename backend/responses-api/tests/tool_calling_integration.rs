@@ -471,6 +471,169 @@ async fn test_no_matching_tool() {
     assert!(text.contains("4"));
 }
 
+// ============================================================================
+// Built-in Tool Type Tests
+// These test the {"type": "code_interpreter"} style tool definitions
+// that expand to MCP function definitions on the server side.
+// ============================================================================
+
+/// Test built-in code_interpreter tool type.
+/// Uses {"type": "code_interpreter"} instead of explicit function definition.
+#[tokio::test]
+async fn test_builtin_code_interpreter() {
+    skip_if_no_integration!();
+
+    let client = create_client();
+    let url = responses_api_url().unwrap();
+
+    let req = json!({
+        "model": "gpt-oss-120b",
+        "input": "Calculate 15 factorial using Python.",
+        "instructions": "Use the code interpreter to calculate and verify the result.",
+        "max_output_tokens": 200,
+        "temperature": 0.0,
+        "tools": [{"type": "code_interpreter"}]
+    });
+
+    let resp = client
+        .post(format!("{}/v1/responses", url))
+        .json(&req)
+        .timeout(std::time::Duration::from_secs(120))
+        .send()
+        .await
+        .expect("request failed");
+
+    if !resp.status().is_success() {
+        let status = resp.status();
+        let body = resp.text().await.unwrap_or_default();
+        panic!("Request failed with {}: {}", status, body);
+    }
+
+    let body: Response = resp.json().await.expect("failed to parse response");
+    assert_eq!(body.status, "completed");
+
+    // Should have executed code (function_call with execute_python)
+    let has_code_call = body
+        .output
+        .iter()
+        .any(|o| o.item_type == "function_call" && o.name.as_deref() == Some("execute_python"));
+
+    println!("Output items:");
+    for item in &body.output {
+        println!("  - type: {}, name: {:?}", item.item_type, item.name);
+    }
+
+    // Get final message
+    let final_text = extract_final_message_text(&body.output).unwrap_or("");
+    println!("Final response: {}", final_text);
+
+    // 15! = 1307674368000
+    assert!(
+        final_text.contains("1307674368000") || has_code_call,
+        "Response should contain factorial result or have used code interpreter"
+    );
+}
+
+/// Test built-in weather tool type.
+/// Uses {"type": "weather"} instead of explicit function definition.
+#[tokio::test]
+async fn test_builtin_weather() {
+    skip_if_no_integration!();
+
+    let client = create_client();
+    let url = responses_api_url().unwrap();
+
+    let req = json!({
+        "model": "gpt-oss-120b",
+        "input": "What's the weather in Paris?",
+        "instructions": "Use the weather tool to get current conditions.",
+        "max_output_tokens": 200,
+        "temperature": 0.0,
+        "tools": [{"type": "weather"}]
+    });
+
+    let resp = client
+        .post(format!("{}/v1/responses", url))
+        .json(&req)
+        .timeout(std::time::Duration::from_secs(120))
+        .send()
+        .await
+        .expect("request failed");
+
+    if !resp.status().is_success() {
+        let status = resp.status();
+        let body = resp.text().await.unwrap_or_default();
+        panic!("Request failed with {}: {}", status, body);
+    }
+
+    let body: Response = resp.json().await.expect("failed to parse response");
+    assert_eq!(body.status, "completed");
+
+    println!("Output items:");
+    for item in &body.output {
+        println!("  - type: {}, name: {:?}", item.item_type, item.name);
+    }
+
+    let final_text = extract_final_message_text(&body.output).unwrap_or("");
+    println!("Final response: {}", final_text);
+
+    let text_lower = final_text.to_lowercase();
+    assert!(
+        text_lower.contains("paris") || text_lower.contains("weather") || text_lower.contains("°"),
+        "Response should mention Paris or weather"
+    );
+}
+
+/// Test built-in web_search tool type.
+/// Uses {"type": "web_search"} instead of explicit function definition.
+#[tokio::test]
+async fn test_builtin_web_search() {
+    skip_if_no_integration!();
+
+    let client = create_client();
+    let url = responses_api_url().unwrap();
+
+    let req = json!({
+        "model": "gpt-oss-120b",
+        "input": "Search for recent news about climate change.",
+        "instructions": "Use web search to find current information.",
+        "max_output_tokens": 300,
+        "temperature": 0.0,
+        "tools": [{"type": "web_search"}]
+    });
+
+    let resp = client
+        .post(format!("{}/v1/responses", url))
+        .json(&req)
+        .timeout(std::time::Duration::from_secs(120))
+        .send()
+        .await
+        .expect("request failed");
+
+    if !resp.status().is_success() {
+        let status = resp.status();
+        let body = resp.text().await.unwrap_or_default();
+        panic!("Request failed with {}: {}", status, body);
+    }
+
+    let body: Response = resp.json().await.expect("failed to parse response");
+    assert_eq!(body.status, "completed");
+
+    println!("Output items:");
+    for item in &body.output {
+        println!("  - type: {}, name: {:?}", item.item_type, item.name);
+    }
+
+    let final_text = extract_final_message_text(&body.output).unwrap_or("");
+    println!("Final response: {}", final_text);
+
+    // Should have some response about climate
+    assert!(
+        !final_text.is_empty(),
+        "Should have a response"
+    );
+}
+
 /// Test max_tool_calls limit.
 #[tokio::test]
 async fn test_max_tool_iterations() {

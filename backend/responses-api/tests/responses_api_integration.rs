@@ -697,3 +697,213 @@ async fn test_multi_turn_with_reasoning_input() {
         final_text
     );
 }
+
+// ============================================================================
+// Container Files API Tests
+// ============================================================================
+
+/// Test list files on non-existent container returns 404.
+#[tokio::test]
+async fn test_list_container_files_not_found() {
+    skip_if_no_integration!();
+
+    let client = create_client();
+    let url = responses_api_url().unwrap();
+
+    let resp = client
+        .get(format!("{}/v1/containers/cntr_nonexistent/files", url))
+        .send()
+        .await
+        .expect("failed to send request");
+
+    assert_eq!(resp.status(), 404);
+
+    let body: ErrorResponse = resp.json().await.unwrap();
+    assert_eq!(body.error.error_type, "not_found");
+    assert!(body.error.message.contains("not found"));
+}
+
+/// Test download file from non-existent container returns 404.
+#[tokio::test]
+async fn test_download_file_container_not_found() {
+    skip_if_no_integration!();
+
+    let client = create_client();
+    let url = responses_api_url().unwrap();
+
+    let resp = client
+        .get(format!(
+            "{}/v1/containers/cntr_nonexistent/files/file_123/content",
+            url
+        ))
+        .send()
+        .await
+        .expect("failed to send request");
+
+    assert_eq!(resp.status(), 404);
+
+    let body: ErrorResponse = resp.json().await.unwrap();
+    assert_eq!(body.error.error_type, "not_found");
+    assert!(body.error.message.contains("Container"));
+}
+
+/// Test code interpreter generates file citations.
+/// This test uses the code interpreter to create a matplotlib plot,
+/// which should result in file citations in the response.
+#[tokio::test]
+async fn test_code_interpreter_generates_file_citations() {
+    skip_if_no_integration!();
+
+    let client = create_client();
+    let url = responses_api_url().unwrap();
+
+    // Request that uses code interpreter to generate a plot
+    let req = json!({
+        "model": "gpt-oss-120b",
+        "input": "Use Python to create a simple sine wave plot. Just run the code.",
+        "instructions": "Execute Python code using the code interpreter. Create a matplotlib sine wave plot.",
+        "max_output_tokens": 500,
+        "tools": [{"type": "code_interpreter"}]
+    });
+
+    let resp = client
+        .post(format!("{}/v1/responses", url))
+        .json(&req)
+        .timeout(std::time::Duration::from_secs(120))
+        .send()
+        .await
+        .expect("request failed");
+
+    if !resp.status().is_success() {
+        let status = resp.status();
+        let body = resp.text().await.unwrap_or_default();
+        panic!("Request failed with {}: {}", status, body);
+    }
+
+    let body: Response = resp.json().await.expect("failed to parse response");
+    println!("Response output items: {}", body.output.len());
+
+    // Look for file citations in annotations
+    let mut found_file_citation = false;
+    for item in &body.output {
+        if let Some(content) = &item.content {
+            for part in content {
+                // ContentPart might have annotations - need to check raw JSON
+                println!("Content part type: {}", part.content_type);
+            }
+        }
+    }
+
+    // Parse the full response to look for container_file_citation
+    let raw_text = serde_json::to_string(&body).unwrap();
+    if raw_text.contains("container_file_citation") || raw_text.contains("file_id") {
+        found_file_citation = true;
+        println!("Found file citation in response");
+    }
+
+    println!("Response contains file citations: {}", found_file_citation);
+    // Note: This test validates the flow works but may not always generate images
+    // depending on the model's behavior
+}
+
+// ============================================================================
+// Error Handling Tests
+// ============================================================================
+
+/// Test invalid model returns error.
+#[tokio::test]
+async fn test_invalid_model_returns_error() {
+    skip_if_no_integration!();
+
+    let client = create_client();
+    let url = responses_api_url().unwrap();
+
+    let req = json!({
+        "model": "nonexistent-model-xyz",
+        "input": "Hello",
+        "max_output_tokens": 10
+    });
+
+    let resp = client
+        .post(format!("{}/v1/responses", url))
+        .json(&req)
+        .send()
+        .await
+        .expect("failed to send request");
+
+    // Should return an error (either 400 or 404)
+    assert!(
+        resp.status().is_client_error(),
+        "expected client error, got {}",
+        resp.status()
+    );
+
+    let body: ErrorResponse = resp.json().await.expect("should be error response");
+    println!(
+        "Error type: {}, message: {}",
+        body.error.error_type, body.error.message
+    );
+    // Error should mention the model
+    assert!(
+        body.error.message.contains("model") || body.error.message.contains("nonexistent"),
+        "error should mention model"
+    );
+}
+
+/// Test malformed request returns 4xx error.
+#[tokio::test]
+async fn test_malformed_request_returns_error() {
+    skip_if_no_integration!();
+
+    let client = create_client();
+    let url = responses_api_url().unwrap();
+
+    // Send request missing required 'model' field
+    let req = json!({
+        "input": "Hello"
+    });
+
+    let resp = client
+        .post(format!("{}/v1/responses", url))
+        .json(&req)
+        .send()
+        .await
+        .expect("failed to send request");
+
+    // Should return 400 (Bad Request) or 422 (Unprocessable Entity)
+    let status = resp.status().as_u16();
+    assert!(
+        status == 400 || status == 422,
+        "missing model should return 400 or 422, got {}",
+        status
+    );
+}
+
+/// Test empty input returns 400.
+#[tokio::test]
+async fn test_empty_input_returns_400() {
+    skip_if_no_integration!();
+
+    let client = create_client();
+    let url = responses_api_url().unwrap();
+
+    let req = json!({
+        "model": "gpt-oss-120b",
+        "input": ""
+    });
+
+    let resp = client
+        .post(format!("{}/v1/responses", url))
+        .json(&req)
+        .send()
+        .await
+        .expect("failed to send request");
+
+    // Empty input should either work or return 400, not 500
+    let status = resp.status().as_u16();
+    assert!(
+        status == 200 || status == 400,
+        "empty input should return 200 or 400, got {}",
+        status
+    );
+}

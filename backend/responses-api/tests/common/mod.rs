@@ -92,7 +92,7 @@ pub struct ChatUsage {
 }
 
 /// Usage for Responses API (input_tokens, output_tokens)
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, Serialize)]
 pub struct ResponsesUsage {
     pub input_tokens: u32,
     pub output_tokens: u32,
@@ -143,7 +143,7 @@ pub struct CreateResponseRequest {
 }
 
 /// Response object from Responses API.
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, Serialize)]
 pub struct Response {
     pub id: String,
     pub object: String,
@@ -158,7 +158,7 @@ pub struct Response {
     pub usage: Option<ResponsesUsage>,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, Serialize)]
 pub struct OutputItem {
     #[serde(rename = "type")]
     pub item_type: String,
@@ -181,7 +181,7 @@ pub struct OutputItem {
     pub output: Option<String>,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, Serialize)]
 pub struct ContentPart {
     #[serde(rename = "type")]
     pub content_type: String,

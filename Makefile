@@ -91,3 +91,13 @@ comfyui-restart: ## Restart ComfyUI service
 comfyui-health: ## Check ComfyUI health status
 	@docker inspect strieber-comfyui --format='{{.State.Health.Status}}' 2>/dev/null || echo "not running"
 	@curl -sf http://localhost:9040 && echo "✓ ComfyUI web UI responding" || echo "✗ ComfyUI not responding"
+
+# ==========================================================================
+# Responses API Testing
+# ==========================================================================
+
+test: ## Run responses-api integration tests against live service
+	docker compose run --rm responses-api-test
+
+test-build: ## Build the test container
+	docker compose build responses-api-test

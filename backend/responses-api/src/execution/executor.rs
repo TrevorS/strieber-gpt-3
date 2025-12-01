@@ -73,18 +73,23 @@ pub struct Executor {
 
 impl Executor {
     /// Create a new executor.
-    pub fn new(config: ExecutorConfig, mcp: McpClient, containers: ContainerStore) -> Self {
+    ///
+    /// Returns an error if the HTTP client fails to initialize (rare, usually TLS issues).
+    pub fn new(
+        config: ExecutorConfig,
+        mcp: McpClient,
+        containers: ContainerStore,
+    ) -> Result<Self, reqwest::Error> {
         let http = Client::builder()
             .timeout(std::time::Duration::from_secs(config.timeout_secs))
-            .build()
-            .expect("failed to create HTTP client");
+            .build()?;
 
-        Self {
+        Ok(Self {
             config,
             http,
             mcp,
             containers,
-        }
+        })
     }
 
     /// Get a model configuration by ID.
@@ -397,7 +402,7 @@ mod tests {
         };
         let mcp = McpClient::new(vec![]);
         let containers = ContainerStore::new();
-        let executor = Executor::new(config, mcp, containers);
+        let executor = Executor::new(config, mcp, containers).expect("create executor");
 
         assert!(executor.get_model("model-a").is_some());
         assert!(executor.get_model("model-b").is_some());
