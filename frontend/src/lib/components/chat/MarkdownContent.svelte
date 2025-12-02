@@ -6,6 +6,6 @@
 	let html = $derived(renderMarkdown(content));
 </script>
 
-<div class="prose prose-sm dark:prose-invert max-w-none prose-pre:bg-zinc-900 prose-pre:text-zinc-100">
+<div class="prose prose-sm dark:prose-invert max-w-none prose-pre:bg-zinc-900 prose-pre:text-zinc-100 prose-pre:overflow-x-auto">
 	{@html html}
 </div>

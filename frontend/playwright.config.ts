@@ -1,25 +1,21 @@
 import { defineConfig, devices } from '@playwright/test';
 
-// In CI/Docker, use the chat-ui service; locally, use preview server
-const useExternalServer = process.env.CI === 'true';
-const baseURL = useExternalServer ? 'http://chat-ui:3000' : 'http://localhost:4173';
-
+// Always use our own preview server - the Dockerfile.playwright builds with
+// VITE_RESPONSES_API_URL baked in so API calls work inside Docker network
 export default defineConfig({
 	testDir: './e2e',
 	outputDir: './test-results',
 
-	// In CI, use external chat-ui service; locally, build and run preview
-	webServer: useExternalServer
-		? undefined
-		: {
-				command: 'npm run build && npm run preview',
-				port: 4173,
-				reuseExistingServer: true
-			},
+	// Build and run our own preview server with correct API URL
+	webServer: {
+		command: 'npm run preview',
+		port: 4173,
+		reuseExistingServer: !process.env.CI
+	},
 
 	// Screenshot settings
 	use: {
-		baseURL,
+		baseURL: 'http://localhost:4173',
 		screenshot: 'on',
 		trace: 'on-first-retry'
 	},

@@ -34,32 +34,68 @@ test.describe('Chat Functionality', () => {
 		});
 	});
 
-	test('renders markdown with code blocks', async ({ page }) => {
+	test('renders markdown with code blocks and syntax highlighting', async ({ page }) => {
 		await page.goto('/');
 
 		const textarea = page.locator('textarea[placeholder="Send a message..."]');
 		const sendButton = page.locator('button[type="submit"], button:has(svg)').last();
 
-		// Request a code example
-		await textarea.fill('Write a Python hello world in a code block. Just the code, nothing else.');
+		// Request a Python code example with function definition
+		await textarea.fill(
+			'Write a Python function called greet that takes a name parameter and prints a greeting. Include the function definition and call it. Use a code block with python specified.'
+		);
 		await sendButton.click();
 
 		// Wait for response
 		const assistantMessage = page.locator('.bg-muted').first();
 		await expect(assistantMessage).toBeVisible({ timeout: 30000 });
 
-		// Wait for streaming to complete (look for code element)
-		const codeBlock = assistantMessage.locator('pre code');
-		await expect(codeBlock).toBeVisible({ timeout: 30000 });
+		// Wait for streaming to complete
+		await expect(textarea).toBeEnabled({ timeout: 30000 });
 
-		// Verify syntax highlighting applied (highlight.js adds hljs class)
-		const hasHighlighting = await codeBlock.evaluate((el) => {
-			return el.classList.contains('hljs') || el.innerHTML.includes('hljs-');
+		// Find code block
+		const codeBlock = assistantMessage.locator('pre code');
+		await expect(codeBlock).toBeVisible();
+
+		// Verify syntax highlighting classes applied (highlight.js adds hljs class)
+		const hasHighlightingClasses = await codeBlock.evaluate((el) => {
+			return el.classList.contains('hljs') || el.className.includes('language-');
 		});
-		expect(hasHighlighting).toBe(true);
+		expect(hasHighlightingClasses).toBe(true);
+
+		// Verify syntax highlighting COLORS are applied (spans with hljs- classes have color)
+		const hasColoredSyntax = await codeBlock.evaluate((el) => {
+			const spans = el.querySelectorAll('span[class*="hljs-"]');
+			if (spans.length === 0) return false;
+
+			// Check that at least one span has a non-default color
+			for (const span of spans) {
+				const color = window.getComputedStyle(span).color;
+				// github-dark theme uses colors like rgb(255, 123, 114) for keywords
+				// Check it's not just white/gray default text
+				if (color && !color.includes('255, 255, 255') && !color.includes('228, 228, 231')) {
+					return true;
+				}
+			}
+			return false;
+		});
+		expect(hasColoredSyntax).toBe(true);
+
+		// Verify code block stays within message bubble (no overflow)
+		const preElement = assistantMessage.locator('pre');
+		const messageBounds = await assistantMessage.boundingBox();
+		const preBounds = await preElement.boundingBox();
+
+		if (messageBounds && preBounds) {
+			// Code block should not extend beyond message bubble (with small tolerance for borders)
+			expect(preBounds.x).toBeGreaterThanOrEqual(messageBounds.x - 1);
+			expect(preBounds.x + preBounds.width).toBeLessThanOrEqual(
+				messageBounds.x + messageBounds.width + 1
+			);
+		}
 
 		await page.screenshot({
-			path: 'test-results/screenshots/chat-code-block.png',
+			path: 'test-results/screenshots/code-block-highlighting.png',
 			fullPage: true
 		});
 	});
@@ -144,7 +180,8 @@ test.describe('Chat Functionality', () => {
 
 		const textarea = page.locator('textarea[placeholder="Send a message..."]');
 
-		// Type and press Enter
+		// Click to focus, type message, then press Enter
+		await textarea.click();
 		await textarea.fill('Say "hello" only.');
 		await textarea.press('Enter');
 
