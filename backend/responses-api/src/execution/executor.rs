@@ -106,7 +106,16 @@ impl Executor {
     /// 4. Executes any tool calls via MCP
     /// 5. Loops until completion
     /// 6. Returns the final Response with file citations
-    pub async fn execute(&self, req: &CreateResponseRequest) -> Result<Response, ExecutionError> {
+    ///
+    /// # Arguments
+    ///
+    /// * `req` - The request to execute
+    /// * `previous_messages` - Messages from resolved previous_response_id chain
+    pub async fn execute(
+        &self,
+        req: &CreateResponseRequest,
+        previous_messages: Vec<ChatMessage>,
+    ) -> Result<Response, ExecutionError> {
         // Validate model exists before starting
         if self.get_model(&req.model).is_none() {
             return Err(ExecutionError::ModelNotFound(req.model.clone()));
@@ -130,7 +139,8 @@ impl Executor {
         let mut req_with_tools = req.clone();
         req_with_tools.tools = expanded_tools;
 
-        let mut conversation: Vec<ChatMessage> = Vec::new();
+        // Initialize conversation with previous messages from chain
+        let mut conversation: Vec<ChatMessage> = previous_messages;
         let mut iteration = 0;
         let mut all_generated_files: Vec<GeneratedFile> = Vec::new();
 

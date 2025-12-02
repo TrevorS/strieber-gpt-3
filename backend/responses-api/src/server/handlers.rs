@@ -14,10 +14,14 @@ use serde_json::json;
 
 use crate::config::Config;
 use crate::containers::ContainerStore;
-use crate::execution::{ExecutionError, Executor, ExecutorConfig, execute_streaming};
+use crate::execution::{
+    resolve_chain, ChainResolutionError, ExecutionError, Executor, ExecutorConfig,
+    execute_streaming, DEFAULT_MAX_CHAIN_DEPTH,
+};
 use crate::mcp::McpClient;
-use crate::models::{CreateResponseRequest, DeleteResponse};
+use crate::models::{ChatMessage, CreateResponseRequest, DeleteResponse};
 use crate::state::{InMemoryStore, ResponseStore};
+use crate::translation::assemble_context_from_chain;
 
 /// Shared application state.
 pub struct AppState {
@@ -33,13 +37,23 @@ pub async fn create_response(
     State(state): State<Arc<AppState>>,
     Json(req): Json<CreateResponseRequest>,
 ) -> Result<impl IntoResponse, (StatusCode, Json<serde_json::Value>)> {
-    if req.stream {
-        return create_streaming_response(state, req).await;
+    // Resolve previous_response_id chain if provided
+    let (resolved_instructions, previous_messages) =
+        resolve_previous_response_chain(&state.store, &req)?;
+
+    // Create a modified request with resolved instructions
+    let mut effective_req = req.clone();
+    if resolved_instructions.is_some() {
+        effective_req.instructions = resolved_instructions;
+    }
+
+    if effective_req.stream {
+        return create_streaming_response(state, effective_req, previous_messages).await;
     }
 
     let response = state
         .executor
-        .execute(&req)
+        .execute(&effective_req, previous_messages)
         .await
         .map_err(execution_error)?;
 
@@ -50,9 +64,36 @@ pub async fn create_response(
     Ok((StatusCode::OK, Json(response)).into_response())
 }
 
+/// Resolve the previous_response_id chain and assemble context.
+fn resolve_previous_response_chain(
+    store: &InMemoryStore,
+    req: &CreateResponseRequest,
+) -> Result<(Option<String>, Vec<ChatMessage>), (StatusCode, Json<serde_json::Value>)> {
+    if let Some(prev_id) = &req.previous_response_id {
+        let chain = resolve_chain(store, prev_id, DEFAULT_MAX_CHAIN_DEPTH)
+            .map_err(chain_resolution_error)?;
+        Ok(assemble_context_from_chain(&chain, req))
+    } else {
+        Ok((req.instructions.clone(), vec![]))
+    }
+}
+
+fn chain_resolution_error(e: ChainResolutionError) -> (StatusCode, Json<serde_json::Value>) {
+    (
+        StatusCode::BAD_REQUEST,
+        Json(json!({
+            "error": {
+                "type": "invalid_request_error",
+                "message": e.message
+            }
+        })),
+    )
+}
+
 async fn create_streaming_response(
     state: Arc<AppState>,
     req: CreateResponseRequest,
+    previous_messages: Vec<ChatMessage>,
 ) -> Result<axum::response::Response, (StatusCode, Json<serde_json::Value>)> {
     let executor_config = ExecutorConfig {
         models: state.config.models.clone(),
@@ -60,8 +101,15 @@ async fn create_streaming_response(
         timeout_secs: state.config.timeout.as_secs(),
     };
 
+    // Pass store if request wants to store the response
+    let store = if req.store {
+        Some(state.store.clone())
+    } else {
+        None
+    };
+
     let mcp = state.mcp.clone();
-    let stream = execute_streaming(executor_config, mcp, req);
+    let stream = execute_streaming(executor_config, mcp, req, previous_messages, store);
 
     let sse_stream = stream.map(|result| -> Result<Event, Infallible> {
         match result {

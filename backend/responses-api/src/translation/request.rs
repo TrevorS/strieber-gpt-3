@@ -247,6 +247,84 @@ fn tool_choice_to_chat(choice: &ToolChoice) -> ChatToolChoice {
     }
 }
 
+// ============================================================================
+// Context Assembly (for previous_response_id chaining)
+// ============================================================================
+
+use crate::state::StoredResponse;
+use crate::translation::response::response_outputs_to_input_items;
+
+/// Assemble conversation context from a resolved response chain.
+///
+/// This takes a chain of stored responses (oldest first) and builds the
+/// conversation history as `Vec<ChatMessage>` ready for the LLM.
+///
+/// # Arguments
+///
+/// * `chain` - Vector of StoredResponse in chronological order (oldest first)
+/// * `current_request` - The current request being processed
+///
+/// # Returns
+///
+/// A tuple of (resolved_instructions, previous_messages) where:
+/// * `resolved_instructions` - System prompt to use (current request takes precedence)
+/// * `previous_messages` - Chat messages from the chain (excluding system prompt)
+///
+/// # Assembly Order
+///
+/// For a chain [A, B] where A is older:
+/// 1. Request A's input → user messages
+/// 2. Response A's output → assistant messages
+/// 3. Request B's input → user messages
+/// 4. Response B's output → assistant messages
+///
+/// The current request's input is NOT included - that's handled by `to_chat_completion()`.
+pub fn assemble_context_from_chain(
+    chain: &[StoredResponse],
+    current_request: &CreateResponseRequest,
+) -> (Option<String>, Vec<ChatMessage>) {
+    if chain.is_empty() {
+        return (current_request.instructions.clone(), vec![]);
+    }
+
+    // Resolve instructions: current request takes precedence
+    // If not specified, inherit from the most recent request in the chain that has one
+    let resolved_instructions = if current_request.instructions.is_some() {
+        current_request.instructions.clone()
+    } else {
+        // Search chain from newest to oldest for instructions
+        chain
+            .iter()
+            .rev()
+            .find_map(|stored| stored.request.instructions.clone())
+    };
+
+    let mut messages: Vec<ChatMessage> = Vec::new();
+
+    for stored in chain {
+        // 1. Add request input as user/assistant messages
+        let request_messages = input_to_messages(&stored.request.input);
+        messages.extend(request_messages);
+
+        // 2. Convert response output to input items, then to messages
+        let output_as_inputs = response_outputs_to_input_items(&stored.response);
+        for input_item in output_as_inputs {
+            if let Some(msg) = input_item_to_message(&input_item) {
+                messages.push(msg);
+            }
+        }
+    }
+
+    tracing::debug!(
+        chain_length = chain.len(),
+        message_count = messages.len(),
+        has_instructions = resolved_instructions.is_some(),
+        "Assembled context from chain"
+    );
+
+    (resolved_instructions, messages)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -654,5 +732,297 @@ mod tests {
         // Only the user message should be included
         assert_eq!(chat_req.messages.len(), 1);
         assert_eq!(chat_req.messages[0].role, ChatRole::User);
+    }
+
+    // ========================================================================
+    // Context Assembly Tests
+    // ========================================================================
+
+    use crate::models::{
+        MessageOutput, OutputContent, OutputItem, OutputRole, OutputStatus, Response,
+        ResponseStatus, Truncation, Usage,
+    };
+    use crate::state::StoredResponse;
+    use std::time::{Duration, Instant};
+
+    fn make_stored_response(
+        id: &str,
+        prev_id: Option<&str>,
+        input: Input,
+        output: Vec<OutputItem>,
+        instructions: Option<String>,
+    ) -> StoredResponse {
+        StoredResponse {
+            response: Response {
+                id: id.to_string(),
+                object: Response::OBJECT,
+                created_at: 0,
+                status: ResponseStatus::Completed,
+                error: None,
+                incomplete_details: None,
+                instructions: instructions.clone(),
+                max_output_tokens: None,
+                model: "gpt-4".to_string(),
+                output,
+                parallel_tool_calls: true,
+                previous_response_id: prev_id.map(String::from),
+                reasoning: None,
+                store: true,
+                temperature: 1.0,
+                text: None,
+                tool_choice: ToolChoice::default(),
+                tools: vec![],
+                top_p: 1.0,
+                truncation: Truncation::default(),
+                usage: Usage::default(),
+                user: None,
+                metadata: serde_json::Value::Null,
+            },
+            request: CreateResponseRequest {
+                model: "gpt-4".to_string(),
+                input,
+                instructions,
+                tools: vec![],
+                tool_choice: ToolChoice::default(),
+                parallel_tool_calls: true,
+                previous_response_id: prev_id.map(String::from),
+                max_output_tokens: None,
+                max_tool_calls: None,
+                temperature: 1.0,
+                top_p: 1.0,
+                stream: false,
+                store: true,
+                reasoning: None,
+                text: None,
+                truncation: Default::default(),
+                metadata: None,
+            },
+            created_at: Instant::now(),
+            ttl: Duration::from_secs(3600),
+        }
+    }
+
+    fn make_current_request(input: Input, instructions: Option<String>) -> CreateResponseRequest {
+        CreateResponseRequest {
+            model: "gpt-4".to_string(),
+            input,
+            instructions,
+            tools: vec![],
+            tool_choice: ToolChoice::default(),
+            parallel_tool_calls: true,
+            previous_response_id: None,
+            max_output_tokens: None,
+            max_tool_calls: None,
+            temperature: 1.0,
+            top_p: 1.0,
+            stream: false,
+            store: true,
+            reasoning: None,
+            text: None,
+            truncation: Default::default(),
+            metadata: None,
+        }
+    }
+
+    #[test]
+    fn empty_chain_returns_empty_messages() {
+        let current = make_current_request(Input::Text("Hi".to_string()), None);
+
+        let (instructions, messages) = assemble_context_from_chain(&[], &current);
+
+        assert!(instructions.is_none());
+        assert!(messages.is_empty());
+    }
+
+    #[test]
+    fn empty_chain_preserves_current_instructions() {
+        let current =
+            make_current_request(Input::Text("Hi".to_string()), Some("Be helpful".to_string()));
+
+        let (instructions, messages) = assemble_context_from_chain(&[], &current);
+
+        assert_eq!(instructions, Some("Be helpful".to_string()));
+        assert!(messages.is_empty());
+    }
+
+    #[test]
+    fn single_turn_builds_user_and_assistant_messages() {
+        let stored = make_stored_response(
+            "resp_a",
+            None,
+            Input::Text("Hello".to_string()),
+            vec![OutputItem::Message(MessageOutput {
+                id: "msg_1".to_string(),
+                status: OutputStatus::Completed,
+                role: OutputRole::Assistant,
+                content: vec![OutputContent::OutputText {
+                    text: "Hi there!".to_string(),
+                    annotations: vec![],
+                }],
+            })],
+            None,
+        );
+        let chain = vec![stored];
+        let current = make_current_request(Input::Text("How are you?".to_string()), None);
+
+        let (_, messages) = assemble_context_from_chain(&chain, &current);
+
+        assert_eq!(messages.len(), 2);
+        // First: user input from request A
+        assert_eq!(messages[0].role, ChatRole::User);
+        assert_eq!(
+            messages[0].content,
+            Some(ChatContent::Text("Hello".to_string()))
+        );
+        // Second: assistant output from response A
+        assert_eq!(messages[1].role, ChatRole::Assistant);
+        assert_eq!(
+            messages[1].content,
+            Some(ChatContent::Text("Hi there!".to_string()))
+        );
+    }
+
+    #[test]
+    fn two_turn_chain_in_correct_order() {
+        let stored_a = make_stored_response(
+            "resp_a",
+            None,
+            Input::Text("Hello".to_string()),
+            vec![OutputItem::Message(MessageOutput {
+                id: "msg_1".to_string(),
+                status: OutputStatus::Completed,
+                role: OutputRole::Assistant,
+                content: vec![OutputContent::OutputText {
+                    text: "Hi!".to_string(),
+                    annotations: vec![],
+                }],
+            })],
+            None,
+        );
+        let stored_b = make_stored_response(
+            "resp_b",
+            Some("resp_a"),
+            Input::Text("What's 2+2?".to_string()),
+            vec![OutputItem::Message(MessageOutput {
+                id: "msg_2".to_string(),
+                status: OutputStatus::Completed,
+                role: OutputRole::Assistant,
+                content: vec![OutputContent::OutputText {
+                    text: "4".to_string(),
+                    annotations: vec![],
+                }],
+            })],
+            None,
+        );
+        let chain = vec![stored_a, stored_b]; // Chronological order
+        let current = make_current_request(Input::Text("Thanks!".to_string()), None);
+
+        let (_, messages) = assemble_context_from_chain(&chain, &current);
+
+        assert_eq!(messages.len(), 4);
+        // Turn A
+        assert_eq!(
+            messages[0].content,
+            Some(ChatContent::Text("Hello".to_string()))
+        );
+        assert_eq!(
+            messages[1].content,
+            Some(ChatContent::Text("Hi!".to_string()))
+        );
+        // Turn B
+        assert_eq!(
+            messages[2].content,
+            Some(ChatContent::Text("What's 2+2?".to_string()))
+        );
+        assert_eq!(
+            messages[3].content,
+            Some(ChatContent::Text("4".to_string()))
+        );
+    }
+
+    #[test]
+    fn instruction_inheritance_from_chain() {
+        let stored = make_stored_response(
+            "resp_a",
+            None,
+            Input::Text("Hello".to_string()),
+            vec![],
+            Some("You are a helpful assistant".to_string()),
+        );
+        let chain = vec![stored];
+        // Current request has no instructions
+        let current = make_current_request(Input::Text("Hi".to_string()), None);
+
+        let (instructions, _) = assemble_context_from_chain(&chain, &current);
+
+        assert_eq!(
+            instructions,
+            Some("You are a helpful assistant".to_string())
+        );
+    }
+
+    #[test]
+    fn current_instructions_take_precedence() {
+        let stored = make_stored_response(
+            "resp_a",
+            None,
+            Input::Text("Hello".to_string()),
+            vec![],
+            Some("Old instructions".to_string()),
+        );
+        let chain = vec![stored];
+        // Current request overrides
+        let current = make_current_request(
+            Input::Text("Hi".to_string()),
+            Some("New instructions".to_string()),
+        );
+
+        let (instructions, _) = assemble_context_from_chain(&chain, &current);
+
+        assert_eq!(instructions, Some("New instructions".to_string()));
+    }
+
+    #[test]
+    fn instruction_inheritance_uses_most_recent() {
+        let stored_a = make_stored_response(
+            "resp_a",
+            None,
+            Input::Text("Hello".to_string()),
+            vec![],
+            Some("Instructions from A".to_string()),
+        );
+        let stored_b = make_stored_response(
+            "resp_b",
+            Some("resp_a"),
+            Input::Text("Hi".to_string()),
+            vec![],
+            Some("Instructions from B".to_string()), // More recent
+        );
+        let chain = vec![stored_a, stored_b];
+        let current = make_current_request(Input::Text("Thanks".to_string()), None);
+
+        let (instructions, _) = assemble_context_from_chain(&chain, &current);
+
+        // Should inherit from B (most recent in chain)
+        assert_eq!(instructions, Some("Instructions from B".to_string()));
+    }
+
+    #[test]
+    fn response_with_no_output_still_includes_input() {
+        let stored = make_stored_response(
+            "resp_a",
+            None,
+            Input::Text("Hello".to_string()),
+            vec![], // No output
+            None,
+        );
+        let chain = vec![stored];
+        let current = make_current_request(Input::Text("Hi".to_string()), None);
+
+        let (_, messages) = assemble_context_from_chain(&chain, &current);
+
+        // Should still have the user input
+        assert_eq!(messages.len(), 1);
+        assert_eq!(messages[0].role, ChatRole::User);
     }
 }

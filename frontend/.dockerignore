@@ -1,0 +1,29 @@
+# Dependencies - will be installed fresh in container
+node_modules
+
+# Build outputs - will be generated in container
+.svelte-kit
+build
+
+# Dev/test artifacts
+coverage
+test-results
+playwright-report
+
+# Git
+.git
+.gitignore
+
+# IDE
+.vscode
+.idea
+
+# Environment (secrets)
+.env
+.env.*
+!.env.example
+
+# Misc
+*.log
+*.tgz
+.DS_Store

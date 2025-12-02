@@ -702,6 +702,75 @@ services:
     profiles:
       - test
 
+  # ==========================================================================
+  # frontend-dev: Development container for frontend work
+  # ABOUTME: Runs as host user to avoid permission issues with mounted volumes
+  # Usage: docker compose run --rm frontend-dev npm install
+  # ==========================================================================
+  frontend-dev:
+    image: node:22-alpine
+    container_name: strieber-frontend-dev
+    user: "1000:1000"
+    working_dir: /app
+    volumes:
+      - ./frontend:/app
+    networks:
+      - strieber-net
+    profiles:
+      - dev
+
+  # ==========================================================================
+  # playwright-test: E2E test runner for frontend
+  # ABOUTME: Runs Playwright tests against production build in headless Chrome
+  # Usage: docker compose run --rm playwright-test
+  # ==========================================================================
+  playwright-test:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile.playwright
+    image: strieber-playwright-test:latest
+    container_name: strieber-playwright-test
+    volumes:
+      # Mount test results for Claude to view screenshots
+      - ./frontend/test-results:/app/test-results
+    environment:
+      - CI=true
+    depends_on:
+      - chat-ui
+    networks:
+      - strieber-net
+    profiles:
+      - test
+
+  # ==========================================================================
+  # chat-ui: Svelte-based chat interface for Responses API
+  # ABOUTME: Modern streaming chat UI with tool visualization
+  # ==========================================================================
+  chat-ui:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    image: strieber-chat-ui:latest
+    container_name: strieber-chat-ui
+    restart: unless-stopped
+    ports:
+      - "${CHAT_UI_PORT:-9300}:3000"
+    environment:
+      - PORT=3000
+      - ORIGIN=http://localhost:9300
+      # API URL is baked in at build time via VITE_RESPONSES_API_URL in Dockerfile
+    depends_on:
+      responses-api:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "http://localhost:3000/health"]
+      interval: 30s
+      timeout: 5s
+      start_period: 10s
+      retries: 3
+    networks:
+      - strieber-net
+
 networks:
   strieber-net:
     driver: bridge

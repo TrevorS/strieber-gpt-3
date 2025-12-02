@@ -1,0 +1,28 @@
+# Playwright E2E test runner
+# Uses Microsoft's official Playwright image with browsers pre-installed
+FROM mcr.microsoft.com/playwright:v1.57.0-jammy
+
+WORKDIR /app
+
+# Build arg for API URL (baked into the build)
+# Must include /v1 as the OpenAI client appends resource paths to this base
+ARG VITE_RESPONSES_API_URL=http://responses-api:8000/v1
+
+# Copy package files
+COPY package*.json ./
+
+# Install dependencies including Playwright
+RUN npm ci
+
+# Copy source, config, and tests
+COPY . .
+
+# Create screenshots directory
+RUN mkdir -p test-results/screenshots
+
+# Build the app with API URL (SvelteKit production build)
+ENV VITE_RESPONSES_API_URL=${VITE_RESPONSES_API_URL}
+RUN npm run build
+
+# Default command runs Playwright tests
+CMD ["npx", "playwright", "test"]

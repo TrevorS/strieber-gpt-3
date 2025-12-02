@@ -139,7 +139,11 @@ pub struct CreateResponseRequest {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub store: Option<bool>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub stream: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub tools: Option<Vec<serde_json::Value>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub previous_response_id: Option<String>,
 }
 
 /// Response object from Responses API.
@@ -156,6 +160,8 @@ pub struct Response {
     pub model: Option<String>,
     #[serde(default)]
     pub usage: Option<ResponsesUsage>,
+    #[serde(default)]
+    pub previous_response_id: Option<String>,
 }
 
 #[derive(Debug, Deserialize, Serialize)]
@@ -208,6 +214,28 @@ pub fn extract_final_message_text(output: &[OutputItem]) -> Option<&str> {
         .and_then(|m| m.content.as_ref())
         .and_then(|c| c.iter().find(|p| p.content_type == "output_text"))
         .and_then(|p| p.text.as_deref())
+}
+
+/// Extract response ID from SSE stream body.
+/// Looks for response.created or response.completed events.
+pub fn extract_response_id_from_sse(body: &str) -> Option<String> {
+    for line in body.lines() {
+        if let Some(data) = line.strip_prefix("data: ") {
+            if let Ok(json) = serde_json::from_str::<serde_json::Value>(data) {
+                // Check for response.created or response.completed events
+                if let Some(event_type) = json.get("type").and_then(|t| t.as_str()) {
+                    if event_type == "response.created" || event_type == "response.completed" {
+                        if let Some(response) = json.get("response") {
+                            if let Some(id) = response.get("id").and_then(|i| i.as_str()) {
+                                return Some(id.to_string());
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+    None
 }
 
 /// Skip test if integration tests are not enabled.

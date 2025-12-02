@@ -40,7 +40,9 @@ async fn test_weather_tool_call() {
         max_output_tokens: Some(200),
         temperature: Some(0.0),
         store: Some(false),
+        stream: None,
         tools: Some(vec![weather_tool]),
+        previous_response_id: None,
     };
 
     let resp = client
@@ -159,7 +161,9 @@ async fn test_code_interpreter_tool_call() {
         max_output_tokens: Some(200),
         temperature: Some(0.0),
         store: Some(false),
+        stream: None,
         tools: Some(vec![code_tool]),
+        previous_response_id: None,
     };
 
     let resp = client
@@ -247,7 +251,9 @@ async fn test_web_search_tool_call() {
         max_output_tokens: Some(300),
         temperature: Some(0.0),
         store: Some(false),
+        stream: None,
         tools: Some(vec![search_tool]),
+        previous_response_id: None,
     };
 
     let resp = client
@@ -331,7 +337,9 @@ async fn test_multiple_tool_calls() {
         max_output_tokens: Some(400),
         temperature: Some(0.0),
         store: Some(false),
+        stream: None,
         tools: Some(vec![weather_tool]),
+        previous_response_id: None,
     };
 
     let resp = client
@@ -427,7 +435,9 @@ async fn test_no_matching_tool() {
         max_output_tokens: Some(100), // Reasoning models need more tokens
         temperature: Some(0.0),
         store: Some(false),
+        stream: None,
         tools: Some(vec![unrelated_tool]),
+        previous_response_id: None,
     };
 
     let resp = client
