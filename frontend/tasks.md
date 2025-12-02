@@ -179,46 +179,21 @@ npx shadcn-svelte@latest init
 
 ---
 
-### Task 1.5: Basic Layout Shell
+### Task 1.5: Basic Layout Shell ✅
+
+**Status**: Complete
 
 **Description**: Create app layout with sidebar placeholder and main content area
 
 **Acceptance Criteria**:
-- Two-column layout (sidebar + main)
-- Sidebar shows placeholder for now
-- Main area fills remaining space
-- Responsive-ready structure
+- [x] Two-column layout (sidebar + main)
+- [x] Sidebar shows placeholder for now
+- [x] Main area fills remaining space
+- [x] Responsive-ready structure (hidden on mobile via `hidden md:flex`)
 
-**Implementation Approach**:
-```svelte
-<!-- src/routes/+layout.svelte -->
-<script lang="ts">
-  let { children } = $props();
-</script>
-
-<div class="flex h-screen">
-  <!-- Sidebar placeholder -->
-  <aside class="w-64 border-r bg-muted/50 hidden md:block">
-    <div class="p-4">
-      <h2 class="font-semibold">Conversations</h2>
-      <!-- List will go here -->
-    </div>
-  </aside>
-
-  <!-- Main content -->
-  <main class="flex-1 flex flex-col">
-    {@render children()}
-  </main>
-</div>
-```
-
-**Files**:
-- `src/routes/+layout.svelte`
-- `src/app.css` - Base styles, Tailwind imports
-
-**Test Requirements**:
-- Visual inspection at desktop width
-- Layout doesn't break
+**Files Modified**:
+- `src/routes/+layout.svelte` - Flex container with sidebar + main
+- `src/routes/+page.svelte` - Centered placeholder text
 
 ---
 
