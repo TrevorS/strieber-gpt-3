@@ -2,9 +2,11 @@
 FROM node:22-alpine AS builder
 WORKDIR /app
 
-# Build arg for API URL (baked into client-side code)
-# Must include /v1 as the OpenAI client appends resource paths to this base
-ARG VITE_RESPONSES_API_URL=http://responses-api:8000/v1
+# Note: Do NOT set VITE_RESPONSES_API_URL here for production builds.
+# The client.ts getDefaultApiUrl() dynamically constructs the URL based on
+# window.location.hostname, which allows the app to work when accessed via
+# any hostname (e.g., http://spark-ebf0:9150/v1).
+# Only set VITE_RESPONSES_API_URL for Docker-internal builds (e.g., playwright tests).
 
 # Copy package files
 COPY package*.json ./
@@ -15,8 +17,7 @@ RUN npm ci
 # Copy source
 COPY . .
 
-# Build application with API URL
-ENV VITE_RESPONSES_API_URL=${VITE_RESPONSES_API_URL}
+# Build application
 RUN npm run build
 
 # Prune dev dependencies
