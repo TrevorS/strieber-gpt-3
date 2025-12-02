@@ -60,6 +60,40 @@ docker compose run --rm frontend-dev npm run format
 
 ---
 
+## E2E Testing (Playwright)
+
+Visual and interaction testing with Playwright in Docker.
+
+**Setup (completed)**:
+- Playwright configured with headless Chromium
+- Tests run against production build (`npm run build && npm run preview`)
+- Screenshots saved to `test-results/screenshots/`
+- Docker service: `playwright-test` (uses Microsoft Playwright image)
+
+**Commands**:
+```bash
+# Run in Docker (recommended)
+docker compose run --rm playwright-test
+
+# Run locally
+npm run test:e2e
+npm run test:e2e:headed   # With browser UI
+npm run test:e2e:debug    # Debug mode
+```
+
+**Test Conventions**:
+- E2E tests in `e2e/` directory
+- Name: `<feature>.spec.ts`
+- Screenshots: `await page.screenshot({ path: 'test-results/screenshots/<name>.png' })`
+
+**Claude Workflow**:
+After UI changes, Claude can:
+1. Run: `docker compose run --rm playwright-test`
+2. Read: `frontend/test-results/screenshots/*.png`
+3. Verify: Layout looks correct, no visual regressions
+
+---
+
 ## Slice 1: Minimal Streaming Chat (MVP)
 
 Get end-to-end streaming chat working with minimal UI.
