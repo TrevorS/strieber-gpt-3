@@ -29,3 +29,13 @@ The `frontend-dev` service:
 ### Other Services
 
 For other project tools, check if there's a corresponding container in compose.yml before running commands on the host.
+
+### E2E Visual Testing
+
+A `playwright-e2e` skill exists for visual testing workflow. After UI changes:
+
+```bash
+docker compose run --rm playwright-test
+```
+
+Then read screenshots from `frontend/test-results/screenshots/` to verify the UI.
