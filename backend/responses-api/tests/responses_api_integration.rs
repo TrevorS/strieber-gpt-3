@@ -92,6 +92,7 @@ async fn test_create_response_text_input() {
         max_output_tokens: Some(100), // Reasoning models need more tokens for thinking
         temperature: Some(0.0),
         store: Some(false),
+        stream: None,
         tools: None,
         previous_response_id: None,
     };
@@ -153,6 +154,7 @@ async fn test_create_response_message_input() {
         max_output_tokens: Some(100), // Reasoning models need more tokens for thinking
         temperature: Some(0.0),
         store: Some(false),
+        stream: None,
         tools: None,
         previous_response_id: None,
     };
@@ -202,6 +204,7 @@ async fn test_create_response_with_instructions() {
         max_output_tokens: Some(50),
         temperature: Some(0.0),
         store: Some(false),
+        stream: None,
         tools: None,
         previous_response_id: None,
     };
@@ -251,6 +254,7 @@ async fn test_store_and_retrieve_response() {
         max_output_tokens: Some(10),
         temperature: Some(0.0),
         store: Some(true), // Store the response
+        stream: None,
         tools: None,
         previous_response_id: None,
     };
@@ -298,6 +302,7 @@ async fn test_delete_response() {
         max_output_tokens: Some(10),
         temperature: Some(0.0),
         store: Some(true),
+        stream: None,
         tools: None,
         previous_response_id: None,
     };
@@ -421,6 +426,7 @@ async fn test_usage_reporting() {
         max_output_tokens: Some(5),
         temperature: Some(0.0),
         store: Some(false),
+        stream: None,
         tools: None,
         previous_response_id: None,
     };

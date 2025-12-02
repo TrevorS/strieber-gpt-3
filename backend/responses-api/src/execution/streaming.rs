@@ -13,6 +13,7 @@ use crate::models::{
     CreateResponseRequest, FinishReason, FunctionCallOutput, MessageOutput, OutputContent,
     OutputItem, OutputRole, OutputStatus, Response, ResponseStatus, SseEvent, Usage,
 };
+use crate::state::{InMemoryStore, ResponseStore};
 use crate::translation::{
     function_call_id, message_id, response_id, to_chat_completion, tool_result_message,
 };
@@ -46,16 +47,20 @@ struct AccumulatedToolCall {
 /// * `mcp` - MCP client for tool calls
 /// * `req` - The request to execute
 /// * `previous_messages` - Messages from resolved previous_response_id chain
+/// * `store` - Optional store for persisting the response (if req.store is true)
 pub fn execute_streaming(
     config: ExecutorConfig,
     mcp: McpClient,
     req: CreateResponseRequest,
     previous_messages: Vec<ChatMessage>,
+    store: Option<InMemoryStore>,
 ) -> Pin<Box<dyn Stream<Item = Result<SseEvent, ExecutionError>> + Send>> {
     let (tx, rx) = mpsc::channel(32);
 
     tokio::spawn(async move {
-        if let Err(e) = run_streaming_loop(config, mcp, req, previous_messages, tx.clone()).await {
+        if let Err(e) =
+            run_streaming_loop(config, mcp, req, previous_messages, store, tx.clone()).await
+        {
             let _ = tx.send(Err(e)).await;
         }
     });
@@ -68,6 +73,7 @@ async fn run_streaming_loop(
     mcp: McpClient,
     req: CreateResponseRequest,
     previous_messages: Vec<ChatMessage>,
+    store: Option<InMemoryStore>,
     tx: mpsc::Sender<Result<SseEvent, ExecutionError>>,
 ) -> Result<(), ExecutionError> {
     // Look up model configuration
@@ -387,6 +393,14 @@ async fn run_streaming_loop(
             total_input_tokens,
             total_output_tokens,
         );
+
+        // Store the response if requested
+        if req.store {
+            if let Some(ref store) = store {
+                store.store(final_response.clone(), req.clone());
+                tracing::debug!(response_id = %resp_id, "Stored streaming response");
+            }
+        }
 
         send(&tx, SseEvent::response_completed(final_response.clone())).await?;
         send(&tx, SseEvent::response_done(final_response)).await?;

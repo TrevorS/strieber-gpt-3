@@ -101,8 +101,15 @@ async fn create_streaming_response(
         timeout_secs: state.config.timeout.as_secs(),
     };
 
+    // Pass store if request wants to store the response
+    let store = if req.store {
+        Some(state.store.clone())
+    } else {
+        None
+    };
+
     let mcp = state.mcp.clone();
-    let stream = execute_streaming(executor_config, mcp, req, previous_messages);
+    let stream = execute_streaming(executor_config, mcp, req, previous_messages, store);
 
     let sse_stream = stream.map(|result| -> Result<Event, Infallible> {
         match result {
