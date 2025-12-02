@@ -151,96 +151,31 @@ npx shadcn-svelte@latest init
 
 ---
 
-### Task 1.4: Conversation State Store
+### Task 1.4: Conversation State Store ✅
+
+**Status**: Complete
 
 **Description**: Create Svelte 5 runes-based store for conversation management
 
 **Acceptance Criteria**:
-- `Conversation` and `Message` types defined
-- CRUD operations for conversations
-- Active conversation tracking
-- `lastResponseId` tracking for chaining
-- Reactive state using `$state` and `$derived`
+- [x] `Conversation` and `Message` types defined
+- [x] CRUD operations for conversations
+- [x] Active conversation tracking
+- [x] `lastResponseId` tracking for chaining
+- [x] Reactive state using `$state` and `$derived`
 
-**Implementation Approach**:
-```typescript
-// src/lib/stores/types.ts
-export interface Conversation {
-  id: string;
-  title: string;
-  createdAt: number;
-  updatedAt: number;
-  lastResponseId: string | null;
-  messages: Message[];
-}
+**Files Created**:
+- `src/lib/stores/types.ts` - Conversation/Message interfaces with helper functions
+- `src/lib/stores/conversations.svelte.ts` - Svelte 5 runes store class
+- `src/lib/stores/index.ts` - Barrel export
+- `src/lib/stores/__tests__/conversations.test.ts` - 31 unit tests
 
-export interface Message {
-  id: string;
-  role: 'user' | 'assistant';
-  content: string;
-  rawOutput?: OutputItem[];
-  createdAt: number;
-}
-
-// src/lib/stores/conversations.svelte.ts
-class ConversationStore {
-  conversations = $state<Conversation[]>([]);
-  activeId = $state<string | null>(null);
-
-  active = $derived(
-    this.conversations.find(c => c.id === this.activeId)
-  );
-
-  create(): Conversation {
-    const conv: Conversation = {
-      id: crypto.randomUUID(),
-      title: 'New Chat',
-      createdAt: Date.now(),
-      updatedAt: Date.now(),
-      lastResponseId: null,
-      messages: [],
-    };
-    this.conversations.push(conv);
-    this.activeId = conv.id;
-    return conv;
-  }
-
-  addMessage(conversationId: string, message: Message): void {
-    const conv = this.conversations.find(c => c.id === conversationId);
-    if (conv) {
-      conv.messages.push(message);
-      conv.updatedAt = Date.now();
-    }
-  }
-
-  updateLastResponseId(conversationId: string, responseId: string): void {
-    const conv = this.conversations.find(c => c.id === conversationId);
-    if (conv) {
-      conv.lastResponseId = responseId;
-    }
-  }
-
-  delete(id: string): void {
-    const index = this.conversations.findIndex(c => c.id === id);
-    if (index !== -1) {
-      this.conversations.splice(index, 1);
-      if (this.activeId === id) {
-        this.activeId = this.conversations[0]?.id ?? null;
-      }
-    }
-  }
-}
-
-export const conversationStore = new ConversationStore();
-```
-
-**Files**:
-- `src/lib/stores/types.ts`
-- `src/lib/stores/conversations.svelte.ts`
-
-**Test Requirements**:
-- Unit tests for all CRUD operations
-- Test derived state updates correctly
+**Test Coverage** (31 tests):
+- CRUD: create, delete, get, clear, load
+- Active tracking: setActive, automatic switching on delete
+- Messages: addMessage, updateMessageContent, setMessageStreaming
+- Context: updateLastResponseId, updateTitle
+- Derived: sorted getter
 
 ---
 
