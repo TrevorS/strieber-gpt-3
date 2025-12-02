@@ -2,8 +2,8 @@
 
 @import "tw-animate-css";
 
-/* Syntax highlighting for code blocks */
-@import "highlight.js/styles/github-dark.css";
+/* Syntax highlighting for code blocks (light theme) */
+@import "highlight.js/styles/github.css";
 
 @custom-variant dark (&:is(.dark *));
 
