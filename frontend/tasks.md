@@ -724,15 +724,21 @@ Add multi-conversation support and localStorage.
 
 ---
 
-### Task 2.1: localStorage Persistence
+### Task 2.1: localStorage Persistence ✅
+
+**Status**: Complete
 
 **Description**: Persist conversations to localStorage
 
 **Acceptance Criteria**:
-- Conversations saved on every change
-- Data loads on app init
-- Handles missing/corrupt data gracefully
-- Version field for future migrations
+- [x] Conversations saved on every change
+- [x] Data loads on app init
+- [x] Handles missing/corrupt data gracefully
+- [x] Version field for future migrations
+
+**Files Created**:
+- `src/lib/utils/storage.ts` - Save/load/clear functions with version field
+- `src/lib/utils/__tests__/storage.test.ts` - 17 unit tests
 
 **Implementation Approach**:
 ```typescript
@@ -789,16 +795,28 @@ $effect(() => {
 
 ---
 
-### Task 2.2: Sidebar Conversation List
+### Task 2.2: Sidebar Conversation List ✅
+
+**Status**: Complete
 
 **Description**: Display conversations grouped by date with actions
 
 **Acceptance Criteria**:
-- Conversations listed with titles
-- Active conversation highlighted
-- Click to switch conversation
-- "New Chat" button
-- Delete action (rename can come later)
+- [x] Conversations listed with titles
+- [x] Active conversation highlighted
+- [x] Click to switch conversation
+- [x] "New Chat" button
+- [x] Delete action (rename can come later)
+- [x] Date grouping (Today, Yesterday, Previous 7 Days, Older)
+
+**Files Created**:
+- `src/lib/components/sidebar/ConversationItem.svelte` - Individual item with hover delete
+- `src/lib/components/sidebar/ConversationList.svelte` - Full list with date grouping
+- `src/lib/components/sidebar/index.ts` - Barrel export
+- `src/lib/components/sidebar/__tests__/ConversationItem.test.ts` - 7 unit tests
+- `src/lib/components/sidebar/__tests__/ConversationList.test.ts` - 8 unit tests
+- `src/lib/utils/dates.ts` - Date grouping utility
+- `src/lib/utils/__tests__/dates.test.ts` - 13 unit tests
 
 **Implementation Approach**:
 ```svelte
@@ -864,15 +882,24 @@ $effect(() => {
 
 ---
 
-### Task 2.3: Conversation Routes
+### Task 2.3: Conversation Routes ✅
+
+**Status**: Complete
 
 **Description**: SvelteKit routes for home and conversation pages
 
 **Acceptance Criteria**:
-- `/` - New conversation / home
-- `/c/[id]` - Specific conversation by ID
-- Navigation updates URL
-- Direct URL access loads correct conversation
+- [x] `/` - New conversation / home
+- [x] `/c/[id]` - Specific conversation by ID
+- [x] Navigation updates URL
+- [x] Direct URL access loads correct conversation
+
+**Files Created**:
+- `src/routes/c/[id]/+page.svelte` - Conversation view with redirect on not found
+
+**Files Modified**:
+- `src/routes/+page.svelte` - Added navigation after creating conversation
+- `src/routes/+layout.svelte` - Integrated persistence and sidebar
 
 **Implementation Approach**:
 ```svelte
@@ -908,21 +935,20 @@ $effect(() => {
 
 ---
 
-### Task 2.4: Multi-Turn Chaining
+### Task 2.4: Multi-Turn Chaining ✅
+
+**Status**: Complete (built into Slice 1)
 
 **Description**: Use `previous_response_id` for context
 
 **Acceptance Criteria**:
-- First message has no `previous_response_id`
-- Subsequent messages include last response's ID
-- Context preserved across turns
+- [x] First message has no `previous_response_id`
+- [x] Subsequent messages include last response's ID
+- [x] Context preserved across turns
 
-**Implementation Approach**:
-Already built into Task 1.11/1.12 - just ensure the `lastResponseId` is passed correctly and stored.
-
-**Test Requirements**:
-- Multi-turn conversation maintains context
-- Model references previous messages correctly
+**Verification**:
+- E2E test confirms context chaining works (user provides name, asks "What is my name?", model correctly responds)
+- Screenshot evidence in `test-results/screenshots/chat-context.png`
 
 ---
 

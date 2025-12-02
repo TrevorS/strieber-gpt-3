@@ -1,11 +1,13 @@
 <script lang="ts">
+	import { goto } from '$app/navigation';
 	import { ChatInput, MessageList } from '$lib/components/chat';
 	import { sendMessageStreaming } from '$lib/api';
 	import { conversationStore } from '$lib/stores';
 
 	let isStreaming = $state(false);
 
-	// Get messages from the active conversation
+	// Home page shows empty state (no active conversation selected)
+	// Messages only shown if there's an active conversation (from direct navigation)
 	let messages = $derived(conversationStore.active?.messages ?? []);
 
 	async function handleSubmit(text: string) {
@@ -23,6 +25,9 @@
 		conversationStore.setMessageStreaming(conv.id, assistantMessage.id, true);
 
 		isStreaming = true;
+
+		// Navigate to the conversation URL
+		goto(`/c/${conv.id}`);
 
 		// Stream the response
 		await sendMessageStreaming(
