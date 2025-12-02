@@ -2,6 +2,10 @@
 FROM node:22-alpine AS builder
 WORKDIR /app
 
+# Build arg for API URL (baked into client-side code)
+# Must include /v1 as the OpenAI client appends resource paths to this base
+ARG VITE_RESPONSES_API_URL=http://responses-api:8000/v1
+
 # Copy package files
 COPY package*.json ./
 
@@ -11,7 +15,8 @@ RUN npm ci
 # Copy source
 COPY . .
 
-# Build application
+# Build application with API URL
+ENV VITE_RESPONSES_API_URL=${VITE_RESPONSES_API_URL}
 RUN npm run build
 
 # Prune dev dependencies

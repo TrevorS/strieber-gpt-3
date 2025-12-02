@@ -6,14 +6,20 @@
  */
 
 export { client, createClient, getApiBaseUrl } from './client';
-export * from './types';
 export {
-	parseSSEStream,
-	parseSSEData,
-	StreamParseError,
-	isTextDeltaEvent,
+	type StreamingCallbacks,
+	type StreamingOptions,
+	sendMessage,
+	sendMessageStreaming
+} from './responses';
+export {
 	isCompletedEvent,
-	isFailedEvent,
 	isErrorEvent,
-	type StreamEvent
+	isFailedEvent,
+	isTextDeltaEvent,
+	parseSSEData,
+	parseSSEStream,
+	type StreamEvent,
+	StreamParseError
 } from './streaming';
+export * from './types';

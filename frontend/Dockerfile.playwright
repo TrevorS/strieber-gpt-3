@@ -4,6 +4,10 @@ FROM mcr.microsoft.com/playwright:v1.57.0-jammy
 
 WORKDIR /app
 
+# Build arg for API URL (baked into the build)
+# Must include /v1 as the OpenAI client appends resource paths to this base
+ARG VITE_RESPONSES_API_URL=http://responses-api:8000/v1
+
 # Copy package files
 COPY package*.json ./
 
@@ -16,7 +20,8 @@ COPY . .
 # Create screenshots directory
 RUN mkdir -p test-results/screenshots
 
-# Build the app (SvelteKit production build)
+# Build the app with API URL (SvelteKit production build)
+ENV VITE_RESPONSES_API_URL=${VITE_RESPONSES_API_URL}
 RUN npm run build
 
 # Default command runs Playwright tests

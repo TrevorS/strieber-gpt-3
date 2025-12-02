@@ -53,6 +53,16 @@
 					}
 				}
 			}
+		},
+		{
+			"includes": ["src/lib/utils.ts"],
+			"linter": {
+				"rules": {
+					"suspicious": {
+						"noExplicitAny": "off"
+					}
+				}
+			}
 		}
 	]
 }

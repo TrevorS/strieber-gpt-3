@@ -5,7 +5,7 @@
  * Uses $state for reactive state and $derived for computed values.
  */
 
-import { type Conversation, type Message, createConversation, createMessage } from './types';
+import { type Conversation, createConversation, createMessage, type Message } from './types';
 
 /**
  * Conversation store class using Svelte 5 runes.

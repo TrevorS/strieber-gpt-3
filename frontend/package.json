@@ -33,7 +33,9 @@
 		"@sveltejs/vite-plugin-svelte": "^6.2.1",
 		"@tailwindcss/typography": "^0.5.19",
 		"@tailwindcss/vite": "^4.1.17",
+		"@testing-library/jest-dom": "^6.9.1",
 		"@testing-library/svelte": "^5.2.9",
+		"@types/marked": "^5.0.2",
 		"bits-ui": "^2.14.4",
 		"clsx": "^2.1.1",
 		"jsdom": "^27.2.0",
@@ -51,6 +53,7 @@
 		"highlight.js": "^11.11.1",
 		"lucide-svelte": "^0.555.0",
 		"marked": "^17.0.1",
+		"marked-highlight": "^2.2.3",
 		"openai": "^6.9.1"
 	}
 }

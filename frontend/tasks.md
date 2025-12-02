@@ -231,16 +231,28 @@ npx shadcn-svelte@latest init
 
 ---
 
-### Task 1.6: Chat Input Area
+### Task 1.6: Chat Input Area ✅
+
+**Status**: Complete
 
 **Description**: Auto-resizing textarea with send functionality
 
 **Acceptance Criteria**:
-- Auto-resizes up to max height (200px)
-- Enter to send, Shift+Enter for newline
-- Send button enabled when content present
-- Disabled state during streaming
-- Placeholder text
+- [x] Auto-resizes up to max height (200px)
+- [x] Enter to send, Shift+Enter for newline
+- [x] Send button enabled when content present
+- [x] Disabled state during streaming
+- [x] Placeholder text
+
+**Files Created**:
+- `src/lib/components/chat/ChatInput.svelte` - Input component with auto-resize
+- `src/lib/components/chat/index.ts` - Barrel export
+- `src/lib/components/chat/__tests__/ChatInput.test.ts` - 14 unit tests
+
+**Testing Infrastructure Updated**:
+- Added `@testing-library/jest-dom` for DOM matchers
+- Updated `vitest.config.ts` to use `svelte()` + `svelteTesting()` plugins
+- Added `vitest-setup.ts` for test setup
 
 **Implementation Approach**:
 ```svelte
@@ -317,14 +329,22 @@ npx shadcn-svelte@latest add button
 
 ---
 
-### Task 1.7: Message List Component
+### Task 1.7: Message List Component ✅
+
+**Status**: Complete
 
 **Description**: Scrollable list of messages with auto-scroll
 
 **Acceptance Criteria**:
-- Displays user and assistant messages
-- Auto-scrolls to bottom on new messages
-- Scrollable container
+- [x] Displays user and assistant messages
+- [x] Auto-scrolls to bottom on new messages
+- [x] Scrollable container
+
+**Files Created**:
+- `src/lib/components/chat/MessageList.svelte` - Scrollable list with auto-scroll
+- `src/lib/components/chat/UserMessage.svelte` - User message (placeholder)
+- `src/lib/components/chat/AssistantMessage.svelte` - Assistant message (placeholder)
+- `src/lib/components/chat/__tests__/MessageList.test.ts` - 8 unit tests
 
 **Implementation Approach**:
 ```svelte
@@ -369,14 +389,20 @@ npx shadcn-svelte@latest add button
 
 ---
 
-### Task 1.8: User Message Component
+### Task 1.8: User Message Component ✅
+
+**Status**: Complete
 
 **Description**: Render user messages (text only for MVP)
 
 **Acceptance Criteria**:
-- Displays text content
-- Right-aligned or distinct styling
-- Minimal styling for MVP
+- [x] Displays text content
+- [x] Right-aligned or distinct styling
+- [x] Minimal styling for MVP
+
+**Files Created**:
+- `src/lib/components/chat/UserMessage.svelte` - Right-aligned user messages
+- `src/lib/components/chat/__tests__/UserMessage.test.ts` - 10 unit tests
 
 **Implementation Approach**:
 ```svelte
@@ -403,14 +429,20 @@ npx shadcn-svelte@latest add button
 
 ---
 
-### Task 1.9: Assistant Message Component
+### Task 1.9: Assistant Message Component ✅
+
+**Status**: Complete
 
 **Description**: Render assistant messages with markdown (MVP version)
 
 **Acceptance Criteria**:
-- Renders markdown content
-- Left-aligned styling
-- Handles code blocks with syntax highlighting
+- [x] Renders markdown content
+- [x] Left-aligned styling
+- [x] Handles code blocks with syntax highlighting
+
+**Files Created**:
+- `src/lib/components/chat/AssistantMessage.svelte` - Left-aligned with markdown
+- `src/lib/components/chat/__tests__/AssistantMessage.test.ts` - 12 unit tests
 
 **Implementation Approach**:
 ```svelte
@@ -438,16 +470,23 @@ npx shadcn-svelte@latest add button
 
 ---
 
-### Task 1.10: Markdown Renderer
+### Task 1.10: Markdown Renderer ✅
+
+**Status**: Complete
 
 **Description**: Render markdown with syntax-highlighted code blocks
 
 **Acceptance Criteria**:
-- Uses marked for parsing
-- highlight.js for code blocks
-- Language label on code blocks
-- Copy button on code blocks
-- Safe HTML rendering
+- [x] Uses marked for parsing
+- [x] highlight.js for code blocks
+- [ ] Language label on code blocks (future enhancement)
+- [ ] Copy button on code blocks (future enhancement)
+- [x] Safe HTML rendering
+
+**Files Created**:
+- `src/lib/utils/markdown.ts` - Markdown rendering with highlight.js
+- `src/lib/components/chat/MarkdownContent.svelte` - Rendered markdown component
+- `src/lib/utils/__tests__/markdown.test.ts` - 27 unit tests
 
 **Implementation Approach**:
 ```typescript
@@ -501,16 +540,22 @@ pnpm add -D @tailwindcss/typography
 
 ---
 
-### Task 1.11: Streaming Message Flow
+### Task 1.11: Streaming Message Flow ✅
+
+**Status**: Complete
 
 **Description**: Real-time token-by-token response streaming
 
 **Acceptance Criteria**:
-- Send with `stream: true`
-- Parse SSE events
-- Update message content in real-time
-- Handle `response.output_text.delta` events
-- Finalize on `response.completed`
+- [x] Send with `stream: true`
+- [x] Parse SSE events
+- [x] Update message content in real-time
+- [x] Handle `response.output_text.delta` events
+- [x] Finalize on `response.completed`
+
+**Files Created**:
+- `src/lib/api/responses.ts` - sendMessageStreaming + sendMessage functions
+- `src/lib/api/__tests__/responses.test.ts` - 11 unit tests
 
 **Implementation Approach**:
 ```typescript
@@ -578,15 +623,20 @@ export async function sendMessageStreaming(
 
 ---
 
-### Task 1.12: Wire Up Home Page
+### Task 1.12: Wire Up Home Page ✅
+
+**Status**: Complete
 
 **Description**: Connect all components on the home page
 
 **Acceptance Criteria**:
-- Input sends messages
-- Messages appear in list
-- Streaming responses render token-by-token
-- New conversation created on first message
+- [x] Input sends messages
+- [x] Messages appear in list
+- [x] Streaming responses render token-by-token
+- [x] New conversation created on first message
+
+**Files Modified**:
+- `src/routes/+page.svelte` - Connected ChatInput, MessageList, and conversationStore with sendMessageStreaming
 
 **Implementation Approach**:
 ```svelte

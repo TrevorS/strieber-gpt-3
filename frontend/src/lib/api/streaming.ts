@@ -6,41 +6,39 @@
  */
 
 // Re-export the parsed event type from OpenAI
-export type { ParsedResponseStreamEvent as StreamEvent } from 'openai/lib/responses/EventTypes';
-
-// Re-export individual event types for convenience
-export type {
-	ResponseCreatedEvent,
-	ResponseInProgressEvent,
-	ResponseCompletedEvent,
-	ResponseFailedEvent,
-	ResponseIncompleteEvent,
-	ResponseErrorEvent,
-	ResponseOutputItemAddedEvent,
-	ResponseOutputItemDoneEvent,
-	ResponseContentPartAddedEvent,
-	ResponseContentPartDoneEvent,
-	ResponseTextDoneEvent,
-	ResponseRefusalDeltaEvent,
-	ResponseRefusalDoneEvent,
-	ResponseFunctionCallArgumentsDoneEvent,
-	ResponseFileSearchCallInProgressEvent,
-	ResponseFileSearchCallSearchingEvent,
-	ResponseFileSearchCallCompletedEvent,
-	ResponseWebSearchCallInProgressEvent,
-	ResponseWebSearchCallSearchingEvent,
-	ResponseWebSearchCallCompletedEvent,
-	ResponseCodeInterpreterCallInProgressEvent,
-	ResponseCodeInterpreterCallInterpretingEvent,
-	ResponseCodeInterpreterCallCodeDoneEvent,
-	ResponseCodeInterpreterCallCompletedEvent
-} from 'openai/resources/responses/responses';
-
 // These have snapshot fields added by the SDK
 export type {
-	ResponseTextDeltaEvent,
-	ResponseFunctionCallArgumentsDeltaEvent
+	ParsedResponseStreamEvent as StreamEvent,
+	ResponseFunctionCallArgumentsDeltaEvent,
+	ResponseTextDeltaEvent
 } from 'openai/lib/responses/EventTypes';
+// Re-export individual event types for convenience
+export type {
+	ResponseCodeInterpreterCallCodeDoneEvent,
+	ResponseCodeInterpreterCallCompletedEvent,
+	ResponseCodeInterpreterCallInProgressEvent,
+	ResponseCodeInterpreterCallInterpretingEvent,
+	ResponseCompletedEvent,
+	ResponseContentPartAddedEvent,
+	ResponseContentPartDoneEvent,
+	ResponseCreatedEvent,
+	ResponseErrorEvent,
+	ResponseFailedEvent,
+	ResponseFileSearchCallCompletedEvent,
+	ResponseFileSearchCallInProgressEvent,
+	ResponseFileSearchCallSearchingEvent,
+	ResponseFunctionCallArgumentsDoneEvent,
+	ResponseIncompleteEvent,
+	ResponseInProgressEvent,
+	ResponseOutputItemAddedEvent,
+	ResponseOutputItemDoneEvent,
+	ResponseRefusalDeltaEvent,
+	ResponseRefusalDoneEvent,
+	ResponseTextDoneEvent,
+	ResponseWebSearchCallCompletedEvent,
+	ResponseWebSearchCallInProgressEvent,
+	ResponseWebSearchCallSearchingEvent
+} from 'openai/resources/responses/responses';
 
 /**
  * Custom error for stream parsing failures

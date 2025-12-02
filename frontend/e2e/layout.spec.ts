@@ -19,6 +19,12 @@ test.describe('Layout Shell', () => {
 		// Verify main content
 		const main = page.locator('main');
 		await expect(main).toBeVisible();
+
+		// Verify chat input area
+		const textarea = page.locator('textarea[placeholder="Send a message..."]');
+		await expect(textarea).toBeVisible();
+		const sendButton = page.locator('button').filter({ has: page.locator('svg') });
+		await expect(sendButton).toBeVisible();
 	});
 
 	test('hides sidebar on mobile', async ({ page }) => {
@@ -34,5 +40,9 @@ test.describe('Layout Shell', () => {
 		// Sidebar should be hidden
 		const sidebar = page.locator('aside');
 		await expect(sidebar).not.toBeVisible();
+
+		// Chat input should still be visible on mobile
+		const textarea = page.locator('textarea[placeholder="Send a message..."]');
+		await expect(textarea).toBeVisible();
 	});
 });

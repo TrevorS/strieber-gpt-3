@@ -9,7 +9,7 @@
  * - Edge cases
  */
 
-import { describe, it, expect, beforeEach } from 'vitest';
+import { beforeEach, describe, expect, it } from 'vitest';
 import { conversationStore } from '../conversations.svelte';
 import { createConversation, createMessage } from '../types';
 

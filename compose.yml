@@ -735,6 +735,8 @@ services:
       - ./frontend/test-results:/app/test-results
     environment:
       - CI=true
+    depends_on:
+      - chat-ui
     networks:
       - strieber-net
     profiles:
@@ -756,7 +758,7 @@ services:
     environment:
       - PORT=3000
       - ORIGIN=http://localhost:9300
-      - PUBLIC_RESPONSES_API_URL=http://responses-api:8000
+      # API URL is baked in at build time via VITE_RESPONSES_API_URL in Dockerfile
     depends_on:
       responses-api:
         condition: service_healthy

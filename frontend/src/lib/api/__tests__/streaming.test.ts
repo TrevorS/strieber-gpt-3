@@ -8,15 +8,15 @@
  * - Edge cases: Partial line buffering, empty lines, comments
  */
 
-import { describe, it, expect } from 'vitest';
+import { describe, expect, it } from 'vitest';
 import {
+	isCompletedEvent,
+	isErrorEvent,
+	isFailedEvent,
+	isTextDeltaEvent,
 	parseSSEData,
 	parseSSEStream,
-	StreamParseError,
-	isTextDeltaEvent,
-	isCompletedEvent,
-	isFailedEvent,
-	isErrorEvent
+	StreamParseError
 } from '../streaming';
 
 // ============================================================================

@@ -39,3 +39,24 @@ docker compose run --rm playwright-test
 ```
 
 Then read screenshots from `frontend/test-results/screenshots/` to verify the UI.
+
+### Shell Compatibility (zsh)
+
+The host shell is zsh, which parses commands differently than bash. To avoid parse errors:
+
+- **Avoid nested `$(...)`** with complex quotes or parentheses inside
+- **Run commands in separate steps** instead of chaining with command substitution
+- **Use simple tools**: prefer `jq` over `python3 -c` for JSON parsing
+- **Write to temp files** instead of inline parsing when extracting values
+
+Bad (causes zsh parse errors):
+```bash
+PREV_ID=$(python3 -c "import json; print(json.load(open('/tmp/resp.json'))['id'])")
+```
+
+Good:
+```bash
+python3 -c "import json; print(json.load(open('/tmp/resp.json'))['id'])" > /tmp/prev_id.txt
+# or just use jq
+jq -r '.id' /tmp/resp.json
+```

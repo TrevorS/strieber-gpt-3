@@ -7,7 +7,8 @@
 
 // Core OpenAI client type
 export type { OpenAI } from 'openai';
-
+// Error types
+export { APIError, AuthenticationError, BadRequestError, RateLimitError } from 'openai';
 // Chat Completions types (used by Responses API internally)
 export type {
 	ChatCompletion,
@@ -30,6 +31,8 @@ export type {
 	ChatCompletionUserMessageParam
 } from 'openai/resources/chat/completions';
 
+// Model types
+export type { Model } from 'openai/resources/models';
 // Responses API types (OpenAI's newer API)
 export type {
 	Response,
@@ -37,9 +40,3 @@ export type {
 	ResponseCreateParamsNonStreaming,
 	ResponseCreateParamsStreaming
 } from 'openai/resources/responses/responses';
-
-// Model types
-export type { Model } from 'openai/resources/models';
-
-// Error types
-export { APIError, AuthenticationError, BadRequestError, RateLimitError } from 'openai';
