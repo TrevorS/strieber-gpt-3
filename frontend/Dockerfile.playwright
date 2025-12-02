@@ -1,0 +1,23 @@
+# Playwright E2E test runner
+# Uses Microsoft's official Playwright image with browsers pre-installed
+FROM mcr.microsoft.com/playwright:v1.57.0-jammy
+
+WORKDIR /app
+
+# Copy package files
+COPY package*.json ./
+
+# Install dependencies including Playwright
+RUN npm ci
+
+# Copy source, config, and tests
+COPY . .
+
+# Create screenshots directory
+RUN mkdir -p test-results/screenshots
+
+# Build the app (SvelteKit production build)
+RUN npm run build
+
+# Default command runs Playwright tests
+CMD ["npx", "playwright", "test"]
