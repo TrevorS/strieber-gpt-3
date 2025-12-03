@@ -10,10 +10,11 @@
 	let { children } = $props();
 
 	// Load conversations from localStorage on mount (browser only)
+	// Always start with New Chat state (activeId = null) on refresh
 	if (browser) {
 		const saved = loadConversations();
 		if (saved) {
-			conversationStore.load(saved.conversations, saved.activeId);
+			conversationStore.load(saved.conversations, null);
 		}
 	}
 

@@ -23,7 +23,8 @@ test.describe('Layout Shell', () => {
 		// Verify chat input area
 		const textarea = page.locator('textarea[placeholder="Send a message..."]');
 		await expect(textarea).toBeVisible();
-		const sendButton = page.locator('button').filter({ has: page.locator('svg') });
+		// Send button is next to textarea in the input area
+		const sendButton = page.locator('.border-t button').filter({ has: page.locator('svg') });
 		await expect(sendButton).toBeVisible();
 	});
 

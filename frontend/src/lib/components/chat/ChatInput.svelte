@@ -46,10 +46,9 @@
 			bind:value
 			onkeydown={handleKeydown}
 			oninput={autoResize}
-			{disabled}
 			placeholder="Send a message..."
 			rows="1"
-			class="flex-1 resize-none rounded-lg border p-3 focus:outline-none focus:ring-2 focus:ring-ring disabled:opacity-50 disabled:cursor-not-allowed"
+			class="flex-1 resize-none rounded-lg border p-3 focus:outline-none focus:ring-2 focus:ring-ring"
 		></textarea>
 		<Button onclick={submit} disabled={!canSubmit} size="icon">
 			<Send class="h-4 w-4" />

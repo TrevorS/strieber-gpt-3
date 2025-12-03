@@ -128,11 +128,12 @@ describe('ChatInput', () => {
 	// ============================================================================
 
 	describe('disabled state', () => {
-		it('should disable textarea when disabled prop is true', () => {
+		it('should keep textarea enabled when disabled prop is true (only blocks submission)', () => {
 			render(ChatInput, { props: { onsubmit: mockOnSubmit, disabled: true } });
 
 			const textarea = screen.getByPlaceholderText('Send a message...');
-			expect(textarea).toBeDisabled();
+			// Textarea stays enabled so user can type while streaming
+			expect(textarea).toBeEnabled();
 		});
 
 		it('should disable button when disabled prop is true', () => {
