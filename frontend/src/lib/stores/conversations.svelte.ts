@@ -6,6 +6,7 @@
  */
 
 import { type Conversation, createConversation, createMessage, type Message } from './types';
+import { logger } from '$lib/utils/logger';
 
 /**
  * Conversation store class using Svelte 5 runes.
@@ -45,6 +46,7 @@ class ConversationStore {
 		const conv = createConversation(title ? { title } : undefined);
 		this.conversations.push(conv);
 		this.activeId = conv.id;
+		logger.store.action('create', { id: conv.id, title: conv.title, activeId: this.activeId });
 		return conv;
 	}
 
@@ -54,21 +56,29 @@ class ConversationStore {
 	 */
 	delete(id: string): void {
 		const index = this.conversations.findIndex((c) => c.id === id);
-		if (index === -1) return;
+		if (index === -1) {
+			logger.warn('store', 'Delete failed: conversation not found', { id });
+			return;
+		}
 
+		const wasActive = this.activeId === id;
 		this.conversations.splice(index, 1);
 
 		// If we deleted the active conversation, switch to another
-		if (this.activeId === id) {
+		if (wasActive) {
 			this.activeId = this.sorted[0]?.id ?? null;
 		}
+
+		logger.store.action('delete', { id, wasActive, newActiveId: this.activeId });
 	}
 
 	/**
 	 * Set the active conversation by ID.
 	 */
 	setActive(id: string | null): void {
+		const oldId = this.activeId;
 		this.activeId = id;
+		logger.store.action('setActive', { oldActiveId: oldId, newActiveId: id });
 	}
 
 	/**
@@ -77,8 +87,12 @@ class ConversationStore {
 	updateTitle(id: string, title: string): void {
 		const conv = this.conversations.find((c) => c.id === id);
 		if (conv) {
+			const oldTitle = conv.title;
 			conv.title = title;
 			conv.updatedAt = Date.now();
+			logger.store.action('updateTitle', { id, oldTitle, newTitle: title });
+		} else {
+			logger.warn('store', 'updateTitle failed: conversation not found', { id });
 		}
 	}
 
@@ -88,12 +102,20 @@ class ConversationStore {
 	addMessage(conversationId: string, role: Message['role'], content: string): Message {
 		const conv = this.conversations.find((c) => c.id === conversationId);
 		if (!conv) {
+			logger.error('store', 'addMessage failed: conversation not found', { conversationId });
 			throw new Error(`Conversation not found: ${conversationId}`);
 		}
 
 		const message = createMessage(role, content);
 		conv.messages.push(message);
 		conv.updatedAt = Date.now();
+		logger.store.action('addMessage', {
+			conversationId,
+			messageId: message.id,
+			role,
+			contentLength: content.length,
+			messageCount: conv.messages.length
+		});
 		return message;
 	}
 
@@ -102,12 +124,21 @@ class ConversationStore {
 	 */
 	updateMessageContent(conversationId: string, messageId: string, content: string): void {
 		const conv = this.conversations.find((c) => c.id === conversationId);
-		if (!conv) return;
+		if (!conv) {
+			logger.warn('store', 'updateMessageContent: conversation not found', { conversationId });
+			return;
+		}
 
 		const message = conv.messages.find((m) => m.id === messageId);
 		if (message) {
 			message.content = content;
 			conv.updatedAt = Date.now();
+			// Debug level since this is called frequently during streaming
+			logger.debug('streaming', 'Message content updated', {
+				conversationId,
+				messageId,
+				contentLength: content.length
+			});
 		}
 	}
 
@@ -121,6 +152,10 @@ class ConversationStore {
 		const message = conv.messages.find((m) => m.id === messageId);
 		if (message) {
 			message.isStreaming = isStreaming;
+			logger.info('streaming', isStreaming ? 'Streaming started' : 'Streaming ended', {
+				conversationId,
+				messageId
+			});
 		}
 	}
 
@@ -130,8 +165,14 @@ class ConversationStore {
 	updateLastResponseId(conversationId: string, responseId: string): void {
 		const conv = this.conversations.find((c) => c.id === conversationId);
 		if (conv) {
+			const oldResponseId = conv.lastResponseId;
 			conv.lastResponseId = responseId;
 			conv.updatedAt = Date.now();
+			logger.info('store', 'Context chain updated', {
+				conversationId,
+				oldResponseId,
+				newResponseId: responseId
+			});
 		}
 	}
 
@@ -146,16 +187,24 @@ class ConversationStore {
 	 * Clear all conversations.
 	 */
 	clear(): void {
+		const count = this.conversations.length;
 		this.conversations = [];
 		this.activeId = null;
+		logger.store.action('clear', { conversationsCleared: count });
 	}
 
 	/**
 	 * Load conversations from external source (e.g., localStorage).
+	 * Pass null for activeId to explicitly have no active conversation.
 	 */
-	load(conversations: Conversation[], activeId: string | null = null): void {
+	load(conversations: Conversation[], activeId: string | null): void {
 		this.conversations = conversations;
-		this.activeId = activeId ?? conversations[0]?.id ?? null;
+		this.activeId = activeId;
+		logger.info('persistence', 'Conversations loaded from storage', {
+			conversationCount: conversations.length,
+			activeId,
+			conversationIds: conversations.map((c) => c.id)
+		});
 	}
 }
 

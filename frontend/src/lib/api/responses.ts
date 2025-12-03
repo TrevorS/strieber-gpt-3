@@ -7,6 +7,8 @@
 
 import { getApiBaseUrl } from './client';
 import { isCompletedEvent, isFailedEvent, isTextDeltaEvent, parseSSEStream } from './streaming';
+import { logger } from '$lib/utils/logger';
+import { generateUUID } from '$lib/stores/types';
 
 /**
  * Options for streaming message requests
@@ -63,6 +65,16 @@ export async function sendMessageStreaming(
 	const baseUrl = getApiBaseUrl();
 	const url = `${baseUrl}/responses`;
 
+	const requestId = generateUUID().slice(0, 8);
+
+	logger.api.request('POST', url, {
+		requestId,
+		model,
+		inputLength: input.length,
+		previousResponseId,
+		stream: true
+	});
+
 	try {
 		const response = await fetch(url, {
 			method: 'POST',
@@ -79,24 +91,30 @@ export async function sendMessageStreaming(
 			signal
 		});
 
+		logger.api.response('POST', url, response.status, { requestId });
+
 		if (!response.ok) {
 			const errorText = await response.text();
+			logger.error('api', 'API error response', { requestId, status: response.status, errorText });
 			throw new Error(`API error ${response.status}: ${errorText}`);
 		}
 
 		let responseId = '';
 		let fullText = '';
+		let chunkCount = 0;
 
 		for await (const event of parseSSEStream(response)) {
 			// Handle text delta events
 			if (isTextDeltaEvent(event)) {
 				fullText += event.delta;
+				chunkCount++;
 				onDelta(fullText);
 			}
 
 			// Track response ID from created event
 			if (event.type === 'response.created') {
 				responseId = (event as { response?: { id?: string } }).response?.id ?? '';
+				logger.info('streaming', 'Response created', { requestId, responseId });
 			}
 
 			// Handle completion
@@ -105,6 +123,12 @@ export async function sendMessageStreaming(
 				if (!responseId && event.response?.id) {
 					responseId = event.response.id;
 				}
+				logger.info('streaming', 'Stream completed', {
+					requestId,
+					responseId,
+					totalLength: fullText.length,
+					chunkCount
+				});
 				onComplete(responseId);
 				return;
 			}
@@ -112,21 +136,28 @@ export async function sendMessageStreaming(
 			// Handle failure
 			if (isFailedEvent(event)) {
 				const error = (event as { error?: { message?: string } }).error;
+				logger.error('streaming', 'Stream failed', { requestId, error });
 				throw new Error(error?.message ?? 'Response failed');
 			}
 		}
 
 		// Stream ended without completion event
 		if (responseId) {
+			logger.warn('streaming', 'Stream ended without completion event', { requestId, responseId });
 			onComplete(responseId);
 		}
 	} catch (error) {
 		// Handle abort specifically
 		if (error instanceof Error && error.name === 'AbortError') {
+			logger.warn('api', 'Request aborted', { requestId });
 			onError(new Error('Request was cancelled'));
 			return;
 		}
 
+		logger.error('api', 'Request failed', {
+			requestId,
+			error: error instanceof Error ? error.message : String(error)
+		});
 		onError(error instanceof Error ? error : new Error(String(error)));
 	}
 }
@@ -147,6 +178,16 @@ export async function sendMessage(
 	const baseUrl = getApiBaseUrl();
 	const url = `${baseUrl}/responses`;
 
+	const requestId = generateUUID().slice(0, 8);
+
+	logger.api.request('POST', url, {
+		requestId,
+		model,
+		inputLength: input.length,
+		previousResponseId,
+		stream: false
+	});
+
 	const response = await fetch(url, {
 		method: 'POST',
 		headers: {
@@ -162,8 +203,11 @@ export async function sendMessage(
 		signal
 	});
 
+	logger.api.response('POST', url, response.status, { requestId });
+
 	if (!response.ok) {
 		const errorText = await response.text();
+		logger.error('api', 'API error response', { requestId, status: response.status, errorText });
 		throw new Error(`API error ${response.status}: ${errorText}`);
 	}
 
@@ -185,6 +229,12 @@ export async function sendMessage(
 			}
 		}
 	}
+
+	logger.info('api', 'Response received', {
+		requestId,
+		responseId: data.id,
+		textLength: text.length
+	});
 
 	return {
 		text,

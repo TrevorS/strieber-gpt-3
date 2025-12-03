@@ -6,11 +6,18 @@
 	import { ChatInput, MessageList } from '$lib/components/chat';
 	import { sendMessageStreaming } from '$lib/api';
 	import { conversationStore } from '$lib/stores';
+	import { logger } from '$lib/utils/logger';
 
 	// Get conversation from store based on URL param
 	let conversation = $derived(conversationStore.get(page.params.id));
 	let messages = $derived(conversation?.messages ?? []);
 	let isStreaming = $state(false);
+
+	logger.lifecycle.mount('ConversationPage', {
+		urlParamId: page.params.id,
+		conversationExists: !!conversation,
+		activeId: conversationStore.activeId
+	});
 
 	// Track navigation to prevent effect from re-setting activeId during navigation away
 	let isNavigatingAway = $state(false);
@@ -24,7 +31,6 @@
 			if (!conversation) {
 				goto('/');
 			} else {
-				// Use untrack to prevent this effect from re-running when activeId changes
 				const currentActiveId = untrack(() => conversationStore.activeId);
 				if (currentActiveId !== conversation.id) {
 					conversationStore.setActive(conversation.id);
@@ -34,7 +40,16 @@
 	});
 
 	async function handleSubmit(text: string) {
-		if (!conversation) return;
+		if (!conversation) {
+			logger.warn('ui', 'handleSubmit called with no conversation');
+			return;
+		}
+
+		logger.ui.event('ConversationPage', 'handleSubmit called', {
+			conversationId: conversation.id,
+			textLength: text.length,
+			messageCount: conversation.messages.length
+		});
 
 		// Add user message
 		conversationStore.addMessage(conversation.id, 'user', text);
@@ -46,6 +61,11 @@
 		isStreaming = true;
 
 		// Stream the response
+		logger.api.request('POST', '/responses', {
+			conversationId: conversation.id,
+			previousResponseId: conversation.lastResponseId
+		});
+
 		await sendMessageStreaming(
 			text,
 			{
@@ -56,12 +76,20 @@
 					conversationStore.updateMessageContent(conversation!.id, assistantMessage.id, content);
 				},
 				onComplete: (responseId) => {
+					logger.api.streamComplete(
+						conversation!.id,
+						conversationStore.get(conversation!.id)?.messages.find((m) => m.id === assistantMessage.id)
+							?.content.length ?? 0
+					);
 					conversationStore.updateLastResponseId(conversation!.id, responseId);
 					conversationStore.setMessageStreaming(conversation!.id, assistantMessage.id, false);
 					isStreaming = false;
 				},
 				onError: (error) => {
-					console.error('Stream error:', error);
+					logger.error('api', 'Stream error', {
+						conversationId: conversation!.id,
+						error: error.message
+					});
 					conversationStore.updateMessageContent(
 						conversation!.id,
 						assistantMessage.id,

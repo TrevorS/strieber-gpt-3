@@ -733,6 +733,8 @@ services:
     volumes:
       # Mount test results for Claude to view screenshots
       - ./frontend/test-results:/app/test-results
+      # Mount E2E tests for development (no rebuild needed)
+      - ./frontend/e2e:/app/e2e
     environment:
       - CI=true
     depends_on:
@@ -770,6 +772,32 @@ services:
       retries: 3
     networks:
       - strieber-net
+
+  # ==========================================================================
+  # chat-ui-dev: Development mode with Vite dev server
+  # ABOUTME: Hot-reloading development server with source code mounting
+  # Usage: docker compose --profile dev up chat-ui-dev
+  # ==========================================================================
+  chat-ui-dev:
+    image: node:22-alpine
+    container_name: strieber-chat-ui-dev
+    user: "1000:1000"
+    working_dir: /app
+    ports:
+      - "5173:5173"
+    volumes:
+      - ./frontend:/app
+      - /app/node_modules  # Anonymous volume for node_modules
+    environment:
+      - VITE_RESPONSES_API_URL=http://localhost:9150
+    command: ["npm", "run", "dev", "--", "--host"]
+    depends_on:
+      responses-api:
+        condition: service_healthy
+    networks:
+      - strieber-net
+    profiles:
+      - dev
 
 networks:
   strieber-net:

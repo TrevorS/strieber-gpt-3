@@ -1,6 +1,7 @@
 <script lang="ts">
 	import { Button } from '$lib/components/ui/button';
 	import { Send } from 'lucide-svelte';
+	import { logger } from '$lib/utils/logger';
 
 	let {
 		onsubmit,
@@ -16,6 +17,7 @@
 	function handleKeydown(e: KeyboardEvent) {
 		if (e.key === 'Enter' && !e.shiftKey) {
 			e.preventDefault();
+			logger.ui.event('ChatInput', 'Enter key pressed', { disabled, hasValue: value.trim().length > 0 });
 			submit();
 		}
 	}
@@ -23,9 +25,12 @@
 	function submit() {
 		const text = value.trim();
 		if (text && !disabled) {
+			logger.ui.event('ChatInput', 'Message submitted', { textLength: text.length });
 			onsubmit(text);
 			value = '';
 			if (textarea) textarea.style.height = 'auto';
+		} else {
+			logger.debug('ui', 'Submit blocked', { disabled, textLength: text.length });
 		}
 	}
 

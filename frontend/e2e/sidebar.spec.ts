@@ -1,9 +1,13 @@
 import { test, expect } from '@playwright/test';
+import { setupLogCapture, filterLogs, expectLog } from './helpers/logger';
 
 test.describe('Sidebar Navigation', () => {
 	test.setTimeout(60000);
 
 	test('New Chat button clears conversation in single click', async ({ page }) => {
+		// Set up log capture before navigation
+		const logs = setupLogCapture(page);
+
 		await page.goto('/');
 
 		// Send a message to create a conversation
@@ -44,6 +48,21 @@ test.describe('Sidebar Navigation', () => {
 		// Verify input is ready
 		await expect(textarea).toBeEnabled();
 		await expect(textarea).toBeEmpty();
+
+		// Verify structured logging captured key events
+		// (Either "loaded" or "No saved" depending on test state)
+		const persistenceLogs = filterLogs(logs, { category: 'persistence' });
+		expect(persistenceLogs.length).toBeGreaterThan(0);
+
+		expectLog(logs, { category: 'store', message: /Action: create/i });
+		// handleNew triggers setActive(null) - verify this happens
+		expectLog(logs, { category: 'store', message: /Action: setActive/i });
+
+		// Verify a setActive log with null exists (new chat state)
+		const setActiveNullLogs = filterLogs(logs, { category: 'store', message: /Action: setActive/ }).filter(
+			(log) => log.data?.newActiveId === null
+		);
+		expect(setActiveNullLogs.length).toBeGreaterThan(0);
 
 		await page.screenshot({
 			path: 'test-results/screenshots/new-chat-single-click.png',

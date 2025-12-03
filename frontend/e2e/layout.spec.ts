@@ -28,7 +28,7 @@ test.describe('Layout Shell', () => {
 		await expect(sendButton).toBeVisible();
 	});
 
-	test('hides sidebar on mobile', async ({ page }) => {
+	test('shows hamburger menu on mobile with sidebar off-screen', async ({ page }) => {
 		await page.setViewportSize({ width: 375, height: 667 });
 		await page.goto('/');
 
@@ -38,9 +38,19 @@ test.describe('Layout Shell', () => {
 			fullPage: true
 		});
 
-		// Sidebar should be hidden
-		const sidebar = page.locator('aside');
-		await expect(sidebar).not.toBeVisible();
+		// Hamburger button should be visible
+		const hamburger = page.getByTestId('sidebar-toggle');
+		await expect(hamburger).toBeVisible();
+
+		// Mobile header should show title
+		const header = page.locator('header');
+		await expect(header).toContainText('Strieber');
+
+		// Sidebar should be off-screen (not in viewport)
+		const sidebar = page.getByTestId('sidebar');
+		const box = await sidebar.boundingBox();
+		expect(box).not.toBeNull();
+		expect(box!.x + box!.width).toBeLessThanOrEqual(0);
 
 		// Chat input should still be visible on mobile
 		const textarea = page.locator('textarea[placeholder="Send a message..."]');
