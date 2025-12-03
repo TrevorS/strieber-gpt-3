@@ -46,7 +46,8 @@
 		await sendMessageStreaming(
 			text,
 			{
-				previousResponseId: conv.lastResponseId
+				previousResponseId: conv.lastResponseId,
+				tools: [{ type: 'web_search' }, { type: 'code_interpreter' }]
 			},
 			{
 				onDelta: (content) => {

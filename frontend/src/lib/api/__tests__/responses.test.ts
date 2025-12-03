@@ -100,7 +100,8 @@ describe('sendMessageStreaming', () => {
 						input: 'Hello',
 						previous_response_id: 'prev_123',
 						stream: true,
-						store: true
+						store: true,
+						tools: []
 					})
 				})
 			);

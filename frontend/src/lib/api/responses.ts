@@ -12,6 +12,14 @@ import { logger } from '$lib/utils/logger';
 import { generateUUID, type ResponseOutputItem } from '$lib/stores/types';
 
 /**
+ * Tool definition for API requests
+ */
+export interface ToolDefinition {
+	type: string;
+	[key: string]: unknown;
+}
+
+/**
  * Options for streaming message requests
  */
 export interface StreamingOptions {
@@ -21,6 +29,8 @@ export interface StreamingOptions {
 	previousResponseId?: string | null;
 	/** AbortSignal for request cancellation */
 	signal?: AbortSignal;
+	/** Tools to enable for this request */
+	tools?: ToolDefinition[];
 }
 
 /**
@@ -64,7 +74,7 @@ export async function sendMessageStreaming(
 	options: StreamingOptions,
 	callbacks: StreamingCallbacks
 ): Promise<void> {
-	const { model = 'gpt-oss-120b', previousResponseId = null, signal } = options;
+	const { model = 'gpt-oss-120b', previousResponseId = null, signal, tools = [] } = options;
 	const { onDelta, onComplete, onError, onOutputItem, onReasoning } = callbacks;
 
 	const baseUrl = getApiBaseUrl();
@@ -77,6 +87,7 @@ export async function sendMessageStreaming(
 		model,
 		inputLength: input.length,
 		previousResponseId,
+		tools: tools.length,
 		stream: true
 	});
 
@@ -91,7 +102,8 @@ export async function sendMessageStreaming(
 				input,
 				previous_response_id: previousResponseId,
 				stream: true,
-				store: true
+				store: true,
+				tools
 			}),
 			signal
 		});

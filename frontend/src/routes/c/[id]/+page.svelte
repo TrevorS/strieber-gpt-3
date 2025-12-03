@@ -70,7 +70,8 @@
 		await sendMessageStreaming(
 			text,
 			{
-				previousResponseId: conversation.lastResponseId
+				previousResponseId: conversation.lastResponseId,
+				tools: [{ type: 'web_search' }, { type: 'code_interpreter' }]
 			},
 			{
 				onDelta: (content) => {

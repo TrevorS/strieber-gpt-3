@@ -50,7 +50,7 @@ pub fn from_chat_completion(
 
 /// Parse reasoning tags from text and return (reasoning_text, remaining_text).
 /// Returns (None, original_text) if no <think> tags found.
-fn parse_reasoning_tags(text: &str) -> (Option<String>, String) {
+pub fn parse_reasoning_tags(text: &str) -> (Option<String>, String) {
     // Look for <think>...</think> tags
     if let Some(start_idx) = text.find("<think>")
         && let Some(end_idx) = text.find("</think>")

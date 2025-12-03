@@ -10,12 +10,14 @@ use tokio::sync::mpsc;
 use crate::mcp::McpClient;
 use crate::models::{
     ChatCompletionChunk, ChatFunctionCall, ChatMessage, ChatRole, ChatToolCall, ChatToolType,
-    CreateResponseRequest, FinishReason, FunctionCallOutput, MessageOutput, OutputContent,
-    OutputItem, OutputRole, OutputStatus, Response, ResponseStatus, SseEvent, Usage,
+    CreateResponseRequest, FinishReason, FunctionCallOutput, FunctionToolWrapper, MessageOutput,
+    OutputContent, OutputItem, OutputRole, OutputStatus, ReasoningContent, ReasoningOutput,
+    Response, ResponseStatus, SseEvent, Tool, Usage,
 };
 use crate::state::{InMemoryStore, ResponseStore};
 use crate::translation::{
-    function_call_id, message_id, response_id, to_chat_completion, tool_result_message,
+    function_call_id, message_id, parse_reasoning_tags, reasoning_id, response_id,
+    to_chat_completion, tool_result_message,
 };
 
 use super::{ExecutionError, ExecutorConfig};
@@ -89,6 +91,12 @@ async fn run_streaming_loop(
         .build()?;
 
     let resp_id = response_id();
+
+    // Expand built-in tools to function definitions
+    let expanded_tools = expand_tools(&mcp, &req.tools).await;
+    let mut req = req;
+    req.tools = expanded_tools;
+
     // Initialize conversation with previous messages from chain
     let mut conversation: Vec<ChatMessage> = previous_messages;
     let mut iteration = 0;
@@ -273,34 +281,68 @@ async fn run_streaming_loop(
 
         // Finalize text output if any
         if !state.accumulated_text.is_empty() {
-            let msg_id = state.current_message_id.clone().unwrap_or_else(message_id);
+            // Parse reasoning tags from accumulated text
+            let (reasoning_text, clean_text) = parse_reasoning_tags(&state.accumulated_text);
+            let mut current_output_index = state.output_index;
 
-            send(
-                &tx,
-                SseEvent::output_text_done(
-                    resp_id.clone(),
-                    msg_id.clone(),
-                    state.output_index,
-                    0,
-                    state.accumulated_text.clone(),
-                ),
-            )
-            .await?;
+            // Emit reasoning output item if present
+            if let Some(reasoning) = reasoning_text {
+                let reasoning_item = OutputItem::Reasoning(ReasoningOutput {
+                    id: reasoning_id(),
+                    status: OutputStatus::Completed,
+                    content: vec![ReasoningContent::ReasoningText { text: reasoning }],
+                    summary: vec![],
+                    encrypted_content: None,
+                });
+                // Emit added and done for reasoning
+                send(
+                    &tx,
+                    SseEvent::output_item_added(
+                        resp_id.clone(),
+                        current_output_index,
+                        reasoning_item.clone(),
+                    ),
+                )
+                .await?;
+                send(
+                    &tx,
+                    SseEvent::output_item_done(resp_id.clone(), current_output_index, reasoning_item),
+                )
+                .await?;
+                current_output_index += 1;
+            }
 
-            let item = OutputItem::Message(MessageOutput {
-                id: msg_id,
-                status: OutputStatus::Completed,
-                role: OutputRole::Assistant,
-                content: vec![OutputContent::OutputText {
-                    text: state.accumulated_text.clone(),
-                    annotations: vec![],
-                }],
-            });
-            send(
-                &tx,
-                SseEvent::output_item_done(resp_id.clone(), state.output_index, item),
-            )
-            .await?;
+            // Emit message with clean text (without <think> tags)
+            if !clean_text.is_empty() {
+                let msg_id = state.current_message_id.clone().unwrap_or_else(message_id);
+
+                send(
+                    &tx,
+                    SseEvent::output_text_done(
+                        resp_id.clone(),
+                        msg_id.clone(),
+                        current_output_index,
+                        0,
+                        clean_text.clone(),
+                    ),
+                )
+                .await?;
+
+                let item = OutputItem::Message(MessageOutput {
+                    id: msg_id,
+                    status: OutputStatus::Completed,
+                    role: OutputRole::Assistant,
+                    content: vec![OutputContent::OutputText {
+                        text: clean_text,
+                        annotations: vec![],
+                    }],
+                });
+                send(
+                    &tx,
+                    SseEvent::output_item_done(resp_id.clone(), current_output_index, item),
+                )
+                .await?;
+            }
         }
 
         // Handle tool calls if present
@@ -413,15 +455,32 @@ fn build_final_output(state: &StreamState) -> Vec<OutputItem> {
     let mut output = Vec::new();
 
     if !state.accumulated_text.is_empty() {
-        output.push(OutputItem::Message(MessageOutput {
-            id: state.current_message_id.clone().unwrap_or_else(message_id),
-            status: OutputStatus::Completed,
-            role: OutputRole::Assistant,
-            content: vec![OutputContent::OutputText {
-                text: state.accumulated_text.clone(),
-                annotations: vec![],
-            }],
-        }));
+        // Parse reasoning tags from accumulated text
+        let (reasoning_text, clean_text) = parse_reasoning_tags(&state.accumulated_text);
+
+        // Emit reasoning first if present
+        if let Some(reasoning) = reasoning_text {
+            output.push(OutputItem::Reasoning(ReasoningOutput {
+                id: reasoning_id(),
+                status: OutputStatus::Completed,
+                content: vec![ReasoningContent::ReasoningText { text: reasoning }],
+                summary: vec![],
+                encrypted_content: None,
+            }));
+        }
+
+        // Then emit message with clean text (without <think> tags)
+        if !clean_text.is_empty() {
+            output.push(OutputItem::Message(MessageOutput {
+                id: state.current_message_id.clone().unwrap_or_else(message_id),
+                status: OutputStatus::Completed,
+                role: OutputRole::Assistant,
+                content: vec![OutputContent::OutputText {
+                    text: clean_text,
+                    annotations: vec![],
+                }],
+            }));
+        }
     }
 
     for tc in &state.accumulated_tool_calls {
@@ -491,4 +550,43 @@ async fn send(
     tx.send(Ok(event))
         .await
         .map_err(|_| ExecutionError::Llm("Stream receiver dropped".to_string()))
+}
+
+/// Expand built-in tool types to full function definitions.
+async fn expand_tools(mcp: &McpClient, tools: &[Tool]) -> Vec<Tool> {
+    let mut expanded = Vec::new();
+
+    for tool in tools {
+        match tool {
+            Tool::Function(f) => {
+                // Pass through function tools as-is
+                expanded.push(Tool::Function(f.clone()));
+            }
+            Tool::Builtin(builtin) => {
+                // Expand built-in tool to function definitions from MCP server
+                if let Some(mcp_tools) = mcp.get_tools_by_builtin_type(&builtin.tool_type).await {
+                    for mcp_tool in mcp_tools {
+                        expanded.push(mcp_tool_to_function_tool(mcp_tool));
+                    }
+                } else {
+                    tracing::warn!("Unknown built-in tool type: {}", builtin.tool_type);
+                }
+            }
+        }
+    }
+
+    expanded
+}
+
+/// Convert an MCP tool to a function tool wrapper.
+fn mcp_tool_to_function_tool(mcp_tool: rmcp::model::Tool) -> Tool {
+    let parameters = serde_json::to_value(&*mcp_tool.input_schema).ok();
+
+    Tool::Function(FunctionToolWrapper {
+        tool_type: "function".to_string(),
+        name: mcp_tool.name.to_string(),
+        description: mcp_tool.description.map(|d| d.to_string()),
+        parameters,
+        strict: false,
+    })
 }
