@@ -4,6 +4,30 @@
  * Core types for the conversation state store.
  */
 
+// Import OpenAI response types for use in this file
+import type {
+	ResponseOutputItem as OpenAIResponseOutputItem,
+	ResponseReasoningItem as OpenAIResponseReasoningItem,
+	ResponseFunctionWebSearch as OpenAIResponseFunctionWebSearch,
+	ResponseCodeInterpreterToolCall as OpenAIResponseCodeInterpreterToolCall,
+	ResponseFunctionToolCall as OpenAIResponseFunctionToolCall,
+	ResponseOutputMessage as OpenAIResponseOutputMessage,
+	ResponseFileSearchToolCall as OpenAIResponseFileSearchToolCall,
+	ResponseComputerToolCall as OpenAIResponseComputerToolCall,
+	ResponseCustomToolCall as OpenAIResponseCustomToolCall
+} from 'openai/resources/responses/responses';
+
+// Re-export with cleaner names for external consumers
+export type ResponseOutputItem = OpenAIResponseOutputItem;
+export type ResponseReasoningItem = OpenAIResponseReasoningItem;
+export type ResponseFunctionWebSearch = OpenAIResponseFunctionWebSearch;
+export type ResponseCodeInterpreterToolCall = OpenAIResponseCodeInterpreterToolCall;
+export type ResponseFunctionToolCall = OpenAIResponseFunctionToolCall;
+export type ResponseOutputMessage = OpenAIResponseOutputMessage;
+export type ResponseFileSearchToolCall = OpenAIResponseFileSearchToolCall;
+export type ResponseComputerToolCall = OpenAIResponseComputerToolCall;
+export type ResponseCustomToolCall = OpenAIResponseCustomToolCall;
+
 /**
  * Generate a UUID v4 using crypto.getRandomValues()
  * Works in all browser contexts (not just secure contexts like crypto.randomUUID)
@@ -54,7 +78,7 @@ export interface Message {
 	content: string;
 
 	/** Raw output items from Responses API (tool calls, reasoning, etc.) */
-	rawOutput?: OutputItem[];
+	rawOutput?: OpenAIResponseOutputItem[];
 
 	/** Timestamp when message was created */
 	createdAt: number;
@@ -63,19 +87,69 @@ export interface Message {
 	isStreaming?: boolean;
 }
 
+// =============================================================================
+// Type Guards for Output Items
+// =============================================================================
+
 /**
- * Output item from Responses API.
- * Simplified version - expand as needed for tool displays.
+ * Check if an output item is a reasoning item (model thinking/chain-of-thought)
  */
-export interface OutputItem {
-	/** Item type (message, function_call, reasoning, etc.) */
-	type: string;
+export function isReasoningItem(
+	item: OpenAIResponseOutputItem
+): item is OpenAIResponseReasoningItem {
+	return item.type === 'reasoning';
+}
 
-	/** Item ID */
-	id?: string;
+/**
+ * Check if an output item is a message (text output from the model)
+ */
+export function isMessageItem(item: OpenAIResponseOutputItem): item is OpenAIResponseOutputMessage {
+	return item.type === 'message';
+}
 
-	/** Content varies by type */
-	content?: unknown;
+/**
+ * Check if an output item is a function call (custom tool call)
+ */
+export function isFunctionCallItem(
+	item: OpenAIResponseOutputItem
+): item is OpenAIResponseFunctionToolCall {
+	return item.type === 'function_call';
+}
+
+/**
+ * Check if an output item is a web search call
+ */
+export function isWebSearchItem(
+	item: OpenAIResponseOutputItem
+): item is OpenAIResponseFunctionWebSearch {
+	return item.type === 'web_search_call';
+}
+
+/**
+ * Check if an output item is a code interpreter call
+ */
+export function isCodeInterpreterItem(
+	item: OpenAIResponseOutputItem
+): item is OpenAIResponseCodeInterpreterToolCall {
+	return item.type === 'code_interpreter_call';
+}
+
+/**
+ * Check if an output item is a file search call
+ */
+export function isFileSearchItem(
+	item: OpenAIResponseOutputItem
+): item is OpenAIResponseFileSearchToolCall {
+	return item.type === 'file_search_call';
+}
+
+/**
+ * Check if an output item is a computer use call
+ */
+export function isComputerUseItem(
+	item: OpenAIResponseOutputItem
+): item is OpenAIResponseComputerToolCall {
+	return item.type === 'computer_call';
 }
 
 /**

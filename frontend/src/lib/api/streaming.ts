@@ -7,13 +7,11 @@
 
 // Re-export the parsed event type from OpenAI
 // These have snapshot fields added by the SDK
-export type {
-	ParsedResponseStreamEvent as StreamEvent,
-	ResponseFunctionCallArgumentsDeltaEvent,
-	ResponseTextDeltaEvent
-} from 'openai/lib/responses/EventTypes';
+export type { ParsedResponseStreamEvent as StreamEvent } from 'openai/lib/responses/EventTypes';
+
 // Re-export individual event types for convenience
 export type {
+	ResponseCodeInterpreterCallCodeDeltaEvent,
 	ResponseCodeInterpreterCallCodeDoneEvent,
 	ResponseCodeInterpreterCallCompletedEvent,
 	ResponseCodeInterpreterCallInProgressEvent,
@@ -27,13 +25,19 @@ export type {
 	ResponseFileSearchCallCompletedEvent,
 	ResponseFileSearchCallInProgressEvent,
 	ResponseFileSearchCallSearchingEvent,
+	ResponseFunctionCallArgumentsDeltaEvent,
 	ResponseFunctionCallArgumentsDoneEvent,
 	ResponseIncompleteEvent,
 	ResponseInProgressEvent,
 	ResponseOutputItemAddedEvent,
 	ResponseOutputItemDoneEvent,
+	ResponseReasoningTextDeltaEvent,
+	ResponseReasoningTextDoneEvent,
+	ResponseReasoningSummaryTextDeltaEvent,
+	ResponseReasoningSummaryTextDoneEvent,
 	ResponseRefusalDeltaEvent,
 	ResponseRefusalDoneEvent,
+	ResponseTextDeltaEvent,
 	ResponseTextDoneEvent,
 	ResponseWebSearchCallCompletedEvent,
 	ResponseWebSearchCallInProgressEvent,

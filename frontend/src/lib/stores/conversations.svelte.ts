@@ -5,7 +5,13 @@
  * Uses $state for reactive state and $derived for computed values.
  */
 
-import { type Conversation, createConversation, createMessage, type Message } from './types';
+import {
+	type Conversation,
+	createConversation,
+	createMessage,
+	type Message,
+	type ResponseOutputItem
+} from './types';
 import { logger } from '$lib/utils/logger';
 
 /**
@@ -177,6 +183,73 @@ class ConversationStore {
 	}
 
 	/**
+	 * Add or update an output item on a message (used during streaming for tool calls).
+	 * If an item with the same ID exists, it will be updated; otherwise, it will be added.
+	 */
+	setOutputItem(conversationId: string, messageId: string, item: ResponseOutputItem): void {
+		const conv = this.conversations.find((c) => c.id === conversationId);
+		if (!conv) {
+			logger.warn('store', 'setOutputItem: conversation not found', { conversationId });
+			return;
+		}
+
+		const message = conv.messages.find((m) => m.id === messageId);
+		if (!message) {
+			logger.warn('store', 'setOutputItem: message not found', { conversationId, messageId });
+			return;
+		}
+
+		// Initialize rawOutput if not present
+		if (!message.rawOutput) {
+			message.rawOutput = [];
+		}
+
+		// Check if item already exists by ID
+		const itemId = 'id' in item ? item.id : undefined;
+		if (itemId) {
+			const existingIndex = message.rawOutput.findIndex(
+				(existing) => 'id' in existing && existing.id === itemId
+			);
+
+			if (existingIndex !== -1) {
+				// Update existing item
+				message.rawOutput[existingIndex] = item;
+				logger.debug('store', 'Output item updated', {
+					conversationId,
+					messageId,
+					itemId,
+					itemType: item.type
+				});
+				return;
+			}
+		}
+
+		// Add new item
+		message.rawOutput.push(item);
+		logger.debug('store', 'Output item added', {
+			conversationId,
+			messageId,
+			itemId,
+			itemType: item.type,
+			totalItems: message.rawOutput.length
+		});
+	}
+
+	/**
+	 * Clear all output items from a message.
+	 */
+	clearOutputItems(conversationId: string, messageId: string): void {
+		const conv = this.conversations.find((c) => c.id === conversationId);
+		if (!conv) return;
+
+		const message = conv.messages.find((m) => m.id === messageId);
+		if (message) {
+			message.rawOutput = [];
+			logger.debug('store', 'Output items cleared', { conversationId, messageId });
+		}
+	}
+
+	/**
 	 * Get a conversation by ID.
 	 */
 	get(id: string): Conversation | undefined {
@@ -195,14 +268,16 @@ class ConversationStore {
 
 	/**
 	 * Load conversations from external source (e.g., localStorage).
+	 * If activeId is not provided, defaults to the first conversation.
 	 * Pass null for activeId to explicitly have no active conversation.
 	 */
-	load(conversations: Conversation[], activeId: string | null): void {
+	load(conversations: Conversation[], activeId?: string | null): void {
 		this.conversations = conversations;
-		this.activeId = activeId;
+		// Default to first conversation if activeId not explicitly provided
+		this.activeId = activeId !== undefined ? activeId : (conversations[0]?.id ?? null);
 		logger.info('persistence', 'Conversations loaded from storage', {
 			conversationCount: conversations.length,
-			activeId,
+			activeId: this.activeId,
 			conversationIds: conversations.map((c) => c.id)
 		});
 	}

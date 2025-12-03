@@ -7,8 +7,9 @@
 
 import { getApiBaseUrl } from './client';
 import { isCompletedEvent, isFailedEvent, isTextDeltaEvent, parseSSEStream } from './streaming';
+import type { ResponseOutputItemAddedEvent, ResponseOutputItemDoneEvent } from './streaming';
 import { logger } from '$lib/utils/logger';
-import { generateUUID } from '$lib/stores/types';
+import { generateUUID, type ResponseOutputItem } from '$lib/stores/types';
 
 /**
  * Options for streaming message requests
@@ -32,6 +33,10 @@ export interface StreamingCallbacks {
 	onComplete: (responseId: string) => void;
 	/** Called when an error occurs */
 	onError: (error: Error) => void;
+	/** Called when an output item is added (optional) */
+	onOutputItem?: (item: ResponseOutputItem, status: 'added' | 'done') => void;
+	/** Called when reasoning text is received (cumulative) - for DeepSeek R1 / o-series models */
+	onReasoning?: (text: string) => void;
 }
 
 /**
@@ -60,7 +65,7 @@ export async function sendMessageStreaming(
 	callbacks: StreamingCallbacks
 ): Promise<void> {
 	const { model = 'gpt-oss-120b', previousResponseId = null, signal } = options;
-	const { onDelta, onComplete, onError } = callbacks;
+	const { onDelta, onComplete, onError, onOutputItem, onReasoning } = callbacks;
 
 	const baseUrl = getApiBaseUrl();
 	const url = `${baseUrl}/responses`;
@@ -101,6 +106,7 @@ export async function sendMessageStreaming(
 
 		let responseId = '';
 		let fullText = '';
+		let reasoningText = '';
 		let chunkCount = 0;
 
 		for await (const event of parseSSEStream(response)) {
@@ -109,6 +115,36 @@ export async function sendMessageStreaming(
 				fullText += event.delta;
 				chunkCount++;
 				onDelta(fullText);
+			}
+
+			// Handle reasoning delta events (o-series, DeepSeek R1)
+			// Use string comparison since SDK types may not include all event types
+			if ((event as { type: string }).type === 'response.reasoning_text.delta' && onReasoning) {
+				const delta = (event as { delta?: string }).delta ?? '';
+				reasoningText += delta;
+				onReasoning(reasoningText);
+			}
+
+			// Handle output item added events
+			if (event.type === 'response.output_item.added' && onOutputItem) {
+				const addedEvent = event as ResponseOutputItemAddedEvent;
+				logger.debug('streaming', 'Output item added', {
+					requestId,
+					itemType: addedEvent.item.type,
+					outputIndex: addedEvent.output_index
+				});
+				onOutputItem(addedEvent.item as ResponseOutputItem, 'added');
+			}
+
+			// Handle output item done events
+			if (event.type === 'response.output_item.done' && onOutputItem) {
+				const doneEvent = event as ResponseOutputItemDoneEvent;
+				logger.debug('streaming', 'Output item done', {
+					requestId,
+					itemType: doneEvent.item.type,
+					outputIndex: doneEvent.output_index
+				});
+				onOutputItem(doneEvent.item as ResponseOutputItem, 'done');
 			}
 
 			// Track response ID from created event
@@ -127,6 +163,7 @@ export async function sendMessageStreaming(
 					requestId,
 					responseId,
 					totalLength: fullText.length,
+					reasoningLength: reasoningText.length,
 					chunkCount
 				});
 				onComplete(responseId);

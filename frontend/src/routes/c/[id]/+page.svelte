@@ -9,7 +9,8 @@
 	import { logger } from '$lib/utils/logger';
 
 	// Get conversation from store based on URL param
-	let conversation = $derived(conversationStore.get(page.params.id));
+	// The id param is always defined since this is a [id] route
+	let conversation = $derived(page.params.id ? conversationStore.get(page.params.id) : undefined);
 	let messages = $derived(conversation?.messages ?? []);
 	let isStreaming = $state(false);
 
@@ -74,6 +75,9 @@
 			{
 				onDelta: (content) => {
 					conversationStore.updateMessageContent(conversation!.id, assistantMessage.id, content);
+				},
+				onOutputItem: (item) => {
+					conversationStore.setOutputItem(conversation!.id, assistantMessage.id, item);
 				},
 				onComplete: (responseId) => {
 					logger.api.streamComplete(

@@ -15,7 +15,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import ChatInput from '../ChatInput.svelte';
 
 describe('ChatInput', () => {
-	let mockOnSubmit: ReturnType<typeof vi.fn>;
+	let mockOnSubmit: (text: string) => void;
 
 	beforeEach(() => {
 		mockOnSubmit = vi.fn();

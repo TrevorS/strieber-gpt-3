@@ -7,8 +7,8 @@ import ConversationItem from '../ConversationItem.svelte';
 import { createConversation } from '$lib/stores/types';
 
 describe('ConversationItem', () => {
-	let mockOnSelect: ReturnType<typeof vi.fn>;
-	let mockOnDelete: ReturnType<typeof vi.fn>;
+	let mockOnSelect: () => void;
+	let mockOnDelete: () => void;
 
 	beforeEach(() => {
 		mockOnSelect = vi.fn();

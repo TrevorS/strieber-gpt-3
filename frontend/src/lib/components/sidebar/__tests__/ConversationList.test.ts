@@ -7,9 +7,9 @@ import ConversationList from '../ConversationList.svelte';
 import { createConversation } from '$lib/stores/types';
 
 describe('ConversationList', () => {
-	let mockOnSelect: ReturnType<typeof vi.fn>;
-	let mockOnNew: ReturnType<typeof vi.fn>;
-	let mockOnDelete: ReturnType<typeof vi.fn>;
+	let mockOnSelect: (id: string) => void;
+	let mockOnNew: () => void;
+	let mockOnDelete: (id: string) => void;
 
 	// Fix "now" to a specific date for predictable tests
 	const NOW = new Date('2024-06-15T14:00:00Z').getTime();

@@ -152,7 +152,7 @@ describe('parseSSEStream', () => {
 		}
 
 		expect(events).toHaveLength(2);
-		expect(events.find((e) => e.type === 'after.done')).toBeUndefined();
+		expect(events.find((e) => (e as { type: string }).type === 'after.done')).toBeUndefined();
 	});
 
 	it('should handle partial line buffering across chunks', async () => {
@@ -278,9 +278,11 @@ describe('type guards', () => {
 				content_index: 0,
 				item_id: 'item_1',
 				logprobs: [],
-				sequence_number: 1
+				sequence_number: 1,
+				snapshot: 'test'
 			};
-			expect(isTextDeltaEvent(event)).toBe(true);
+			// eslint-disable-next-line @typescript-eslint/no-explicit-any
+			expect(isTextDeltaEvent(event as any)).toBe(true);
 		});
 
 		it('should return false for other event types', () => {
@@ -289,6 +291,7 @@ describe('type guards', () => {
 				response: { id: 'resp_123' },
 				sequence_number: 0
 			};
+			// eslint-disable-next-line @typescript-eslint/no-explicit-any
 			expect(isTextDeltaEvent(event as any)).toBe(false);
 		});
 	});
@@ -300,7 +303,8 @@ describe('type guards', () => {
 				response: { id: 'resp_123' },
 				sequence_number: 10
 			};
-			expect(isCompletedEvent(event)).toBe(true);
+			// eslint-disable-next-line @typescript-eslint/no-explicit-any
+			expect(isCompletedEvent(event as any)).toBe(true);
 		});
 
 		it('should return false for other event types', () => {
@@ -309,6 +313,7 @@ describe('type guards', () => {
 				response: { id: 'resp_123' },
 				sequence_number: 0
 			};
+			// eslint-disable-next-line @typescript-eslint/no-explicit-any
 			expect(isCompletedEvent(event as any)).toBe(false);
 		});
 	});
@@ -320,7 +325,8 @@ describe('type guards', () => {
 				response: { id: 'resp_123' },
 				sequence_number: 5
 			};
-			expect(isFailedEvent(event)).toBe(true);
+			// eslint-disable-next-line @typescript-eslint/no-explicit-any
+			expect(isFailedEvent(event as any)).toBe(true);
 		});
 
 		it('should return false for completed events', () => {
@@ -329,6 +335,7 @@ describe('type guards', () => {
 				response: { id: 'resp_123' },
 				sequence_number: 10
 			};
+			// eslint-disable-next-line @typescript-eslint/no-explicit-any
 			expect(isFailedEvent(event as any)).toBe(false);
 		});
 	});
@@ -339,9 +346,11 @@ describe('type guards', () => {
 				type: 'error' as const,
 				code: 'server_error',
 				message: 'Something went wrong',
+				param: null,
 				sequence_number: 1
 			};
-			expect(isErrorEvent(event)).toBe(true);
+			// eslint-disable-next-line @typescript-eslint/no-explicit-any
+			expect(isErrorEvent(event as any)).toBe(true);
 		});
 
 		it('should return false for failed events (different from error)', () => {
@@ -350,6 +359,7 @@ describe('type guards', () => {
 				response: { id: 'resp_123' },
 				sequence_number: 5
 			};
+			// eslint-disable-next-line @typescript-eslint/no-explicit-any
 			expect(isErrorEvent(event as any)).toBe(false);
 		});
 	});
