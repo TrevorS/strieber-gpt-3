@@ -300,23 +300,20 @@ fn output_role_to_input_role(role: OutputRole) -> Role {
 /// Convert output content to message content for input.
 fn output_content_to_message_content(content: &[OutputContent]) -> crate::models::MessageContent {
     // If there's a single text item, return it as Text
-    // Otherwise, convert to Parts (though messages typically have single content)
-    if content.len() == 1 {
-        if let OutputContent::OutputText { text, .. } = &content[0] {
-            return crate::models::MessageContent::Text(text.clone());
-        }
+    if let [OutputContent::OutputText { text, .. }] = content {
+        return crate::models::MessageContent::Text(text.clone());
     }
 
     // For multiple parts or non-text content, build Parts
     let parts: Vec<crate::models::ContentPart> = content
         .iter()
-        .filter_map(|c| match c {
+        .map(|c| match c {
             OutputContent::OutputText { text, .. } => {
-                Some(crate::models::ContentPart::InputText { text: text.clone() })
+                crate::models::ContentPart::InputText { text: text.clone() }
             }
-            OutputContent::Refusal { refusal } => Some(crate::models::ContentPart::InputText {
+            OutputContent::Refusal { refusal } => crate::models::ContentPart::InputText {
                 text: format!("[Refusal: {}]", refusal),
-            }),
+            },
         })
         .collect();
 

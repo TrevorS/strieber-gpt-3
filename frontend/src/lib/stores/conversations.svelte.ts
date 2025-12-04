@@ -12,6 +12,7 @@ import {
 	type Message,
 	type ResponseOutputItem
 } from './types';
+import type { Attachment } from '$lib/utils/files';
 import { logger } from '$lib/utils/logger';
 
 /**
@@ -105,14 +106,19 @@ class ConversationStore {
 	/**
 	 * Add a message to a conversation.
 	 */
-	addMessage(conversationId: string, role: Message['role'], content: string): Message {
+	addMessage(
+		conversationId: string,
+		role: Message['role'],
+		content: string,
+		attachments?: Attachment[]
+	): Message {
 		const conv = this.conversations.find((c) => c.id === conversationId);
 		if (!conv) {
 			logger.error('store', 'addMessage failed: conversation not found', { conversationId });
 			throw new Error(`Conversation not found: ${conversationId}`);
 		}
 
-		const message = createMessage(role, content);
+		const message = createMessage(role, content, attachments?.length ? { attachments } : undefined);
 		conv.messages.push(message);
 		conv.updatedAt = Date.now();
 		logger.store.action('addMessage', {
@@ -120,6 +126,7 @@ class ConversationStore {
 			messageId: message.id,
 			role,
 			contentLength: content.length,
+			attachmentCount: attachments?.length ?? 0,
 			messageCount: conv.messages.length
 		});
 		return message;

@@ -12,6 +12,9 @@ export interface Model {
 	object?: string;
 	created?: number;
 	owned_by?: string;
+	supports_vision?: boolean;
+	/** Which tools this model supports. null = all tools, [] = no tools */
+	supported_tools?: string[] | null;
 }
 
 export interface ModelsResponse {

@@ -164,7 +164,7 @@ test.describe('Delete Conversation', () => {
 		await page.goto('/');
 
 		const textarea = page.locator('textarea[placeholder="Send a message..."]');
-		const sendButton = page.locator('.border-t button');
+		const sendButton = page.getByTestId('send-button');
 
 		// Create a conversation
 		await textarea.fill('Test mobile delete.');

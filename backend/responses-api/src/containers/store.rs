@@ -108,14 +108,12 @@ impl ContainerStore {
     /// Get or create a container, returning its ID.
     /// If a container_id is provided and exists, returns it. Otherwise creates a new one.
     pub fn get_or_create(&self, container_id: Option<&str>) -> String {
-        if let Some(id) = container_id {
-            if self.containers.contains_key(id) {
-                // Touch to update last_used
-                if let Some(mut entry) = self.containers.get_mut(id) {
-                    entry.touch();
-                }
-                return id.to_string();
+        if let Some(id) = container_id.filter(|id| self.containers.contains_key(*id)) {
+            // Touch to update last_used
+            if let Some(mut entry) = self.containers.get_mut(id) {
+                entry.touch();
             }
+            return id.to_string();
         }
         self.create()
     }
@@ -152,11 +150,7 @@ impl ContainerStore {
     }
 
     /// Get a file's content and MIME type.
-    pub fn get_file_content(
-        &self,
-        container_id: &str,
-        file_id: &str,
-    ) -> Option<(Vec<u8>, String)> {
+    pub fn get_file_content(&self, container_id: &str, file_id: &str) -> Option<(Vec<u8>, String)> {
         let entry = self.containers.get(container_id)?;
         let file = entry.files.get(file_id)?;
         Some((file.content.clone(), file.mime_type.clone()))
@@ -170,7 +164,11 @@ impl ContainerStore {
     ) -> Option<(String, String, usize)> {
         let entry = self.containers.get(container_id)?;
         let file = entry.files.get(file_id)?;
-        Some((file.filename.clone(), file.mime_type.clone(), file.content.len()))
+        Some((
+            file.filename.clone(),
+            file.mime_type.clone(),
+            file.content.len(),
+        ))
     }
 
     /// List all file IDs in a container.
@@ -232,7 +230,12 @@ mod tests {
 
         let content = b"PNG image data".to_vec();
         let file_id = store
-            .add_file(&container_id, "test.png".to_string(), content.clone(), "image/png")
+            .add_file(
+                &container_id,
+                "test.png".to_string(),
+                content.clone(),
+                "image/png",
+            )
             .unwrap();
 
         assert!(file_id.starts_with("cfile_"));
@@ -262,7 +265,11 @@ mod tests {
     fn nonexistent_container_returns_none() {
         let store = ContainerStore::new();
         assert!(store.get_file_content("cntr_fake", "file_fake").is_none());
-        assert!(store.add_file("cntr_fake", "test.png".to_string(), vec![], "image/png").is_none());
+        assert!(
+            store
+                .add_file("cntr_fake", "test.png".to_string(), vec![], "image/png")
+                .is_none()
+        );
     }
 
     #[test]

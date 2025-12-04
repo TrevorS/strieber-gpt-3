@@ -350,7 +350,7 @@ interface StoredSettings {
 
 | Type | Extensions | Max Size | Input Type |
 |------|------------|----------|------------|
-| Images | png, jpg, jpeg, gif, webp | 20MB | `input_image` |
+| Images | png, jpg, jpeg, gif | 20MB | `input_image` |
 | Documents | pdf | 20MB | `input_file` |
 
 ### Data URL Format

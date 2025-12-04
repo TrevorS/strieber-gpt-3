@@ -1,4 +1,5 @@
 export { default as AssistantMessage } from './AssistantMessage.svelte';
+export { default as AttachmentStrip } from './AttachmentStrip.svelte';
 export { default as ChatInput } from './ChatInput.svelte';
 export { default as MarkdownContent } from './MarkdownContent.svelte';
 export { default as MessageList } from './MessageList.svelte';

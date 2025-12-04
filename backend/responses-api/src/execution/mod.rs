@@ -6,6 +6,6 @@ mod context;
 mod executor;
 mod streaming;
 
-pub use context::{resolve_chain, ChainErrorKind, ChainResolutionError, DEFAULT_MAX_CHAIN_DEPTH};
+pub use context::{ChainErrorKind, ChainResolutionError, DEFAULT_MAX_CHAIN_DEPTH, resolve_chain};
 pub use executor::{ExecutionError, Executor, ExecutorConfig, GeneratedFile};
 pub use streaming::execute_streaming;

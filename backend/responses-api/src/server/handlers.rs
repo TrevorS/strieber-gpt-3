@@ -15,13 +15,16 @@ use serde_json::json;
 use crate::config::Config;
 use crate::containers::ContainerStore;
 use crate::execution::{
-    resolve_chain, ChainResolutionError, ExecutionError, Executor, ExecutorConfig,
-    execute_streaming, DEFAULT_MAX_CHAIN_DEPTH,
+    ChainResolutionError, DEFAULT_MAX_CHAIN_DEPTH, ExecutionError, Executor, ExecutorConfig,
+    execute_streaming, resolve_chain,
 };
 use crate::mcp::McpClient;
 use crate::models::{ChatMessage, CreateResponseRequest, DeleteResponse};
 use crate::state::{InMemoryStore, ResponseStore};
 use crate::translation::assemble_context_from_chain;
+
+/// Type alias for API error responses.
+type ApiError = (StatusCode, Json<serde_json::Value>);
 
 /// Shared application state.
 pub struct AppState {
@@ -82,7 +85,7 @@ pub async fn create_response(
 fn resolve_previous_response_chain(
     store: &InMemoryStore,
     req: &CreateResponseRequest,
-) -> Result<(Option<String>, Vec<ChatMessage>), (StatusCode, Json<serde_json::Value>)> {
+) -> Result<(Option<String>, Vec<ChatMessage>), ApiError> {
     if let Some(prev_id) = &req.previous_response_id {
         tracing::debug!(
             previous_response_id = %prev_id,
@@ -105,7 +108,11 @@ fn resolve_previous_response_chain(
         for (i, msg) in messages.iter().enumerate() {
             let content_preview = match &msg.content {
                 Some(crate::models::ChatContent::Text(t)) => {
-                    if t.len() > 100 { format!("{}...", &t[..100]) } else { t.clone() }
+                    if t.len() > 100 {
+                        format!("{}...", &t[..100])
+                    } else {
+                        t.clone()
+                    }
                 }
                 Some(crate::models::ChatContent::Parts(_)) => "[parts]".to_string(),
                 None => "[none]".to_string(),
@@ -267,7 +274,9 @@ pub async fn list_models(State(state): State<Arc<AppState>>) -> impl IntoRespons
                 "id": m.id,
                 "object": "model",
                 "created": 1234567890,
-                "owned_by": m.owned_by
+                "owned_by": m.owned_by,
+                "supports_vision": m.supports_vision,
+                "supported_tools": m.supported_tools
             })
         })
         .collect();

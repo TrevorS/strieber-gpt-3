@@ -638,10 +638,7 @@ async fn test_builtin_web_search() {
     println!("Final response: {}", final_text);
 
     // Should have some response about climate
-    assert!(
-        !final_text.is_empty(),
-        "Should have a response"
-    );
+    assert!(!final_text.is_empty(), "Should have a response");
 }
 
 /// Test max_tool_calls limit.

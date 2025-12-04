@@ -25,9 +25,19 @@
 	}
 
 	$effect(() => {
-		messages; // track only messages as dependency
+		// Track values that actually change (props don't auto-track)
+		const len = messages.length;
+		const lastMsg = messages[len - 1];
+		const _lastContent = lastMsg?.content;
+		const _lastStreaming = lastMsg?.isStreaming;
+
 		if (container && untrack(() => isAtBottom)) {
-			container.scrollTop = container.scrollHeight;
+			// Use requestAnimationFrame to ensure DOM has updated
+			requestAnimationFrame(() => {
+				if (container) {
+					container.scrollTop = container.scrollHeight;
+				}
+			});
 		}
 	});
 

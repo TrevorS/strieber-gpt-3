@@ -10,6 +10,7 @@
 	import { sendMessageStreaming } from '$lib/api';
 	import { conversationStore, settingsStore, toastStore } from '$lib/stores';
 	import { logger } from '$lib/utils/logger';
+	import type { Attachment } from '$lib/utils/files';
 
 	// Get conversation from store based on URL param
 	// The id param is always defined since this is a [id] route
@@ -39,7 +40,7 @@
 		}
 	});
 
-	async function handleSubmit(text: string) {
+	async function handleSubmit(text: string, attachments: Attachment[]) {
 		if (!conversation) {
 			logger.warn('ui', 'handleSubmit called with no conversation');
 			return;
@@ -48,11 +49,12 @@
 		logger.ui.event('ConversationPage', 'handleSubmit called', {
 			conversationId: conversation.id,
 			textLength: text.length,
+			attachmentCount: attachments.length,
 			messageCount: conversation.messages.length
 		});
 
-		// Add user message
-		conversationStore.addMessage(conversation.id, 'user', text);
+		// Add user message with attachments
+		conversationStore.addMessage(conversation.id, 'user', text, attachments);
 
 		// Create placeholder for assistant message
 		const assistantMessage = conversationStore.addMessage(conversation.id, 'assistant', '');
@@ -72,12 +74,13 @@
 			{
 				model: settingsStore.selectedModel,
 				previousResponseId: conversation.lastResponseId,
-				tools: [
+				tools: settingsStore.filterTools([
 					{ type: 'web_search' },
 					{ type: 'code_interpreter' },
 					{ type: 'weather' },
 					{ type: 'reader' }
-				],
+				]),
+				attachments,
 				signal: abortController.signal
 			},
 			{
@@ -157,12 +160,12 @@
 			{
 				model: settingsStore.selectedModel,
 				previousResponseId: conversation.lastResponseId,
-				tools: [
+				tools: settingsStore.filterTools([
 					{ type: 'web_search' },
 					{ type: 'code_interpreter' },
 					{ type: 'weather' },
 					{ type: 'reader' }
-				],
+				]),
 				signal: abortController.signal
 			},
 			{

@@ -164,7 +164,10 @@ mod tests {
             Tool::Function(f) => {
                 assert_eq!(f.tool_type, "function");
                 assert_eq!(f.name, "get_weather");
-                assert_eq!(f.description, Some("Get weather for a location".to_string()));
+                assert_eq!(
+                    f.description,
+                    Some("Get weather for a location".to_string())
+                );
                 assert!(f.parameters.is_some());
             }
             Tool::Builtin(_) => panic!("expected Function, got Builtin"),

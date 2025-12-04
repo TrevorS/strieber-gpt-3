@@ -329,8 +329,8 @@ pub fn assemble_context_from_chain(
 mod tests {
     use super::*;
     use crate::models::{
-        FunctionCallInput, FunctionCallOutputInput, FunctionTool, FunctionToolWrapper,
-        ReasoningContentInput, ReasoningInput,
+        FunctionCallInput, FunctionCallOutputInput, FunctionToolWrapper, ReasoningContentInput,
+        ReasoningInput,
     };
     use pretty_assertions::assert_eq;
     use serde_json::json;
@@ -836,8 +836,10 @@ mod tests {
 
     #[test]
     fn empty_chain_preserves_current_instructions() {
-        let current =
-            make_current_request(Input::Text("Hi".to_string()), Some("Be helpful".to_string()));
+        let current = make_current_request(
+            Input::Text("Hi".to_string()),
+            Some("Be helpful".to_string()),
+        );
 
         let (instructions, messages) = assemble_context_from_chain(&[], &current);
 

@@ -7,6 +7,7 @@
 	import { sendMessageStreaming } from '$lib/api';
 	import { conversationStore, settingsStore, toastStore } from '$lib/stores';
 	import { logger } from '$lib/utils/logger';
+	import type { Attachment } from '$lib/utils/files';
 
 	let isStreaming = $state(false);
 	let abortController: AbortController | null = $state(null);
@@ -17,9 +18,10 @@
 	let activeConversation = $derived(activeId ? conversationStore.get(activeId) : undefined);
 	let messages = $derived(activeConversation?.messages ?? []);
 
-	async function handleSubmit(text: string) {
+	async function handleSubmit(text: string, attachments: Attachment[]) {
 		logger.ui.event('HomePage', 'handleSubmit called', {
 			textLength: text.length,
+			attachmentCount: attachments.length,
 			hasActiveConversation: !!activeConversation
 		});
 
@@ -30,8 +32,8 @@
 			conv = conversationStore.create();
 		}
 
-		// Add user message
-		conversationStore.addMessage(conv.id, 'user', text);
+		// Add user message with attachments
+		conversationStore.addMessage(conv.id, 'user', text, attachments);
 
 		// Create placeholder for assistant message
 		const assistantMessage = conversationStore.addMessage(conv.id, 'assistant', '');
@@ -52,12 +54,13 @@
 			{
 				model: settingsStore.selectedModel,
 				previousResponseId: conv.lastResponseId,
-				tools: [
+				tools: settingsStore.filterTools([
 					{ type: 'web_search' },
 					{ type: 'code_interpreter' },
 					{ type: 'weather' },
 					{ type: 'reader' }
-				],
+				]),
+				attachments,
 				signal: abortController.signal
 			},
 			{

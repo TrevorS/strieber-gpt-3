@@ -98,10 +98,8 @@ pub async fn list_container_files(
     let files: Vec<_> = file_ids
         .iter()
         .filter_map(|id| {
-            state
-                .containers
-                .get_file_metadata(&container_id, id)
-                .map(|(filename, mime_type, size)| {
+            state.containers.get_file_metadata(&container_id, id).map(
+                |(filename, mime_type, size)| {
                     json!({
                         "id": id,
                         "object": "container.file",
@@ -110,7 +108,8 @@ pub async fn list_container_files(
                         "mime_type": mime_type,
                         "size": size
                     })
-                })
+                },
+            )
         })
         .collect();
 

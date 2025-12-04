@@ -24,7 +24,7 @@ test.describe('Layout Shell', () => {
 		const textarea = page.locator('textarea[placeholder="Send a message..."]');
 		await expect(textarea).toBeVisible();
 		// Send button is next to textarea in the input area
-		const sendButton = page.locator('.border-t button').filter({ has: page.locator('svg') });
+		const sendButton = page.getByTestId('send-button');
 		await expect(sendButton).toBeVisible();
 	});
 

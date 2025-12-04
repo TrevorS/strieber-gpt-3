@@ -10,6 +10,7 @@ import { isCompletedEvent, isFailedEvent, isTextDeltaEvent, parseSSEStream } fro
 import type { ResponseOutputItemAddedEvent, ResponseOutputItemDoneEvent } from './streaming';
 import { logger } from '$lib/utils/logger';
 import { generateUUID, type ResponseOutputItem } from '$lib/stores/types';
+import { formatTextAttachmentsForPrompt, type Attachment } from '$lib/utils/files';
 
 /**
  * Tool definition for API requests
@@ -31,6 +32,8 @@ export interface StreamingOptions {
 	signal?: AbortSignal;
 	/** Tools to enable for this request */
 	tools?: ToolDefinition[];
+	/** File attachments to include with the message */
+	attachments?: Attachment[];
 }
 
 /**
@@ -69,12 +72,74 @@ export interface StreamingCallbacks {
  * );
  * ```
  */
+/**
+ * Format message input with attachments.
+ * - Text files are prepended as demarcated code blocks
+ * - Images use multimodal content format
+ */
+type ContentPart = { type: string; text?: string; image_url?: { url: string; detail?: string } };
+type MessageInput = { type: 'message'; role: 'user'; content: ContentPart[] };
+
+function formatInputWithAttachments(
+	text: string,
+	attachments: Attachment[]
+): string | MessageInput[] {
+	const imageAttachments = attachments.filter((a) => a.type === 'image');
+	const textContent = formatTextAttachmentsForPrompt(attachments);
+
+	// Combine text attachments with user message
+	const fullText = textContent ? `${textContent}\n\n${text}` : text;
+
+	// If no images, return plain string
+	if (imageAttachments.length === 0) {
+		return fullText;
+	}
+
+	// With images, use multimodal content array wrapped in a message object
+	const parts: Array<{
+		type: string;
+		text?: string;
+		image_url?: { url: string; detail?: string };
+	}> = [];
+
+	// Add text first
+	if (fullText) {
+		parts.push({ type: 'input_text', text: fullText });
+	}
+
+	// Add images
+	for (const img of imageAttachments) {
+		parts.push({
+			type: 'input_image',
+			image_url: {
+				url: img.content,
+				detail: 'auto'
+			}
+		});
+	}
+
+	// Wrap content parts in a message object (backend expects InputItem with type: "message")
+	return [
+		{
+			type: 'message',
+			role: 'user',
+			content: parts
+		}
+	];
+}
+
 export async function sendMessageStreaming(
 	input: string,
 	options: StreamingOptions,
 	callbacks: StreamingCallbacks
 ): Promise<void> {
-	const { model = 'gpt-oss-120b', previousResponseId = null, signal, tools = [] } = options;
+	const {
+		model = 'gpt-oss-120b',
+		previousResponseId = null,
+		signal,
+		tools = [],
+		attachments = []
+	} = options;
 	const { onDelta, onComplete, onError, onOutputItem, onReasoning } = callbacks;
 
 	const baseUrl = getApiBaseUrl();
@@ -82,12 +147,18 @@ export async function sendMessageStreaming(
 
 	const requestId = generateUUID().slice(0, 8);
 
+	// Format input with any attachments
+	const formattedInput = formatInputWithAttachments(input, attachments);
+	const hasImages = attachments.some((a) => a.type === 'image');
+
 	logger.api.request('POST', url, {
 		requestId,
 		model,
 		inputLength: input.length,
 		previousResponseId,
 		tools: tools.length,
+		attachments: attachments.length,
+		hasImages,
 		stream: true
 	});
 
@@ -95,7 +166,8 @@ export async function sendMessageStreaming(
 	logger.info('api', '=== CONTEXT CHAIN DEBUG ===', {
 		requestId,
 		previousResponseId: previousResponseId ?? 'null (new conversation)',
-		inputPreview: input.length > 50 ? `${input.slice(0, 50)}...` : input
+		inputPreview: input.length > 50 ? `${input.slice(0, 50)}...` : input,
+		attachments: attachments.map((a) => ({ name: a.name, type: a.type }))
 	});
 
 	try {
@@ -106,7 +178,7 @@ export async function sendMessageStreaming(
 			},
 			body: JSON.stringify({
 				model,
-				input,
+				input: formattedInput,
 				previous_response_id: previousResponseId,
 				stream: true,
 				store: true,

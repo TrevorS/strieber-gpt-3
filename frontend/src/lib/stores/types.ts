@@ -4,6 +4,8 @@
  * Core types for the conversation state store.
  */
 
+import type { Attachment } from '$lib/utils/files';
+
 // Import OpenAI response types for use in this file
 import type {
 	ResponseOutputItem as OpenAIResponseOutputItem,
@@ -79,6 +81,9 @@ export interface Message {
 
 	/** Raw output items from Responses API (tool calls, reasoning, etc.) */
 	rawOutput?: OpenAIResponseOutputItem[];
+
+	/** File attachments (images, text files) */
+	attachments?: Attachment[];
 
 	/** Timestamp when message was created */
 	createdAt: number;

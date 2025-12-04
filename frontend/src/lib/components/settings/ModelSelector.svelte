@@ -11,6 +11,8 @@
 	onMount(async () => {
 		const start = Date.now();
 		models = await fetchModels();
+		// Sync to settings store for capability checks
+		settingsStore.setModels(models);
 		// Minimum loading time to prevent flash
 		const elapsed = Date.now() - start;
 		const remaining = Math.max(0, 350 - elapsed);

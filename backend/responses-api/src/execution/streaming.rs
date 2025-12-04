@@ -114,7 +114,11 @@ async fn run_streaming_loop(
     for (i, msg) in conversation.iter().enumerate() {
         let content_preview = match &msg.content {
             Some(crate::models::ChatContent::Text(t)) => {
-                if t.len() > 100 { format!("{}...", &t[..100]) } else { t.clone() }
+                if t.len() > 100 {
+                    format!("{}...", &t[..100])
+                } else {
+                    t.clone()
+                }
             }
             Some(crate::models::ChatContent::Parts(_)) => "[parts]".to_string(),
             None => "[none]".to_string(),
@@ -161,7 +165,11 @@ async fn run_streaming_loop(
         for (i, msg) in chat_req.messages.iter().enumerate() {
             let content_preview = match &msg.content {
                 Some(crate::models::ChatContent::Text(t)) => {
-                    if t.len() > 100 { format!("{}...", &t[..100]) } else { t.clone() }
+                    if t.len() > 100 {
+                        format!("{}...", &t[..100])
+                    } else {
+                        t.clone()
+                    }
                 }
                 Some(crate::models::ChatContent::Parts(_)) => "[parts]".to_string(),
                 None => "[none]".to_string(),
@@ -355,7 +363,11 @@ async fn run_streaming_loop(
                 .await?;
                 send(
                     &tx,
-                    SseEvent::output_item_done(resp_id.clone(), current_output_index, reasoning_item),
+                    SseEvent::output_item_done(
+                        resp_id.clone(),
+                        current_output_index,
+                        reasoning_item,
+                    ),
                 )
                 .await?;
                 current_output_index += 1;

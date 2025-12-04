@@ -6,6 +6,7 @@
  */
 
 import { browser } from '$app/environment';
+import type { Model } from '$lib/api/models';
 
 const STORAGE_KEY = 'strieber-settings';
 const DEFAULT_MODEL = 'gpt-oss-120b';
@@ -68,6 +69,21 @@ class SettingsStore {
 	/** Theme preference */
 	theme = $state<'light' | 'dark' | 'system'>('system');
 
+	/** Available models from API */
+	models = $state<Model[]>([]);
+
+	/** Whether the currently selected model supports vision/image inputs */
+	supportsVision = $derived(() => {
+		const model = this.models.find((m) => m.id === this.selectedModel);
+		return model?.supports_vision ?? false;
+	});
+
+	/** Which tools the currently selected model supports (null = all, [] = none) */
+	supportedTools = $derived(() => {
+		const model = this.models.find((m) => m.id === this.selectedModel);
+		return model?.supported_tools ?? null;
+	});
+
 	constructor() {
 		if (browser) {
 			const saved = loadSettings();
@@ -75,6 +91,13 @@ class SettingsStore {
 			this.temperature = saved.temperature;
 			this.theme = saved.theme;
 		}
+	}
+
+	/**
+	 * Set available models (called after fetching from API).
+	 */
+	setModels(models: Model[]): void {
+		this.models = models;
 	}
 
 	/**
@@ -99,6 +122,21 @@ class SettingsStore {
 	setTheme(value: 'light' | 'dark' | 'system'): void {
 		this.theme = value;
 		this.persist();
+	}
+
+	/**
+	 * Filter tools based on current model's supported_tools.
+	 * Returns empty array if model supports no tools.
+	 * Returns all tools if model supports all tools (null).
+	 */
+	filterTools<T extends { type: string }>(tools: T[]): T[] {
+		const supported = this.supportedTools();
+		// null = all tools supported
+		if (supported === null) {
+			return tools;
+		}
+		// Filter to only supported tool types
+		return tools.filter((tool) => supported.includes(tool.type));
 	}
 
 	/**

@@ -137,7 +137,7 @@ test.describe('Mobile Sidebar', () => {
 		await page.goto('/');
 
 		const textarea = page.locator('textarea[placeholder="Send a message..."]');
-		const sendButton = page.locator('.border-t button');
+		const sendButton = page.getByTestId('send-button');
 		const sidebar = page.getByTestId('sidebar');
 
 		// Create first conversation
@@ -186,7 +186,7 @@ test.describe('Mobile Sidebar', () => {
 
 		// First create a conversation
 		const textarea = page.locator('textarea[placeholder="Send a message..."]');
-		const sendButton = page.locator('.border-t button');
+		const sendButton = page.getByTestId('send-button');
 
 		await textarea.fill('Say "test" only.');
 		await sendButton.click();

@@ -126,9 +126,10 @@ impl Executor {
         let expanded_tools = self.expand_tools(&req.tools).await;
 
         // Check if code_interpreter is being used - if so, create a container
-        let has_code_interpreter = req.tools.iter().any(|t| {
-            matches!(t, Tool::Builtin(b) if b.tool_type == "code_interpreter")
-        });
+        let has_code_interpreter = req
+            .tools
+            .iter()
+            .any(|t| matches!(t, Tool::Builtin(b) if b.tool_type == "code_interpreter"));
         let container_id = if has_code_interpreter {
             self.containers.create()
         } else {
@@ -227,19 +228,14 @@ impl Executor {
                 }
                 Tool::Builtin(builtin) => {
                     // Expand built-in tool to function definitions from MCP server
-                    if let Some(mcp_tools) = self
-                        .mcp
-                        .get_tools_by_builtin_type(&builtin.tool_type)
-                        .await
+                    if let Some(mcp_tools) =
+                        self.mcp.get_tools_by_builtin_type(&builtin.tool_type).await
                     {
                         for mcp_tool in mcp_tools {
                             expanded.push(mcp_tool_to_function_tool(mcp_tool));
                         }
                     } else {
-                        tracing::warn!(
-                            "Unknown built-in tool type: {}",
-                            builtin.tool_type
-                        );
+                        tracing::warn!("Unknown built-in tool type: {}", builtin.tool_type);
                     }
                 }
             }
@@ -363,7 +359,9 @@ impl Executor {
         let filename = format!("output_{}.{}", index, ext);
 
         // Store in container
-        let file_id = self.containers.add_file(container_id, filename, content, mime_type)?;
+        let file_id = self
+            .containers
+            .add_file(container_id, filename, content, mime_type)?;
 
         tracing::debug!(
             "Stored code interpreter output: {} in container {}",

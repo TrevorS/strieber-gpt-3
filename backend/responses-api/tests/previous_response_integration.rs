@@ -357,8 +357,8 @@ async fn test_streaming_response_is_stored() {
 
     // Read the SSE stream body and extract response ID
     let body = resp1.text().await.expect("failed to read SSE body");
-    let resp1_id = extract_response_id_from_sse(&body)
-        .expect("could not extract response ID from SSE stream");
+    let resp1_id =
+        extract_response_id_from_sse(&body).expect("could not extract response ID from SSE stream");
 
     println!("Streaming response ID: {}", resp1_id);
 
@@ -388,7 +388,10 @@ async fn test_streaming_response_is_stored() {
         resp2.status()
     );
 
-    let body2: Response = resp2.json().await.expect("failed to parse follow-up response");
+    let body2: Response = resp2
+        .json()
+        .await
+        .expect("failed to parse follow-up response");
     assert_eq!(body2.status, "completed");
     assert_eq!(body2.previous_response_id, Some(resp1_id));
 

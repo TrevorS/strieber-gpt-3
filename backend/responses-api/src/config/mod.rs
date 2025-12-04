@@ -23,6 +23,13 @@ pub struct ModelConfig {
     /// Owner/provider of this model (default: "local")
     #[serde(default = "default_owned_by")]
     pub owned_by: String,
+    /// Whether this model supports vision/image inputs
+    #[serde(default)]
+    pub supports_vision: bool,
+    /// Which tools this model supports.
+    /// None = all tools, Some([]) = no tools, Some(["web_search"]) = specific tools
+    #[serde(default)]
+    pub supported_tools: Option<Vec<String>>,
 }
 
 fn default_owned_by() -> String {
@@ -37,6 +44,8 @@ impl ModelConfig {
             url: url.into(),
             api_key: None,
             owned_by: "local".to_string(),
+            supports_vision: false,
+            supported_tools: None,
         }
     }
 
@@ -49,6 +58,12 @@ impl ModelConfig {
     /// Set the owner for this model.
     pub fn with_owned_by(mut self, owned_by: impl Into<String>) -> Self {
         self.owned_by = owned_by.into();
+        self
+    }
+
+    /// Enable vision/image input support for this model.
+    pub fn with_vision(mut self) -> Self {
+        self.supports_vision = true;
         self
     }
 }

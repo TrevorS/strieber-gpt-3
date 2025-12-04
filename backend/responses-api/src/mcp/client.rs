@@ -354,7 +354,8 @@ mod tests {
     async fn available_builtin_types() {
         let configs = vec![
             McpServerConfig::new("weather", "http://mcp:8000/mcp").with_builtin_type("weather"),
-            McpServerConfig::new("code", "http://mcp:8000/mcp").with_builtin_type("code_interpreter"),
+            McpServerConfig::new("code", "http://mcp:8000/mcp")
+                .with_builtin_type("code_interpreter"),
         ];
         let client = McpClient::new(configs);
 

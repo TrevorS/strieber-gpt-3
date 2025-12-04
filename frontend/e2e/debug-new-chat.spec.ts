@@ -14,7 +14,7 @@ test.describe('Debug: New Chat Flow', () => {
 
 		// Create a conversation
 		const textarea = page.locator('textarea[placeholder="Send a message..."]');
-		const sendButton = page.locator('.border-t button');
+		const sendButton = page.getByTestId('send-button');
 
 		await textarea.fill('Say "test" only.');
 		await sendButton.click();
@@ -86,7 +86,7 @@ test.describe('Debug: New Chat Flow', () => {
 
 		// Create a conversation first
 		const textarea = page.locator('textarea[placeholder="Send a message..."]');
-		const sendButton = page.locator('.border-t button');
+		const sendButton = page.getByTestId('send-button');
 
 		await textarea.fill('Say "test" only.');
 		await sendButton.click();
@@ -170,7 +170,7 @@ test.describe('Debug: New Chat Flow', () => {
 
 		// Create a conversation
 		const textarea = page.locator('textarea[placeholder="Send a message..."]');
-		const sendButton = page.locator('.border-t button');
+		const sendButton = page.getByTestId('send-button');
 
 		await textarea.fill('Say "test" only.');
 		await sendButton.click();

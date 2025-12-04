@@ -13,9 +13,10 @@
 import { fireEvent, render, screen } from '@testing-library/svelte';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import ChatInput from '../ChatInput.svelte';
+import type { Attachment } from '$lib/utils/files';
 
 describe('ChatInput', () => {
-	let mockOnSubmit: (text: string) => void;
+	let mockOnSubmit: (text: string, attachments: Attachment[]) => void;
 
 	beforeEach(() => {
 		mockOnSubmit = vi.fn();
@@ -36,7 +37,14 @@ describe('ChatInput', () => {
 		it('should render send button', () => {
 			render(ChatInput, { props: { onsubmit: mockOnSubmit } });
 
-			const button = screen.getByRole('button');
+			const button = screen.getByTestId('send-button');
+			expect(button).toBeInTheDocument();
+		});
+
+		it('should render attach button', () => {
+			render(ChatInput, { props: { onsubmit: mockOnSubmit } });
+
+			const button = screen.getByTestId('attach-button');
 			expect(button).toBeInTheDocument();
 		});
 	});
@@ -68,7 +76,7 @@ describe('ChatInput', () => {
 			await fireEvent.input(textarea, { target: { value: '  Hello world  ' } });
 			await fireEvent.keyDown(textarea, { key: 'Enter', shiftKey: false });
 
-			expect(mockOnSubmit).toHaveBeenCalledWith('Hello world');
+			expect(mockOnSubmit).toHaveBeenCalledWith('Hello world', []);
 		});
 
 		it('should not submit when Shift+Enter is pressed', async () => {
@@ -87,10 +95,10 @@ describe('ChatInput', () => {
 			const textarea = screen.getByPlaceholderText('Send a message...');
 			await fireEvent.input(textarea, { target: { value: 'Hello' } });
 
-			const button = screen.getByRole('button');
+			const button = screen.getByTestId('send-button');
 			await fireEvent.click(button);
 
-			expect(mockOnSubmit).toHaveBeenCalledWith('Hello');
+			expect(mockOnSubmit).toHaveBeenCalledWith('Hello', []);
 		});
 
 		it('should clear input after successful submit', async () => {
@@ -136,27 +144,27 @@ describe('ChatInput', () => {
 			expect(textarea).toBeEnabled();
 		});
 
-		it('should disable button when disabled prop is true', () => {
+		it('should disable send button when disabled prop is true', () => {
 			render(ChatInput, { props: { onsubmit: mockOnSubmit, disabled: true } });
 
-			const button = screen.getByRole('button');
+			const button = screen.getByTestId('send-button');
 			expect(button).toBeDisabled();
 		});
 
-		it('should disable button when input is empty', () => {
+		it('should disable send button when input is empty', () => {
 			render(ChatInput, { props: { onsubmit: mockOnSubmit } });
 
-			const button = screen.getByRole('button');
+			const button = screen.getByTestId('send-button');
 			expect(button).toBeDisabled();
 		});
 
-		it('should enable button when input has text', async () => {
+		it('should enable send button when input has text', async () => {
 			render(ChatInput, { props: { onsubmit: mockOnSubmit } });
 
 			const textarea = screen.getByPlaceholderText('Send a message...');
 			await fireEvent.input(textarea, { target: { value: 'Hello' } });
 
-			const button = screen.getByRole('button');
+			const button = screen.getByTestId('send-button');
 			expect(button).not.toBeDisabled();
 		});
 
