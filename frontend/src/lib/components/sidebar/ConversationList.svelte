@@ -12,12 +12,14 @@
 	import ConversationItem from './ConversationItem.svelte';
 
 	let {
+		loading = false,
 		conversations,
 		activeId,
 		onselect,
 		onnew,
 		ondelete
 	}: {
+		loading?: boolean;
 		conversations: Conversation[];
 		activeId: string | null;
 		onselect: (id: string) => void;
@@ -44,7 +46,13 @@
 
 	<ScrollArea class="flex-1">
 		<div class="px-2 pb-4">
-			{#if conversations.length === 0}
+			{#if loading}
+				<div class="px-1 py-2 space-y-2">
+					{#each [1, 2, 3] as _}
+						<div class="h-9 bg-muted animate-pulse rounded-md"></div>
+					{/each}
+				</div>
+			{:else if conversations.length === 0}
 				<p class="text-sm text-muted-foreground px-3 py-2">No conversations yet</p>
 			{:else}
 				{#each orderedGroups as group (group)}

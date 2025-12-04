@@ -1,18 +1,21 @@
 <script lang="ts">
 	import { goto } from '$app/navigation';
+	import { Settings } from 'lucide-svelte';
 	import { ChatInput, MessageList } from '$lib/components/chat';
+	import { ModelSelector, SettingsPanel } from '$lib/components/settings';
+	import { Button } from '$lib/components/ui/button';
 	import { sendMessageStreaming } from '$lib/api';
-	import { conversationStore } from '$lib/stores';
+	import { conversationStore, settingsStore, toastStore } from '$lib/stores';
 	import { logger } from '$lib/utils/logger';
 
 	let isStreaming = $state(false);
+	let abortController: AbortController | null = $state(null);
+	let settingsOpen = $state(false);
 
 	// Explicitly track activeId to ensure reactivity when it changes to null
 	let activeId = $derived(conversationStore.activeId);
 	let activeConversation = $derived(activeId ? conversationStore.get(activeId) : undefined);
 	let messages = $derived(activeConversation?.messages ?? []);
-
-	logger.lifecycle.mount('HomePage', { activeId });
 
 	async function handleSubmit(text: string) {
 		logger.ui.event('HomePage', 'handleSubmit called', {
@@ -35,6 +38,7 @@
 		conversationStore.setMessageStreaming(conv.id, assistantMessage.id, true);
 
 		isStreaming = true;
+		abortController = new AbortController();
 
 		// Navigate to the conversation URL
 		logger.nav.navigate('/', `/c/${conv.id}`, { conversationId: conv.id });
@@ -46,8 +50,15 @@
 		await sendMessageStreaming(
 			text,
 			{
+				model: settingsStore.selectedModel,
 				previousResponseId: conv.lastResponseId,
-				tools: [{ type: 'web_search' }, { type: 'code_interpreter' }]
+				tools: [
+					{ type: 'web_search' },
+					{ type: 'code_interpreter' },
+					{ type: 'weather' },
+					{ type: 'reader' }
+				],
+				signal: abortController.signal
 			},
 			{
 				onDelta: (content) => {
@@ -61,21 +72,47 @@
 					conversationStore.updateLastResponseId(conv!.id, responseId);
 					conversationStore.setMessageStreaming(conv!.id, assistantMessage.id, false);
 					isStreaming = false;
+					abortController = null;
 				},
 				onError: (error) => {
+					// Don't show error toast for user-initiated cancellation
+					if (error.message === 'Request was cancelled') {
+						logger.info('api', 'Stream cancelled by user', { conversationId: conv!.id });
+						conversationStore.setMessageStreaming(conv!.id, assistantMessage.id, false);
+						isStreaming = false;
+						abortController = null;
+						return;
+					}
+
 					logger.error('api', 'Stream error', { conversationId: conv!.id, error: error.message });
+					toastStore.error(error.message);
 					conversationStore.updateMessageContent(
 						conv!.id,
 						assistantMessage.id,
-						`Error: ${error.message}`
+						'Sorry, something went wrong. Please try again.'
 					);
 					conversationStore.setMessageStreaming(conv!.id, assistantMessage.id, false);
 					isStreaming = false;
+					abortController = null;
 				}
 			}
 		);
 	}
+
+	function handleStop() {
+		if (abortController) {
+			logger.ui.event('HomePage', 'Stop streaming', {});
+			abortController.abort();
+		}
+	}
 </script>
 
+<div class="flex items-center justify-end gap-2 p-2 border-b">
+	<ModelSelector />
+	<Button variant="ghost" size="icon" onclick={() => (settingsOpen = true)} aria-label="Settings" data-testid="settings-button">
+		<Settings class="h-5 w-5" />
+	</Button>
+</div>
 <MessageList {messages} />
-<ChatInput onsubmit={handleSubmit} disabled={isStreaming} />
+<ChatInput onsubmit={handleSubmit} onstop={handleStop} disabled={isStreaming} streaming={isStreaming} />
+<SettingsPanel open={settingsOpen} onclose={() => (settingsOpen = false)} />

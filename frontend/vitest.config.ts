@@ -9,9 +9,12 @@ export default defineConfig({
 		environment: 'jsdom',
 		globals: true,
 		setupFiles: ['./vitest-setup.ts'],
-		// Resolve $lib alias
+		// Resolve SvelteKit aliases
 		alias: {
-			$lib: new URL('./src/lib', import.meta.url).pathname
+			$lib: new URL('./src/lib', import.meta.url).pathname,
+			'$app/environment': new URL('./src/test-mocks/app-environment.ts', import.meta.url).pathname,
+			'$app/navigation': new URL('./src/test-mocks/app-navigation.ts', import.meta.url).pathname,
+			'$app/state': new URL('./src/test-mocks/app-state.ts', import.meta.url).pathname
 		}
 	}
 });

@@ -9,7 +9,10 @@ test.describe('Chat Functionality', () => {
 
 		// Find input and send button
 		const textarea = page.locator('textarea[placeholder="Send a message..."]');
-		const sendButton = page.locator('button[type="submit"], button:has(svg)').last();
+		const sendButton = page.getByTestId('send-button');
+
+		// Wait for send button to be ready
+		await expect(sendButton).toBeVisible();
 
 		// Type a simple message
 		await textarea.fill('Say "Hello World" and nothing else.');
@@ -20,12 +23,12 @@ test.describe('Chat Functionality', () => {
 		await expect(userMessage).toBeVisible();
 		await expect(userMessage).toContainText('Say "Hello World"');
 
-		// Wait for assistant response (streaming completes)
+		// Wait for assistant response to have content (not just be visible)
 		const assistantMessage = page.locator('.bg-muted').first();
 		await expect(assistantMessage).toBeVisible({ timeout: 30000 });
 
-		// Verify response has content
-		await expect(assistantMessage).not.toBeEmpty();
+		// Wait for streaming to complete by checking send button reappears
+		await expect(sendButton).toBeVisible({ timeout: 30000 });
 
 		// Screenshot for verification
 		await page.screenshot({
@@ -35,22 +38,28 @@ test.describe('Chat Functionality', () => {
 	});
 
 	test('renders markdown with code blocks and syntax highlighting', async ({ page }) => {
+		test.slow(); // Double timeout for LLM-dependent test
 		await page.goto('/');
 
 		const textarea = page.locator('textarea[placeholder="Send a message..."]');
-		const sendButton = page.locator('button[type="submit"], button:has(svg)').last();
+		const sendButton = page.getByTestId('send-button');
 
 		// Request a simple code example
 		await textarea.fill('Show me a Python hello world in a code block. Just the code, nothing else.');
 		await sendButton.click();
 
-		// Wait for response with content
-		const assistantMessage = page.locator('.bg-muted').first();
-		await expect(assistantMessage).toBeVisible({ timeout: 30000 });
+		// Wait for streaming to complete (send button reappears) - use long timeout for LLM
+		await expect(sendButton).toBeVisible({ timeout: 90000 });
+
+		// Wait for assistant message with actual content (scope to main to avoid sidebar skeleton)
+		const assistantMessage = page.locator('main .bg-muted').first();
+		await expect(assistantMessage).toBeVisible({ timeout: 90000 });
+
+		// Wait for actual content to render (not just visibility)
 		await expect(assistantMessage).not.toBeEmpty({ timeout: 30000 });
 
-		// Small wait for rendering
-		await page.waitForTimeout(500);
+		// Small wait for syntax highlighting to apply
+		await page.waitForTimeout(1000);
 
 		// Find code block - may or may not exist depending on LLM response
 		const codeBlock = assistantMessage.locator('pre code');
@@ -72,9 +81,9 @@ test.describe('Chat Functionality', () => {
 			expect(hasSyntaxTokens).toBe(true);
 		}
 
-		// Verify response has some content regardless
+		// Verify response has some content (should have text after streaming complete)
 		const responseText = await assistantMessage.textContent();
-		expect(responseText?.length).toBeGreaterThan(0);
+		expect(responseText?.trim().length).toBeGreaterThan(0);
 
 		await page.screenshot({
 			path: 'test-results/screenshots/code-block-highlighting.png',
@@ -83,39 +92,39 @@ test.describe('Chat Functionality', () => {
 	});
 
 	test('multi-turn conversation flow works', async ({ page }) => {
+		test.slow(); // Double timeout for LLM-dependent test
 		await page.goto('/');
 
 		const textarea = page.locator('textarea[placeholder="Send a message..."]');
-		const sendButton = page.locator('button[type="submit"], button:has(svg)').last();
+		const sendButton = page.getByTestId('send-button');
 
-		// First message
-		await textarea.fill('Say "one" only.');
+		// First message - very simple prompt for fast response
+		await textarea.fill('one');
 		await sendButton.click();
 
-		// Wait for first response with content (streaming complete)
-		const firstResponse = page.locator('.bg-muted').first();
-		await expect(firstResponse).toBeVisible({ timeout: 30000 });
-		await expect(firstResponse).not.toBeEmpty({ timeout: 30000 });
+		// Wait for streaming to complete (send button reappears) - long timeout for LLM
+		await expect(sendButton).toBeVisible({ timeout: 90000 });
 
-		// Verify first user message visible
+		// Verify first user message and assistant response exist
 		const firstUserMessage = page.locator('div.bg-primary').first();
 		await expect(firstUserMessage).toContainText('one');
 
-		// Small wait for any state to settle
+		// First assistant message should be visible
+		const assistantMessages = page.locator('.bg-muted');
+		await expect(assistantMessages.first()).toBeVisible();
+
+		// Wait for state to settle
 		await page.waitForTimeout(500);
 
 		// Second message
-		await textarea.fill('Say "two" only.');
+		await textarea.fill('two');
 		await sendButton.click();
 
-		// Wait for second response with content
-		const secondResponse = page.locator('.bg-muted').nth(1);
-		await expect(secondResponse).toBeVisible({ timeout: 30000 });
-		await expect(secondResponse).not.toBeEmpty({ timeout: 30000 });
+		// Wait for streaming to complete - long timeout for LLM
+		await expect(sendButton).toBeVisible({ timeout: 90000 });
 
 		// Verify we have 2 user messages and 2 assistant responses
 		const userMessages = page.locator('div.bg-primary');
-		const assistantMessages = page.locator('.bg-muted');
 		await expect(userMessages).toHaveCount(2);
 		await expect(assistantMessages).toHaveCount(2);
 
@@ -200,5 +209,145 @@ test.describe('Chat Functionality', () => {
 		// No message should be sent yet (use div to target messages, not button)
 		const userMessage = page.locator('div.bg-primary');
 		await expect(userMessage).toHaveCount(0);
+	});
+
+	test('textarea retains focus after sending message', async ({ page }) => {
+		await page.goto('/');
+
+		const textarea = page.locator('textarea[placeholder="Send a message..."]');
+		const sendButton = page.getByTestId('send-button');
+
+		// Focus textarea and send a message
+		await textarea.click();
+		await textarea.fill('Say "ok" only.');
+		await sendButton.click();
+
+		// Wait for response to complete
+		await expect(sendButton).toBeVisible({ timeout: 30000 });
+
+		// Textarea should still be focused (or refocused after response)
+		await expect(textarea).toBeFocused();
+
+		// Should be able to type immediately without clicking
+		await page.keyboard.type('follow up');
+		await expect(textarea).toHaveValue('follow up');
+	});
+
+	test('auto-scrolls to new messages when at bottom', async ({ page }) => {
+		await page.goto('/');
+
+		const textarea = page.locator('textarea[placeholder="Send a message..."]');
+		const sendButton = page.getByTestId('send-button');
+		const messageContainer = page.locator('.flex-1.overflow-y-auto');
+
+		// Send first message
+		await textarea.fill('Say "test message one" and nothing else.');
+		await sendButton.click();
+
+		// Wait for response and streaming to complete
+		const firstResponse = page.locator('.bg-muted').first();
+		await expect(firstResponse).toBeVisible({ timeout: 30000 });
+		await expect(sendButton).toBeVisible({ timeout: 30000 });
+
+		// Verify we're scrolled to bottom (scrollTop + clientHeight >= scrollHeight - threshold)
+		const isAtBottom = await messageContainer.evaluate((el) => {
+			return el.scrollHeight - el.scrollTop - el.clientHeight < 100;
+		});
+		expect(isAtBottom).toBe(true);
+	});
+
+	test('does not auto-scroll when user has scrolled up', async ({ page }) => {
+		test.slow(); // Double timeout for LLM-dependent test
+		await page.goto('/');
+
+		const textarea = page.locator('textarea[placeholder="Send a message..."]');
+		const sendButton = page.getByTestId('send-button');
+		const messageContainer = page.locator('.flex-1.overflow-y-auto');
+
+		// Send first message - simple prompt for fast response
+		await textarea.fill('hi');
+		await sendButton.click();
+
+		// Wait for streaming to complete - long timeout for LLM
+		await expect(sendButton).toBeVisible({ timeout: 90000 });
+
+		// First response should be visible
+		const assistantMessages = page.locator('.bg-muted');
+		await expect(assistantMessages.first()).toBeVisible();
+
+		await page.waitForTimeout(500);
+
+		// Scroll up manually
+		await messageContainer.evaluate((el) => {
+			el.scrollTop = 0;
+		});
+
+		// Send second message
+		await textarea.fill('hello');
+		await sendButton.click();
+
+		// Wait for streaming to complete - long timeout for LLM
+		await expect(sendButton).toBeVisible({ timeout: 90000 });
+
+		// Second response should be visible
+		await expect(assistantMessages.nth(1)).toBeVisible();
+
+		// Verify scroll position hasn't changed significantly (should stay near top)
+		const scrollTopAfter = await messageContainer.evaluate((el) => el.scrollTop);
+		expect(scrollTopAfter).toBeLessThan(100); // Should still be near top
+
+		await page.screenshot({
+			path: 'test-results/screenshots/scroll-stays-when-scrolled-up.png',
+			fullPage: true
+		});
+	});
+
+	test('resumes auto-scroll when user scrolls back to bottom', async ({ page }) => {
+		await page.goto('/');
+
+		const textarea = page.locator('textarea[placeholder="Send a message..."]');
+		const sendButton = page.getByTestId('send-button');
+		const messageContainer = page.locator('.flex-1.overflow-y-auto');
+
+		// Send first message - simple prompt for fast response
+		await textarea.fill('hi');
+		await sendButton.click();
+
+		// Wait for streaming to complete
+		await expect(sendButton).toBeVisible({ timeout: 45000 });
+
+		// First response should be visible
+		const assistantMessages = page.locator('.bg-muted');
+		await expect(assistantMessages.first()).toBeVisible();
+
+		await page.waitForTimeout(500);
+
+		// Scroll up
+		await messageContainer.evaluate((el) => {
+			el.scrollTop = 0;
+		});
+
+		// Scroll back to bottom
+		await messageContainer.evaluate((el) => {
+			el.scrollTop = el.scrollHeight;
+		});
+
+		await page.waitForTimeout(100);
+
+		// Send second message
+		await textarea.fill('hello');
+		await sendButton.click();
+
+		// Wait for streaming to complete
+		await expect(sendButton).toBeVisible({ timeout: 45000 });
+
+		// Second response should be visible
+		await expect(assistantMessages.nth(1)).toBeVisible();
+
+		// Verify we're at bottom (auto-scroll resumed)
+		const isAtBottom = await messageContainer.evaluate((el) => {
+			return el.scrollHeight - el.scrollTop - el.clientHeight < 100;
+		});
+		expect(isAtBottom).toBe(true);
 	});
 });

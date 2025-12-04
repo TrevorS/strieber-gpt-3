@@ -3,6 +3,17 @@
 	<head>
 		<meta charset="utf-8" />
 		<meta name="viewport" content="width=device-width, initial-scale=1" />
+		<script>
+			(function() {
+				try {
+					var settings = JSON.parse(localStorage.getItem('strieber-settings'));
+					var theme = settings && settings.theme;
+					var isDark = theme === 'dark' ||
+						(theme === 'system' && window.matchMedia('(prefers-color-scheme: dark)').matches);
+					if (isDark) document.documentElement.classList.add('dark');
+				} catch (e) {}
+			})();
+		</script>
 		%sveltekit.head%
 	</head>
 	<body data-sveltekit-preload-data="hover">

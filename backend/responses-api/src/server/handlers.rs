@@ -37,9 +37,23 @@ pub async fn create_response(
     State(state): State<Arc<AppState>>,
     Json(req): Json<CreateResponseRequest>,
 ) -> Result<impl IntoResponse, (StatusCode, Json<serde_json::Value>)> {
+    tracing::info!(
+        model = %req.model,
+        previous_response_id = ?req.previous_response_id,
+        store = req.store,
+        stream = req.stream,
+        "Creating response"
+    );
+
     // Resolve previous_response_id chain if provided
     let (resolved_instructions, previous_messages) =
         resolve_previous_response_chain(&state.store, &req)?;
+
+    tracing::info!(
+        previous_messages_count = previous_messages.len(),
+        has_resolved_instructions = resolved_instructions.is_some(),
+        "Chain resolved"
+    );
 
     // Create a modified request with resolved instructions
     let mut effective_req = req.clone();
@@ -70,10 +84,43 @@ fn resolve_previous_response_chain(
     req: &CreateResponseRequest,
 ) -> Result<(Option<String>, Vec<ChatMessage>), (StatusCode, Json<serde_json::Value>)> {
     if let Some(prev_id) = &req.previous_response_id {
+        tracing::debug!(
+            previous_response_id = %prev_id,
+            store_count = store.len(),
+            "Resolving chain from previous_response_id"
+        );
+
         let chain = resolve_chain(store, prev_id, DEFAULT_MAX_CHAIN_DEPTH)
             .map_err(chain_resolution_error)?;
-        Ok(assemble_context_from_chain(&chain, req))
+
+        tracing::info!(
+            chain_length = chain.len(),
+            chain_ids = ?chain.iter().map(|s| &s.response.id).collect::<Vec<_>>(),
+            "Chain resolved successfully"
+        );
+
+        let (instructions, messages) = assemble_context_from_chain(&chain, req);
+
+        // Log message contents for debugging
+        for (i, msg) in messages.iter().enumerate() {
+            let content_preview = match &msg.content {
+                Some(crate::models::ChatContent::Text(t)) => {
+                    if t.len() > 100 { format!("{}...", &t[..100]) } else { t.clone() }
+                }
+                Some(crate::models::ChatContent::Parts(_)) => "[parts]".to_string(),
+                None => "[none]".to_string(),
+            };
+            tracing::debug!(
+                index = i,
+                role = ?msg.role,
+                content_preview = %content_preview,
+                "Previous message"
+            );
+        }
+
+        Ok((instructions, messages))
     } else {
+        tracing::debug!("No previous_response_id provided, starting fresh conversation");
         Ok((req.instructions.clone(), vec![]))
     }
 }

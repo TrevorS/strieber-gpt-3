@@ -12,6 +12,7 @@ export {
 	sendMessage,
 	sendMessageStreaming
 } from './responses';
+export { fetchModels, type Model, type ModelsResponse } from './models';
 export {
 	isCompletedEvent,
 	isErrorEvent,

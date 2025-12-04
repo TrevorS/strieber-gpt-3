@@ -91,6 +91,13 @@ export async function sendMessageStreaming(
 		stream: true
 	});
 
+	// Extra debug logging for context chain investigation
+	logger.info('api', '=== CONTEXT CHAIN DEBUG ===', {
+		requestId,
+		previousResponseId: previousResponseId ?? 'null (new conversation)',
+		inputPreview: input.length > 50 ? `${input.slice(0, 50)}...` : input
+	});
+
 	try {
 		const response = await fetch(url, {
 			method: 'POST',
@@ -163,6 +170,12 @@ export async function sendMessageStreaming(
 			if (event.type === 'response.created') {
 				responseId = (event as { response?: { id?: string } }).response?.id ?? '';
 				logger.info('streaming', 'Response created', { requestId, responseId });
+				logger.info('api', '=== RESPONSE ID RECEIVED ===', {
+					requestId,
+					responseId,
+					previousResponseId: previousResponseId ?? 'null',
+					note: 'This responseId will become previousResponseId for next message'
+				});
 			}
 
 			// Handle completion

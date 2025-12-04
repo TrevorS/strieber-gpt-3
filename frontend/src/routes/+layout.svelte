@@ -5,10 +5,11 @@
 	import { browser } from '$app/environment';
 	import { tick } from 'svelte';
 	import { fade } from 'svelte/transition';
-	import { conversationStore } from '$lib/stores';
+	import { conversationStore, settingsStore } from '$lib/stores';
 	import { loadConversations, saveConversations } from '$lib/utils/storage';
 	import { ConversationList } from '$lib/components/sidebar';
 	import { Button } from '$lib/components/ui/button';
+	import { ToastContainer } from '$lib/components/ui/toast';
 	import { Menu } from 'lucide-svelte';
 	import { logger } from '$lib/utils/logger';
 
@@ -16,6 +17,7 @@
 
 	// Mobile sidebar state
 	let sidebarOpen = $state(false);
+	let loaded = $state(false);
 
 	function toggleSidebar() {
 		sidebarOpen = !sidebarOpen;
@@ -44,6 +46,10 @@
 		} else {
 			logger.info('persistence', 'No saved conversations found');
 		}
+		// Minimum loading time to prevent skeleton flash
+		setTimeout(() => {
+			loaded = true;
+		}, 350);
 	}
 
 	// Persist on every change
@@ -54,6 +60,46 @@
 				activeId: conversationStore.activeId
 			});
 			saveConversations(conversationStore.conversations, conversationStore.activeId);
+		}
+	});
+
+	// Apply theme to document
+	$effect(() => {
+		if (browser) {
+			const theme = settingsStore.theme;
+			let isDark = false;
+
+			if (theme === 'dark') {
+				isDark = true;
+			} else if (theme === 'system') {
+				isDark = window.matchMedia('(prefers-color-scheme: dark)').matches;
+			}
+
+			if (isDark) {
+				document.documentElement.classList.add('dark');
+			} else {
+				document.documentElement.classList.remove('dark');
+			}
+
+			logger.debug('ui', 'Theme applied', { theme, isDark });
+		}
+	});
+
+	// Listen for system theme changes when in system mode
+	$effect(() => {
+		if (browser && settingsStore.theme === 'system') {
+			const mediaQuery = window.matchMedia('(prefers-color-scheme: dark)');
+			const handler = (e: MediaQueryListEvent) => {
+				if (e.matches) {
+					document.documentElement.classList.add('dark');
+				} else {
+					document.documentElement.classList.remove('dark');
+				}
+				logger.debug('ui', 'System theme changed', { isDark: e.matches });
+			};
+
+			mediaQuery.addEventListener('change', handler);
+			return () => mediaQuery.removeEventListener('change', handler);
 		}
 	});
 
@@ -142,6 +188,7 @@
 			<h1 class="font-semibold">Strieber</h1>
 		</div>
 		<ConversationList
+			loading={!loaded}
 			conversations={conversationStore.sorted}
 			activeId={conversationStore.activeId}
 			onselect={handleSelect}
@@ -155,3 +202,5 @@
 		{@render children()}
 	</main>
 </div>
+
+<ToastContainer />

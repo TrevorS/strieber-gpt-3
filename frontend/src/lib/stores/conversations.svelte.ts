@@ -250,6 +250,49 @@ class ConversationStore {
 	}
 
 	/**
+	 * Remove the last assistant message and return the preceding user message text.
+	 * Used for regenerating a response.
+	 */
+	removeLastAssistantMessage(conversationId: string): string | null {
+		const conv = this.conversations.find((c) => c.id === conversationId);
+		if (!conv || conv.messages.length < 2) {
+			logger.warn('store', 'removeLastAssistantMessage: not enough messages', { conversationId });
+			return null;
+		}
+
+		const lastMessage = conv.messages[conv.messages.length - 1];
+		if (lastMessage.role !== 'assistant') {
+			logger.warn('store', 'removeLastAssistantMessage: last message is not assistant', {
+				conversationId,
+				lastRole: lastMessage.role
+			});
+			return null;
+		}
+
+		// Get the user message that preceded the assistant message
+		const userMessage = conv.messages[conv.messages.length - 2];
+		if (userMessage.role !== 'user') {
+			logger.warn('store', 'removeLastAssistantMessage: preceding message is not user', {
+				conversationId,
+				precedingRole: userMessage.role
+			});
+			return null;
+		}
+
+		// Remove the assistant message
+		conv.messages.pop();
+		conv.updatedAt = Date.now();
+
+		logger.store.action('removeLastAssistantMessage', {
+			conversationId,
+			removedMessageId: lastMessage.id,
+			userMessageText: userMessage.content.slice(0, 50)
+		});
+
+		return userMessage.content;
+	}
+
+	/**
 	 * Get a conversation by ID.
 	 */
 	get(id: string): Conversation | undefined {

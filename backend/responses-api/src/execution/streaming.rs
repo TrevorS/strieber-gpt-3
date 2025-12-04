@@ -103,6 +103,31 @@ async fn run_streaming_loop(
     let total_input_tokens = 0u32;
     let total_output_tokens = 0u32;
 
+    tracing::info!(
+        response_id = %resp_id,
+        model = %req.model,
+        previous_messages_count = conversation.len(),
+        "Starting streaming execution"
+    );
+
+    // Log each previous message for debugging
+    for (i, msg) in conversation.iter().enumerate() {
+        let content_preview = match &msg.content {
+            Some(crate::models::ChatContent::Text(t)) => {
+                if t.len() > 100 { format!("{}...", &t[..100]) } else { t.clone() }
+            }
+            Some(crate::models::ChatContent::Parts(_)) => "[parts]".to_string(),
+            None => "[none]".to_string(),
+        };
+        tracing::debug!(
+            index = i,
+            role = ?msg.role,
+            content_preview = %content_preview,
+            has_tool_calls = msg.tool_calls.is_some(),
+            "Previous message in conversation"
+        );
+    }
+
     // Send initial response.created
     let initial_response = build_response(
         &resp_id,
@@ -124,6 +149,30 @@ async fn run_streaming_loop(
 
         let mut chat_req = to_chat_completion(&req, Some(conversation.clone()));
         chat_req.stream = true;
+
+        tracing::info!(
+            iteration,
+            total_messages = chat_req.messages.len(),
+            has_tools = chat_req.tools.is_some(),
+            "Sending request to LLM"
+        );
+
+        // Log all messages being sent to LLM
+        for (i, msg) in chat_req.messages.iter().enumerate() {
+            let content_preview = match &msg.content {
+                Some(crate::models::ChatContent::Text(t)) => {
+                    if t.len() > 100 { format!("{}...", &t[..100]) } else { t.clone() }
+                }
+                Some(crate::models::ChatContent::Parts(_)) => "[parts]".to_string(),
+                None => "[none]".to_string(),
+            };
+            tracing::debug!(
+                index = i,
+                role = ?msg.role,
+                content = %content_preview,
+                "Message to LLM"
+            );
+        }
 
         let url = format!("{}/v1/chat/completions", model_config.url);
 
@@ -440,8 +489,16 @@ async fn run_streaming_loop(
         if req.store {
             if let Some(ref store) = store {
                 store.store(final_response.clone(), req.clone());
-                tracing::debug!(response_id = %resp_id, "Stored streaming response");
+                tracing::info!(
+                    response_id = %resp_id,
+                    previous_response_id = ?req.previous_response_id,
+                    output_items = final_response.output.len(),
+                    store_size = store.len(),
+                    "Stored streaming response"
+                );
             }
+        } else {
+            tracing::debug!(response_id = %resp_id, "Response not stored (store=false)");
         }
 
         send(&tx, SseEvent::response_completed(final_response.clone())).await?;

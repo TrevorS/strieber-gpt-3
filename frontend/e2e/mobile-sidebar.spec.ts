@@ -69,8 +69,12 @@ test.describe('Mobile Sidebar', () => {
 		const sidebar = page.getByTestId('sidebar');
 		await expect(sidebar).toBeInViewport();
 
-		// Click backdrop
-		await page.getByTestId('sidebar-backdrop').click();
+		// Wait for sidebar to be fully open
+		await page.waitForTimeout(300);
+
+		// Click backdrop to the RIGHT of the sidebar (sidebar is 256px wide)
+		// Click at x=300 to ensure we're clicking on backdrop, not sidebar
+		await page.mouse.click(300, 300);
 
 		// Wait for transition
 		await page.waitForTimeout(350);
