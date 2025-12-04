@@ -69,6 +69,86 @@ pub fn parse_reasoning_tags(text: &str) -> (Option<String>, String) {
     (None, text.to_string())
 }
 
+// ============================================================================
+// Citation Parsing (for web search sources)
+// ============================================================================
+
+use crate::models::WebSearchSource;
+
+/// A parsed citation marker from text (e.g., "[1]", "[2]").
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CitationMarker {
+    /// 1-based citation number
+    pub number: u32,
+    /// Start position in text (byte index)
+    pub start: usize,
+    /// End position in text (byte index)
+    pub end: usize,
+}
+
+/// Parse citation markers like [1], [2], etc. from text.
+/// Returns a list of markers with their positions.
+pub fn parse_citation_markers(text: &str) -> Vec<CitationMarker> {
+    let mut markers = Vec::new();
+    let bytes = text.as_bytes();
+    let mut i = 0;
+
+    while i < bytes.len() {
+        if bytes[i] == b'[' {
+            // Look for a closing bracket
+            let start = i;
+            i += 1;
+
+            // Parse digits
+            let digit_start = i;
+            while i < bytes.len() && bytes[i].is_ascii_digit() {
+                i += 1;
+            }
+
+            // Check if we found digits followed by ]
+            if i > digit_start && i < bytes.len() && bytes[i] == b']' {
+                let digit_str = &text[digit_start..i];
+                if let Ok(num) = digit_str.parse::<u32>()
+                    && num > 0
+                {
+                    markers.push(CitationMarker {
+                        number: num,
+                        start,
+                        end: i + 1,
+                    });
+                }
+                i += 1;
+            }
+        } else {
+            i += 1;
+        }
+    }
+
+    markers
+}
+
+/// Build URL citation annotations from text and web search sources.
+/// Maps [1], [2], etc. markers to their corresponding sources.
+pub fn build_url_citations(text: &str, sources: &[WebSearchSource]) -> Vec<Annotation> {
+    let markers = parse_citation_markers(text);
+
+    markers
+        .iter()
+        .filter_map(|marker| {
+            // Citation numbers are 1-based, sources are 0-indexed
+            let source_idx = (marker.number - 1) as usize;
+            sources
+                .get(source_idx)
+                .map(|source| Annotation::UrlCitation {
+                    url: source.url.clone(),
+                    title: Some(source.title.clone()),
+                    start_index: marker.start as u32,
+                    end_index: marker.end as u32,
+                })
+        })
+        .collect()
+}
+
 /// Extract output items from Chat Completion response.
 ///
 /// This extracts output items that can be directly produced by Chat Completions:
@@ -921,5 +1001,142 @@ mod tests {
 
         // Second should be message
         assert!(matches!(inputs[1], InputItem::Message(_)));
+    }
+
+    // ========================================================================
+    // Citation Parsing Tests
+    // ========================================================================
+
+    use super::{build_url_citations, parse_citation_markers};
+
+    #[test]
+    fn parse_citation_markers_finds_single_marker() {
+        let markers = parse_citation_markers("According to [1], the answer is 42.");
+        assert_eq!(markers.len(), 1);
+        assert_eq!(markers[0].number, 1);
+        assert_eq!(markers[0].start, 13); // Position of '['
+        assert_eq!(markers[0].end, 16); // Position after ']'
+    }
+
+    #[test]
+    fn parse_citation_markers_finds_multiple_markers() {
+        let markers = parse_citation_markers("Sources [1] and [2] confirm this [3].");
+        assert_eq!(markers.len(), 3);
+        assert_eq!(markers[0].number, 1);
+        assert_eq!(markers[1].number, 2);
+        assert_eq!(markers[2].number, 3);
+    }
+
+    #[test]
+    fn parse_citation_markers_ignores_non_numeric_brackets() {
+        let markers = parse_citation_markers("See [note] and [here] for details [1].");
+        assert_eq!(markers.len(), 1);
+        assert_eq!(markers[0].number, 1);
+    }
+
+    #[test]
+    fn parse_citation_markers_ignores_zero() {
+        let markers = parse_citation_markers("Invalid [0] but valid [1].");
+        assert_eq!(markers.len(), 1);
+        assert_eq!(markers[0].number, 1);
+    }
+
+    #[test]
+    fn parse_citation_markers_handles_double_digit() {
+        let markers = parse_citation_markers("Citation [12] here.");
+        assert_eq!(markers.len(), 1);
+        assert_eq!(markers[0].number, 12);
+    }
+
+    #[test]
+    fn parse_citation_markers_empty_text() {
+        let markers = parse_citation_markers("");
+        assert!(markers.is_empty());
+    }
+
+    #[test]
+    fn parse_citation_markers_no_markers() {
+        let markers = parse_citation_markers("No citations here.");
+        assert!(markers.is_empty());
+    }
+
+    #[test]
+    fn build_url_citations_maps_to_sources() {
+        let sources = vec![
+            WebSearchSource {
+                url: "https://example.com/1".to_string(),
+                title: "Source One".to_string(),
+                snippet: None,
+            },
+            WebSearchSource {
+                url: "https://example.com/2".to_string(),
+                title: "Source Two".to_string(),
+                snippet: Some("A snippet".to_string()),
+            },
+        ];
+
+        let text = "According to [1] and [2], the answer is clear.";
+        let annotations = build_url_citations(text, &sources);
+
+        assert_eq!(annotations.len(), 2);
+
+        match &annotations[0] {
+            Annotation::UrlCitation {
+                url,
+                title,
+                start_index,
+                end_index,
+            } => {
+                assert_eq!(url, "https://example.com/1");
+                assert_eq!(title, &Some("Source One".to_string()));
+                assert_eq!(*start_index, 13);
+                assert_eq!(*end_index, 16);
+            }
+            _ => panic!("expected UrlCitation"),
+        }
+
+        match &annotations[1] {
+            Annotation::UrlCitation {
+                url,
+                title,
+                start_index,
+                end_index,
+            } => {
+                assert_eq!(url, "https://example.com/2");
+                assert_eq!(title, &Some("Source Two".to_string()));
+                assert_eq!(*start_index, 21);
+                assert_eq!(*end_index, 24);
+            }
+            _ => panic!("expected UrlCitation"),
+        }
+    }
+
+    #[test]
+    fn build_url_citations_ignores_out_of_range() {
+        let sources = vec![WebSearchSource {
+            url: "https://example.com/1".to_string(),
+            title: "Only Source".to_string(),
+            snippet: None,
+        }];
+
+        let text = "Valid [1] but invalid [2] and [3].";
+        let annotations = build_url_citations(text, &sources);
+
+        // Only [1] should be matched
+        assert_eq!(annotations.len(), 1);
+        match &annotations[0] {
+            Annotation::UrlCitation { url, .. } => {
+                assert_eq!(url, "https://example.com/1");
+            }
+            _ => panic!("expected UrlCitation"),
+        }
+    }
+
+    #[test]
+    fn build_url_citations_empty_sources() {
+        let sources: Vec<WebSearchSource> = vec![];
+        let text = "Citation [1] with no sources.";
+        let annotations = build_url_citations(text, &sources);
+        assert!(annotations.is_empty());
     }
 }

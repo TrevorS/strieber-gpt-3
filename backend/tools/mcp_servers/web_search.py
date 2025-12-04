@@ -382,16 +382,17 @@ async def web_search(
     count: int = DEFAULT_RESULT_COUNT,
     max_tokens: int = DEFAULT_MAX_TOKENS,
     freshness: Optional[str] = None,
+    expand_query: bool = True,
     ctx: Context = None
 ) -> CallToolResult:
-    """Search the web with automatic query expansion and intelligent filtering.
+    """Search the web with optional query expansion and intelligent filtering.
 
-    Automatically generates 3 query variations, executes searches in parallel,
+    Optionally generates 3 query variations, executes searches in parallel,
     combines and deduplicates results, condenses to fit token budget, and returns
     formatted markdown with citations.
 
     **Process**:
-    1. Generate 3 query variations using LLM
+    1. Generate 3 query variations using LLM (if expand_query=True)
     2. Execute searches in parallel
     3. Combine and filter (min 50 char snippets, max 2 results/domain)
     4. Condense results to fit token budget
@@ -408,6 +409,8 @@ async def web_search(
         count: Results per search query variation (1-50, default 10)
         max_tokens: Maximum tokens for output (500-10000, default 2000)
         freshness: Time filter - "pd" (day), "pw" (week), "pm" (month), "py" (year)
+        expand_query: Whether to expand query into variations via LLM (default True).
+                      Set to False for faster single-query search.
 
     Returns:
         CallToolResult with markdown content, sources metadata, and search metadata
@@ -491,15 +494,22 @@ async def web_search(
         await ctx.info(f"Searching: {query}")
 
     try:
-        # Step 1: Generate query variations
-        if ctx:
-            await ctx.report_progress(1, 5, "Generating search query variations...")
-        queries = await generate_query_variants(query)
-        logger.debug(f"Query variants: {queries}")
+        # Step 1: Generate query variations (or skip if expand_query=False)
+        if expand_query:
+            if ctx:
+                await ctx.report_progress(1, 5, "Generating search query variations...")
+            queries = await generate_query_variants(query)
+            logger.debug(f"Query variants: {queries}")
+        else:
+            queries = [query]
+            logger.debug(f"Skipping query expansion, using single query: {query}")
 
         # Step 2: Execute searches in parallel
         if ctx:
-            await ctx.report_progress(2, 5, f"Searching: '{queries[0]}' & '{queries[1]}'")
+            if len(queries) > 1:
+                await ctx.report_progress(2, 5, f"Searching: '{queries[0]}' & '{queries[1]}'")
+            else:
+                await ctx.report_progress(2, 5, f"Searching: '{queries[0]}'")
         all_results = await execute_parallel_searches(backend, queries, count, freshness)
 
         if not all_results:
@@ -563,8 +573,9 @@ async def web_search(
             }
             sources.append(source_entry)
 
-        # Build structured metadata
-        metadata = {
+        # Build structured content with sources for citation annotations
+        # Using structuredContent per MCP spec 2025-06-18
+        structured_content = {
             "search_backend": backend.name,
             "query_used": query,
             "query_variants": queries,
@@ -579,7 +590,7 @@ async def web_search(
 
         return CallToolResult(
             content=[TextContent(type="text", text=markdown)],
-            metadata=metadata
+            structuredContent=structured_content
         )
 
     except Exception as e:
@@ -795,8 +806,9 @@ async def news_search(
             }
             sources.append(source_entry)
 
-        # Build structured metadata
-        metadata = {
+        # Build structured content with sources for citation annotations
+        # Using structuredContent per MCP spec 2025-06-18
+        structured_content = {
             "search_backend": backend.name,
             "query_used": query,
             "results_count": len(condensed),
@@ -812,7 +824,7 @@ async def news_search(
 
         return CallToolResult(
             content=[TextContent(type="text", text=markdown)],
-            metadata=metadata
+            structuredContent=structured_content
         )
 
     except Exception as e:

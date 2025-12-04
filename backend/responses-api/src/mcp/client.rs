@@ -268,6 +268,11 @@ impl McpClient {
     ) -> Option<Vec<rmcp::model::Tool>> {
         // Find server name for this builtin_type
         let routing = self.builtin_type_routing.read().await;
+        tracing::debug!(
+            "Looking up builtin_type={}, routing keys: {:?}",
+            builtin_type,
+            routing.keys().collect::<Vec<_>>()
+        );
         let server_name = routing.get(builtin_type)?.clone();
         drop(routing);
 

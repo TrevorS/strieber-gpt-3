@@ -124,6 +124,7 @@ test.describe('Delete Conversation', () => {
 		await page.getByRole('button', { name: 'New Chat' }).first().click();
 		await expect(page).toHaveURL('/');
 		await textarea.fill('Second conversation.');
+		await expect(sendButton).toBeEnabled({ timeout: 5000 });
 		await sendButton.click();
 		await expect(page).toHaveURL(/\/c\/.+/);
 		await expect(sendButton).toBeVisible({ timeout: 30000 });

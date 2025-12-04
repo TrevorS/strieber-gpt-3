@@ -243,7 +243,10 @@ pub enum Annotation {
         url: String,
         #[serde(skip_serializing_if = "Option::is_none")]
         title: Option<String>,
-        index: u32,
+        /// Character position where the citation marker starts (e.g., start of "[1]")
+        start_index: u32,
+        /// Character position where the citation marker ends
+        end_index: u32,
     },
     FilePath {
         file_id: String,

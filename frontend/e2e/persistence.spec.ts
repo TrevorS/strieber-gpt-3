@@ -133,16 +133,10 @@ test.describe('Conversation Persistence', () => {
 		// Wait for page to be ready
 		await expect(sendButton).toBeVisible();
 
-		// Create first conversation with multi-turn (simple messages for speed)
-		await textarea.fill('msg1');
+		// Create first conversation (single message to reduce LLM round-trips)
+		await textarea.fill('First conversation message');
 		await sendButton.click();
 		await expect(page).toHaveURL(/\/c\/.+/);
-		await expect(sendButton).toBeVisible({ timeout: 90000 });
-
-		await page.waitForTimeout(500);
-
-		await textarea.fill('msg2');
-		await sendButton.click();
 		await expect(sendButton).toBeVisible({ timeout: 90000 });
 
 		const firstConvUrl = page.url();
@@ -150,7 +144,8 @@ test.describe('Conversation Persistence', () => {
 		// Create second conversation
 		await page.getByRole('button', { name: 'New Chat' }).first().click();
 		await expect(page).toHaveURL('/');
-		await textarea.fill('msg3');
+		await textarea.fill('Second conversation message');
+		await expect(sendButton).toBeEnabled({ timeout: 5000 });
 		await sendButton.click();
 		await expect(page).toHaveURL(/\/c\/.+/);
 		await expect(sendButton).toBeVisible({ timeout: 90000 });
@@ -162,14 +157,13 @@ test.describe('Conversation Persistence', () => {
 
 		await expect(page).toHaveURL(firstConvUrl);
 
-		// Should have 2 user messages from original conversation
+		// Should have the original user message from first conversation
 		const userMessages = page.locator('div.bg-primary');
-		await expect(userMessages).toHaveCount(2);
-		await expect(userMessages.first()).toContainText('msg1');
-		await expect(userMessages.nth(1)).toContainText('msg2');
+		await expect(userMessages).toHaveCount(1);
+		await expect(userMessages.first()).toContainText('First conversation message');
 
 		await page.screenshot({
-			path: 'test-results/screenshots/persistence-multi-turn.png',
+			path: 'test-results/screenshots/persistence-switch-conversation.png',
 			fullPage: true
 		});
 	});

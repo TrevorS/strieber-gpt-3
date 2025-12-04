@@ -55,8 +55,8 @@ test.describe('Chat Functionality', () => {
 		const assistantMessage = page.locator('main .bg-muted').first();
 		await expect(assistantMessage).toBeVisible({ timeout: 90000 });
 
-		// Wait for actual content to render (not just visibility)
-		await expect(assistantMessage).not.toBeEmpty({ timeout: 30000 });
+		// Wait for actual text content to appear (not just the skeleton)
+		await expect(assistantMessage).toHaveText(/.+/, { timeout: 30000 });
 
 		// Small wait for syntax highlighting to apply
 		await page.waitForTimeout(1000);

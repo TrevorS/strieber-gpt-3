@@ -4,7 +4,9 @@
 	import type { Message } from '$lib/stores/types';
 	import { isMessageItem } from '$lib/stores/types';
 	import MarkdownContent from './MarkdownContent.svelte';
+	import CitationList from './CitationList.svelte';
 	import { OutputItemRenderer } from './tools';
+	import { extractCitations, getUniqueCitations } from '$lib/utils/citations';
 
 	let {
 		message,
@@ -20,6 +22,12 @@
 
 	// Filter out message items (those are rendered via content/MarkdownContent)
 	let toolItems = $derived((message.rawOutput ?? []).filter((item) => !isMessageItem(item)));
+
+	// Extract citations from raw output (only when not streaming for stability)
+	let citations = $derived(
+		!message.isStreaming && message.rawOutput ? extractCitations(message.rawOutput) : []
+	);
+	let uniqueCitations = $derived(getUniqueCitations(citations));
 
 	let hasContent = $derived(message.content.trim().length > 0);
 	let hasToolItems = $derived(toolItems.length > 0);
@@ -42,7 +50,11 @@
 		{#if showContentContainer}
 			<div class="rounded-lg bg-muted px-4 py-2">
 				{#if hasContent}
-					<MarkdownContent content={message.content} />
+					<MarkdownContent content={message.content} {citations} />
+					<!-- Citation list appears after content, inside the container -->
+					{#if uniqueCitations.length > 0}
+						<CitationList citations={uniqueCitations} />
+					{/if}
 				{:else}
 					<span class="inline-block w-2 h-4 bg-foreground/30 animate-pulse rounded-sm"></span>
 				{/if}

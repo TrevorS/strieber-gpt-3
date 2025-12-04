@@ -1158,34 +1158,47 @@ npx shadcn-svelte@latest add collapsible
 
 ---
 
-### Task 3.4: Annotation/Citation Rendering
+### Task 3.4: Annotation/Citation Rendering ✅
 
-**Status**: Deferred (Future Enhancement)
+**Status**: Complete
 
 **Description**: Render inline citations and source links
 
 **Acceptance Criteria**:
-- Inline superscript numbers
-- Clickable links to sources
-- URL citations link externally
+- [x] Inline superscript numbers - `[1]`, `[2]` markers transformed to clickable superscript links
+- [x] Clickable links to sources - Links open in new tab with title tooltip
+- [x] URL citations link externally - Target="_blank" with rel="noopener noreferrer"
 
-**Notes**:
-Annotations are embedded in message content when web search returns results. This feature depends on:
-1. Backend web search tool being enabled and returning citations
-2. Processing annotation indices to inject citation markers into rendered text
+**Implementation**:
 
-The infrastructure is in place (annotations are passed through in rawOutput), but rendering is deferred until web search is fully integrated.
+Backend:
+- Updated `UrlCitation` type to use `start_index`/`end_index` instead of just `index`
+- Added `parse_citation_markers()` and `build_url_citations()` functions in `translation/response.rs`
+- Unit tests for citation parsing (10 tests)
 
-**Implementation Approach**:
-Update `MarkdownContent.svelte` to process annotations and inject citation markers. Build a citation list component.
+Frontend:
+- New `src/lib/utils/citations.ts` - extraction and transformation utilities
+- New `CitationList.svelte` - renders numbered source list at bottom of message
+- Updated `MarkdownContent.svelte` - accepts citations prop and transforms markers
+- Updated `AssistantMessage.svelte` - extracts citations from rawOutput, passes to MarkdownContent
+- Unit tests for citation utilities (14 tests)
+
+**Streaming UX**:
+- During streaming: Raw `[1]`, `[2]` markers visible in text
+- On completion: Citations extracted from annotations, markers become clickable links
+- Citation list appears below message content when not streaming
 
 **Files**:
-- `src/lib/utils/annotations.ts`
-- Update `MarkdownContent.svelte`
+- `backend/responses-api/src/models/response.rs` - Updated UrlCitation
+- `backend/responses-api/src/translation/response.rs` - Citation parsing
+- `src/lib/utils/citations.ts` - Frontend utilities
+- `src/lib/components/chat/CitationList.svelte` - New component
+- `src/lib/components/chat/MarkdownContent.svelte` - Updated
+- `src/lib/components/chat/AssistantMessage.svelte` - Updated
 
 **Test Requirements**:
-- Citations render inline
-- Links work correctly
+- [x] Citations render inline
+- [x] Links work correctly
 
 ---
 
@@ -1455,14 +1468,13 @@ Final polish for production.
 |-------|-------|--------|-----------|
 | 1 | 12/12 | ✅ Complete | Streaming chat with markdown |
 | 2 | 4/4 | ✅ Complete | Multi-conversation with persistence |
-| 3 | 3/4 | ✅ Mostly Complete | Tool call visualization (annotations deferred) |
+| 3 | 4/4 | ✅ Complete | Tool call visualization with citations |
 | 4 | 6/6 | ✅ Complete | Settings, theme, error handling |
 | 5 | 5/5 | ✅ Complete | File upload |
 | 6 | 1/3 | 🔄 In Progress | Mobile (done), shortcuts, Docker |
 
-**Total: 31/34 tasks complete**
+**Total: 32/34 tasks complete**
 
 **Remaining work:**
-- Task 3.4: Annotation rendering (deferred - depends on backend web search integration)
 - Task 6.2: Keyboard shortcuts
 - Task 6.3: Docker build

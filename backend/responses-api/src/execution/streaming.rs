@@ -7,17 +7,19 @@ use futures::stream::{Stream, StreamExt};
 use serde_json::Value;
 use tokio::sync::mpsc;
 
-use crate::mcp::McpClient;
+use rmcp::model::RawContent;
+
+use crate::mcp::{CallToolResult, McpClient};
 use crate::models::{
     ChatCompletionChunk, ChatFunctionCall, ChatMessage, ChatRole, ChatToolCall, ChatToolType,
     CreateResponseRequest, FinishReason, FunctionCallOutput, FunctionToolWrapper, MessageOutput,
     OutputContent, OutputItem, OutputRole, OutputStatus, ReasoningContent, ReasoningOutput,
-    Response, ResponseStatus, SseEvent, Tool, Usage,
+    Response, ResponseStatus, SseEvent, Tool, Usage, WebSearchSource,
 };
 use crate::state::{InMemoryStore, ResponseStore};
 use crate::translation::{
-    function_call_id, message_id, parse_reasoning_tags, reasoning_id, response_id,
-    to_chat_completion, tool_result_message,
+    build_url_citations, function_call_id, message_id, parse_reasoning_tags, reasoning_id,
+    response_id, to_chat_completion, tool_result_message,
 };
 
 use super::{ExecutionError, ExecutorConfig};
@@ -30,6 +32,8 @@ struct StreamState {
     accumulated_text: String,
     accumulated_tool_calls: Vec<AccumulatedToolCall>,
     finish_reason: Option<FinishReason>,
+    /// Web search sources accumulated from tool results (for citation annotations)
+    web_search_sources: Vec<WebSearchSource>,
 }
 
 /// Tool call being accumulated from stream chunks.
@@ -471,8 +475,39 @@ async fn run_streaming_loop(
             // Execute tool calls
             for tc in &state.accumulated_tool_calls {
                 let arguments: Value = serde_json::from_str(&tc.arguments).unwrap_or(Value::Null);
-                let result = match mcp.call_tool_text(&tc.name, arguments).await {
-                    Ok(r) => r,
+                let result_text = match mcp.call_tool(&tc.name, arguments).await {
+                    Ok(tool_result) => {
+                        // Extract text for conversation
+                        let text = extract_text_from_result(&tool_result);
+
+                        // If web_search tool, extract sources for citation annotations
+                        if tc.name.contains("web_search") || tc.name.contains("news_search") {
+                            // Log what we got from MCP
+                            tracing::info!(
+                                tool = %tc.name,
+                                has_structured_content = tool_result.structured_content.is_some(),
+                                has_meta = tool_result.meta.is_some(),
+                                "Checking MCP result for sources"
+                            );
+
+                            let sources = extract_sources_from_result(&tool_result);
+                            if !sources.is_empty() {
+                                tracing::info!(
+                                    tool = %tc.name,
+                                    source_count = sources.len(),
+                                    "Extracted web search sources for citations"
+                                );
+                                state.web_search_sources.extend(sources);
+                            } else {
+                                tracing::info!(
+                                    tool = %tc.name,
+                                    "No sources extracted from tool result"
+                                );
+                            }
+                        }
+
+                        text
+                    }
                     Err(e) => {
                         tracing::error!("Tool {} failed: {}", tc.name, e);
                         format!("Error: {}", e)
@@ -480,7 +515,7 @@ async fn run_streaming_loop(
                 };
 
                 // Add tool result to conversation
-                conversation.push(tool_result_message(tc.id.clone(), result));
+                conversation.push(tool_result_message(tc.id.clone(), result_text));
             }
 
             // Continue to next iteration
@@ -540,13 +575,28 @@ fn build_final_output(state: &StreamState) -> Vec<OutputItem> {
 
         // Then emit message with clean text (without <think> tags)
         if !clean_text.is_empty() {
+            // Build URL citation annotations from accumulated web search sources
+            let annotations = if !state.web_search_sources.is_empty() {
+                build_url_citations(&clean_text, &state.web_search_sources)
+            } else {
+                vec![]
+            };
+
+            if !annotations.is_empty() {
+                tracing::debug!(
+                    annotation_count = annotations.len(),
+                    source_count = state.web_search_sources.len(),
+                    "Built URL citation annotations for message"
+                );
+            }
+
             output.push(OutputItem::Message(MessageOutput {
                 id: state.current_message_id.clone().unwrap_or_else(message_id),
                 status: OutputStatus::Completed,
                 role: OutputRole::Assistant,
                 content: vec![OutputContent::OutputText {
                     text: clean_text,
-                    annotations: vec![],
+                    annotations,
                 }],
             }));
         }
@@ -619,6 +669,74 @@ async fn send(
     tx.send(Ok(event))
         .await
         .map_err(|_| ExecutionError::Llm("Stream receiver dropped".to_string()))
+}
+
+/// Extract text content from an MCP CallToolResult.
+fn extract_text_from_result(result: &CallToolResult) -> String {
+    let text_parts: Vec<&str> = result
+        .content
+        .iter()
+        .filter_map(|c| {
+            if let RawContent::Text(tc) = &c.raw {
+                Some(tc.text.as_str())
+            } else {
+                None
+            }
+        })
+        .collect();
+
+    let text = text_parts.join("\n");
+
+    if result.is_error.unwrap_or(false) {
+        format!("Error: {}", text)
+    } else {
+        text
+    }
+}
+
+/// Extract WebSearchSource entries from MCP tool result metadata.
+///
+/// The web search MCP server returns sources in `structuredContent.sources` or
+/// as extra fields in the result. We check both locations.
+fn extract_sources_from_result(result: &CallToolResult) -> Vec<WebSearchSource> {
+    // First try structuredContent which is the official MCP field
+    if let Some(structured) = &result.structured_content
+        && let Some(sources) = extract_sources_from_value(structured) {
+            return sources;
+        }
+
+    // Also check the _meta field for backwards compatibility
+    if let Some(meta) = &result.meta {
+        // Meta is a tuple struct wrapping JsonObject (Map<String, Value>)
+        let meta_value = Value::Object(meta.0.clone());
+        if let Some(sources) = extract_sources_from_value(&meta_value) {
+            return sources;
+        }
+    }
+
+    vec![]
+}
+
+/// Extract sources from a JSON value that may contain a "sources" array.
+fn extract_sources_from_value(value: &Value) -> Option<Vec<WebSearchSource>> {
+    let sources = value.get("sources")?.as_array()?;
+
+    let result: Vec<WebSearchSource> = sources
+        .iter()
+        .filter_map(|s| {
+            Some(WebSearchSource {
+                url: s.get("url")?.as_str()?.to_string(),
+                title: s.get("title")?.as_str()?.to_string(),
+                snippet: s.get("snippet").and_then(|v| v.as_str()).map(String::from),
+            })
+        })
+        .collect();
+
+    if result.is_empty() {
+        None
+    } else {
+        Some(result)
+    }
 }
 
 /// Expand built-in tool types to full function definitions.
