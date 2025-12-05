@@ -24,6 +24,9 @@ trafilatura>=2.0.0
 # Rule-based HTML to Markdown conversion (fast, no LLM needed)
 markdownify>=0.14.1
 
+# BM25 relevance filtering (for query-based content extraction)
+rank-bm25>=0.2.2
+
 # Image processing (for ComfyUI Qwen server)
 Pillow>=10.0.0
 

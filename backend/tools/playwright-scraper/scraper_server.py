@@ -34,6 +34,7 @@ class ScrapeRequest(BaseModel):
     wait_for_selector: Optional[str] = None
     timeout: int = 30  # seconds
     force_playwright: bool = False  # Force Playwright even for simple pages
+    capture_screenshot: bool = False  # Capture full-page screenshot
 
 
 class ScrapeResponse(BaseModel):
@@ -43,6 +44,7 @@ class ScrapeResponse(BaseModel):
     method: str  # "http" or "playwright"
     success: bool
     error: Optional[str] = None
+    screenshot: Optional[str] = None  # Base64-encoded screenshot (if requested)
 
 
 async def requires_js_rendering(url: str, html: str = None) -> bool:
@@ -113,18 +115,21 @@ async def scrape_with_http(url: str, timeout: int = 30) -> tuple[str, bool]:
 async def scrape_with_playwright(
     url: str,
     wait_for_selector: Optional[str] = None,
-    timeout: int = 30
-) -> tuple[str, bool]:
+    timeout: int = 30,
+    capture_screenshot: bool = False
+) -> tuple[str, bool, Optional[str]]:
     """
     Scrape with Playwright for JavaScript rendering.
 
-    Returns: (html_content, success)
+    Returns: (html_content, success, screenshot_base64)
     """
+    import base64
+
     global playwright_instance
 
     if playwright_instance is None:
         logger.error("Playwright not initialized")
-        return None, False
+        return None, False, None
 
     browser = None
     try:
@@ -146,7 +151,7 @@ async def scrape_with_playwright(
                 await page.goto(url, wait_until="domcontentloaded")
             except Exception as e:
                 logger.error(f"Failed to load {url}: {e}")
-                return None, False
+                return None, False, None
 
         # Wait for optional selector
         if wait_for_selector:
@@ -157,10 +162,21 @@ async def scrape_with_playwright(
                 logger.warning(f"Selector {wait_for_selector} not found: {e}")
 
         html = await page.content()
+
+        # Capture screenshot if requested
+        screenshot_b64 = None
+        if capture_screenshot:
+            try:
+                screenshot_bytes = await page.screenshot(full_page=True)
+                screenshot_b64 = base64.b64encode(screenshot_bytes).decode('utf-8')
+                logger.info(f"Screenshot captured: {len(screenshot_bytes)} bytes")
+            except Exception as e:
+                logger.warning(f"Screenshot capture failed: {e}")
+
         await context.close()
         await browser.close()
 
-        return html, True
+        return html, True, screenshot_b64
 
     except Exception as e:
         logger.error(f"Playwright scrape failed for {url}: {e}")
@@ -169,7 +185,7 @@ async def scrape_with_playwright(
                 await browser.close()
             except:
                 pass
-        return None, False
+        return None, False, None
 
 
 @asynccontextmanager
@@ -206,22 +222,26 @@ async def scrape(request: ScrapeRequest) -> ScrapeResponse:
     1. Try simple HTTP first (faster)
     2. If HTML looks empty or requires JS, fall back to Playwright
     3. If force_playwright=true, skip HTTP and use Playwright directly
+    4. If capture_screenshot=true, always use Playwright
     """
     logger.info(f"Scrape request: {request.url}")
 
-    if request.force_playwright:
-        logger.info(f"Force Playwright mode for {request.url}")
-        html, success = await scrape_with_playwright(
+    # Screenshot requires Playwright
+    if request.force_playwright or request.capture_screenshot:
+        logger.info(f"Playwright mode for {request.url} (force={request.force_playwright}, screenshot={request.capture_screenshot})")
+        html, success, screenshot = await scrape_with_playwright(
             request.url,
             request.wait_for_selector,
-            request.timeout
+            request.timeout,
+            request.capture_screenshot
         )
         if success:
             return ScrapeResponse(
                 url=request.url,
                 html=html,
                 method="playwright",
-                success=True
+                success=True,
+                screenshot=screenshot
             )
         else:
             return ScrapeResponse(
@@ -251,10 +271,11 @@ async def scrape(request: ScrapeRequest) -> ScrapeResponse:
             logger.info(f"HTTP content appears incomplete, trying Playwright for {request.url}")
 
     # Fall back to Playwright
-    html, pw_success = await scrape_with_playwright(
+    html, pw_success, screenshot = await scrape_with_playwright(
         request.url,
         request.wait_for_selector,
-        request.timeout
+        request.timeout,
+        request.capture_screenshot
     )
 
     if pw_success:
@@ -262,7 +283,8 @@ async def scrape(request: ScrapeRequest) -> ScrapeResponse:
             url=request.url,
             html=html,
             method="playwright",
-            success=True
+            success=True,
+            screenshot=screenshot
         )
     else:
         return ScrapeResponse(

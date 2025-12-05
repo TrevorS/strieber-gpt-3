@@ -1,20 +1,25 @@
-"""ABOUTME: HTML preprocessing and markdown conversion utilities.
+"""ABOUTME: HTML preprocessing, metadata extraction, and markdown conversion utilities.
 
 Uses Trafilatura (F1: 0.958) for content extraction - better than ReadabiliPy (F1: 0.92).
 Used by HuggingFace, IBM, Microsoft Research.
 
-Provides two conversion paths:
-1. Fast path: Trafilatura extraction + markdownify (rule-based, ~100ms)
-2. LLM path: Trafilatura extraction + ReaderLM-v2 (higher quality, ~2-3s)
+Features:
+- Fast path: Trafilatura extraction + markdownify (rule-based, ~100ms)
+- Metadata extraction: title, author, date, language, sitename
+- Links extraction: internal/external URLs
+- BM25 query filtering: extract only content relevant to a query
+- Multiple output formats: markdown, html, text
 """
 
 import logging
 import re
-from typing import Optional
+from typing import Optional, List, Dict, Any
+from dataclasses import dataclass, asdict
 
 try:
     import trafilatura
     from trafilatura.settings import use_config
+    from trafilatura.metadata import extract_metadata as traf_extract_metadata
     TRAFILATURA_AVAILABLE = True
 except ImportError:
     trafilatura = None
@@ -27,29 +32,261 @@ except ImportError:
     md = None
     MARKDOWNIFY_AVAILABLE = False
 
+try:
+    from rank_bm25 import BM25Okapi
+    BM25_AVAILABLE = True
+except ImportError:
+    BM25Okapi = None
+    BM25_AVAILABLE = False
+
 logger = logging.getLogger(__name__)
 
 
+# =============================================================================
+# Data Classes
+# =============================================================================
+
+@dataclass
+class PageMetadata:
+    """Metadata extracted from a web page."""
+    title: Optional[str] = None
+    author: Optional[str] = None
+    date: Optional[str] = None
+    sitename: Optional[str] = None
+    description: Optional[str] = None
+    language: Optional[str] = None
+    categories: List[str] = None
+    tags: List[str] = None
+
+    def __post_init__(self):
+        if self.categories is None:
+            self.categories = []
+        if self.tags is None:
+            self.tags = []
+
+    def to_dict(self) -> dict:
+        return asdict(self)
+
+
+@dataclass
+class ExtractedLink:
+    """A link extracted from the page."""
+    url: str
+    text: str
+    is_internal: bool = False
+
+    def to_dict(self) -> dict:
+        return asdict(self)
+
+
+# =============================================================================
+# Utility Functions
+# =============================================================================
+
 def strip_scripts_and_styles(html: str) -> str:
-    """Remove script and style tags from HTML.
-
-    Args:
-        html: HTML content to clean
-
-    Returns:
-        HTML with script and style tags removed
-    """
-    # Remove script tags and content
+    """Remove script and style tags from HTML."""
     html = re.sub(r'<script\b[^<]*(?:(?!<\/script>)<[^<]*)*<\/script>', '', html, flags=re.IGNORECASE)
-
-    # Remove style tags and content
     html = re.sub(r'<style\b[^<]*(?:(?!<\/style>)<[^<]*)*<\/style>', '', html, flags=re.IGNORECASE)
-
-    # Remove HTML comments
     html = re.sub(r'<!--[\s\S]*?-->', '', html)
-
     return html
 
+
+def tokenize_simple(text: str) -> List[str]:
+    """Simple tokenizer for BM25 - lowercase and split on non-alphanumeric."""
+    return re.findall(r'\b\w+\b', text.lower())
+
+
+# =============================================================================
+# Metadata Extraction
+# =============================================================================
+
+def extract_metadata(html: str) -> PageMetadata:
+    """Extract metadata from HTML using Trafilatura.
+
+    Extracts: title, author, date, sitename, description, language, categories, tags.
+
+    Args:
+        html: Raw HTML content
+
+    Returns:
+        PageMetadata object with extracted fields
+    """
+    if not TRAFILATURA_AVAILABLE:
+        logger.warning("Trafilatura not available for metadata extraction")
+        return PageMetadata()
+
+    try:
+        # Use Trafilatura's metadata extraction
+        metadata = traf_extract_metadata(html)
+
+        if metadata is None:
+            return PageMetadata()
+
+        return PageMetadata(
+            title=metadata.title if hasattr(metadata, 'title') else None,
+            author=metadata.author if hasattr(metadata, 'author') else None,
+            date=metadata.date if hasattr(metadata, 'date') else None,
+            sitename=metadata.sitename if hasattr(metadata, 'sitename') else None,
+            description=metadata.description if hasattr(metadata, 'description') else None,
+            language=metadata.language if hasattr(metadata, 'language') else None,
+            categories=list(metadata.categories) if hasattr(metadata, 'categories') and metadata.categories else [],
+            tags=list(metadata.tags) if hasattr(metadata, 'tags') and metadata.tags else []
+        )
+
+    except Exception as e:
+        logger.warning(f"Metadata extraction failed: {e}")
+        return PageMetadata()
+
+
+# =============================================================================
+# Links Extraction
+# =============================================================================
+
+def extract_links(html: str, base_url: Optional[str] = None) -> List[ExtractedLink]:
+    """Extract all links from HTML.
+
+    Args:
+        html: Raw HTML content
+        base_url: Base URL to determine internal vs external links
+
+    Returns:
+        List of ExtractedLink objects
+    """
+    links = []
+
+    # Extract href and link text using regex
+    link_pattern = re.compile(
+        r'<a\s+[^>]*href=["\']([^"\']+)["\'][^>]*>(.*?)</a>',
+        re.IGNORECASE | re.DOTALL
+    )
+
+    base_domain = None
+    if base_url:
+        # Extract domain from base URL
+        domain_match = re.match(r'https?://([^/]+)', base_url)
+        if domain_match:
+            base_domain = domain_match.group(1).lower()
+
+    for match in link_pattern.finditer(html):
+        url = match.group(1).strip()
+        text = re.sub(r'<[^>]+>', '', match.group(2)).strip()  # Remove nested HTML
+
+        # Skip empty, anchor-only, or javascript links
+        if not url or url.startswith('#') or url.startswith('javascript:'):
+            continue
+
+        # Determine if internal
+        is_internal = False
+        if base_domain:
+            if url.startswith('/') or url.startswith('./'):
+                is_internal = True
+            elif base_domain in url.lower():
+                is_internal = True
+
+        links.append(ExtractedLink(url=url, text=text, is_internal=is_internal))
+
+    return links
+
+
+# =============================================================================
+# BM25 Query Filtering
+# =============================================================================
+
+def filter_content_by_query(
+    content: str,
+    query: str,
+    top_k: int = 10,
+    min_score: float = 0.0
+) -> tuple[str, dict]:
+    """Filter content to only include paragraphs relevant to the query using BM25.
+
+    This is useful for RAG applications where you only want content relevant
+    to a specific question or topic.
+
+    Args:
+        content: Text content (markdown or plain text)
+        query: Query string to filter by
+        top_k: Maximum number of paragraphs to return
+        min_score: Minimum BM25 score to include (0.0 = include all top_k)
+
+    Returns:
+        Tuple of (filtered_content, metadata)
+    """
+    metadata = {
+        "query": query,
+        "bm25_available": BM25_AVAILABLE,
+        "original_paragraphs": 0,
+        "filtered_paragraphs": 0,
+        "top_scores": []
+    }
+
+    if not BM25_AVAILABLE:
+        logger.warning("rank-bm25 not available, returning full content")
+        return content, metadata
+
+    if not query or not query.strip():
+        return content, metadata
+
+    # Split content into paragraphs (double newline or single newline with content)
+    paragraphs = re.split(r'\n\s*\n', content)
+    paragraphs = [p.strip() for p in paragraphs if p.strip() and len(p.strip()) > 20]
+
+    metadata["original_paragraphs"] = len(paragraphs)
+
+    if len(paragraphs) == 0:
+        return content, metadata
+
+    if len(paragraphs) <= top_k:
+        # Not enough paragraphs to filter
+        metadata["filtered_paragraphs"] = len(paragraphs)
+        return content, metadata
+
+    try:
+        # Tokenize paragraphs and query
+        tokenized_paragraphs = [tokenize_simple(p) for p in paragraphs]
+        tokenized_query = tokenize_simple(query)
+
+        # Create BM25 index
+        bm25 = BM25Okapi(tokenized_paragraphs)
+
+        # Score paragraphs
+        scores = bm25.get_scores(tokenized_query)
+
+        # Get top-k paragraphs by score
+        scored_paragraphs = list(zip(paragraphs, scores, range(len(paragraphs))))
+        scored_paragraphs.sort(key=lambda x: x[1], reverse=True)
+
+        # Filter by min_score and take top_k
+        filtered = [
+            (p, score, idx) for p, score, idx in scored_paragraphs[:top_k]
+            if score >= min_score
+        ]
+
+        # Sort by original order to maintain document flow
+        filtered.sort(key=lambda x: x[2])
+
+        metadata["filtered_paragraphs"] = len(filtered)
+        metadata["top_scores"] = [round(score, 3) for _, score, _ in filtered[:5]]
+
+        # Reconstruct content
+        filtered_content = "\n\n".join(p for p, _, _ in filtered)
+
+        logger.info(
+            f"BM25 filtered {len(paragraphs)} paragraphs to {len(filtered)} "
+            f"for query: '{query[:50]}...'" if len(query) > 50 else f"for query: '{query}'"
+        )
+
+        return filtered_content, metadata
+
+    except Exception as e:
+        logger.error(f"BM25 filtering failed: {e}")
+        metadata["error"] = str(e)
+        return content, metadata
+
+
+# =============================================================================
+# Content Extraction
+# =============================================================================
 
 def extract_with_trafilatura(
     html: str,
@@ -67,7 +304,7 @@ def extract_with_trafilatura(
         include_links: Whether to preserve links (default True)
         include_images: Whether to preserve image references (default True)
         include_tables: Whether to preserve tables (default True)
-        output_format: Output format - "html", "markdown", or "text"
+        output_format: Output format - "html", "markdown", or "txt"
 
     Returns:
         Tuple of (extracted_content, success, metadata)
@@ -89,13 +326,18 @@ def extract_with_trafilatura(
         config = use_config()
         config.set("DEFAULT", "EXTRACTION_TIMEOUT", "30")
 
+        # Map output_format to trafilatura's expected values
+        traf_format = output_format
+        if output_format == "text":
+            traf_format = "txt"
+
         # Extract content
         extracted = trafilatura.extract(
             html,
             include_links=include_links,
             include_images=include_images,
             include_tables=include_tables,
-            output_format=output_format,
+            output_format=traf_format,
             config=config
         )
 
@@ -116,7 +358,6 @@ def extract_with_trafilatura(
 
             return extracted, True, metadata
         else:
-            # Extraction returned empty, fall back to stripping
             logger.debug("Trafilatura extraction returned empty content, falling back")
             cleaned = strip_scripts_and_styles(html)
             metadata["extractor"] = "fallback_strip"
@@ -156,10 +397,10 @@ def html_to_markdown_fast(html: str) -> tuple[str, bool, dict]:
         # Convert HTML to Markdown with sensible defaults
         markdown = md(
             html,
-            heading_style="ATX",          # Use # style headings
-            bullets="-",                   # Use - for lists
-            code_language="",              # Don't assume code language
-            strip=['script', 'style'],     # Remove these tags
+            heading_style="ATX",
+            bullets="-",
+            code_language="",
+            strip=['script', 'style'],
             convert=['a', 'b', 'blockquote', 'br', 'code', 'em', 'h1', 'h2',
                      'h3', 'h4', 'h5', 'h6', 'hr', 'i', 'img', 'li', 'ol',
                      'p', 'pre', 'strong', 'table', 'tbody', 'td', 'th',
@@ -185,6 +426,10 @@ def html_to_markdown_fast(html: str) -> tuple[str, bool, dict]:
         metadata["error"] = str(e)
         return html, False, metadata
 
+
+# =============================================================================
+# Main Pipeline Functions
+# =============================================================================
 
 def preprocess_html(
     html: str,
@@ -221,7 +466,6 @@ def preprocess_html(
         metadata['trafilatura_used'] = success
         metadata['extraction_metadata'] = extract_meta
     else:
-        # Just strip scripts/styles
         processed = strip_scripts_and_styles(processed)
         metadata['scripts_stripped'] = True
 
@@ -247,7 +491,10 @@ def preprocess_html(
 
 def extract_and_convert_to_markdown(
     html: str,
-    use_trafilatura: bool = True
+    use_trafilatura: bool = True,
+    include_links: bool = True,
+    query: Optional[str] = None,
+    query_top_k: int = 10
 ) -> tuple[str, bool, dict]:
     """Full fast-path: Extract content with Trafilatura + convert to Markdown with markdownify.
 
@@ -257,6 +504,9 @@ def extract_and_convert_to_markdown(
     Args:
         html: Raw HTML content
         use_trafilatura: Whether to use Trafilatura for extraction
+        include_links: Whether to preserve links in output
+        query: Optional query for BM25 filtering (returns only relevant content)
+        query_top_k: Max paragraphs to return when filtering by query
 
     Returns:
         Tuple of (markdown_content, success, metadata)
@@ -264,13 +514,15 @@ def extract_and_convert_to_markdown(
     metadata = {
         "pipeline": "fast_path",
         "extraction": {},
-        "conversion": {}
+        "conversion": {},
+        "bm25_filter": None
     }
 
     # Step 1: Extract main content with Trafilatura (output as HTML for markdownify)
     extracted_html, extract_success, extract_meta = extract_with_trafilatura(
         html,
-        output_format="html"  # Keep as HTML for markdownify
+        include_links=include_links,
+        output_format="html"
     )
     metadata["extraction"] = extract_meta
 
@@ -281,6 +533,15 @@ def extract_and_convert_to_markdown(
     markdown, convert_success, convert_meta = html_to_markdown_fast(extracted_html)
     metadata["conversion"] = convert_meta
 
+    # Step 3: Optional BM25 query filtering
+    if query and convert_success:
+        markdown, bm25_meta = filter_content_by_query(
+            markdown,
+            query,
+            top_k=query_top_k
+        )
+        metadata["bm25_filter"] = bm25_meta
+
     overall_success = extract_success and convert_success
 
     if overall_success:
@@ -289,3 +550,90 @@ def extract_and_convert_to_markdown(
         )
 
     return markdown, overall_success, metadata
+
+
+def process_html_full(
+    html: str,
+    output_format: str = "markdown",
+    include_metadata: bool = False,
+    include_links: bool = False,
+    query: Optional[str] = None,
+    query_top_k: int = 10,
+    base_url: Optional[str] = None
+) -> dict:
+    """Full processing pipeline with all features.
+
+    Args:
+        html: Raw HTML content
+        output_format: "markdown", "html", or "text"
+        include_metadata: Extract and return page metadata
+        include_links: Extract and return all links
+        query: Optional BM25 query to filter content by relevance
+        query_top_k: Max paragraphs when filtering by query
+        base_url: Base URL for determining internal/external links
+
+    Returns:
+        Dict with keys: content, success, metadata, page_metadata, links
+    """
+    result = {
+        "content": "",
+        "success": False,
+        "metadata": {},
+        "page_metadata": None,
+        "links": None
+    }
+
+    # Extract metadata if requested
+    if include_metadata:
+        page_meta = extract_metadata(html)
+        result["page_metadata"] = page_meta.to_dict()
+
+    # Extract links if requested
+    if include_links:
+        links = extract_links(html, base_url)
+        result["links"] = [link.to_dict() for link in links]
+
+    # Process content based on output format
+    if output_format == "text":
+        # Use Trafilatura's text output directly
+        content, success, meta = extract_with_trafilatura(
+            html,
+            output_format="txt",
+            include_links=False,
+            include_images=False
+        )
+        result["content"] = content or ""
+        result["success"] = success
+        result["metadata"] = meta
+
+    elif output_format == "html":
+        # Return cleaned HTML
+        content, success, meta = extract_with_trafilatura(
+            html,
+            output_format="html"
+        )
+        result["content"] = content or ""
+        result["success"] = success
+        result["metadata"] = meta
+
+    else:  # markdown (default)
+        content, success, meta = extract_and_convert_to_markdown(
+            html,
+            query=query,
+            query_top_k=query_top_k
+        )
+        result["content"] = content
+        result["success"] = success
+        result["metadata"] = meta
+
+    # Apply BM25 filter for non-markdown formats if query provided
+    if query and output_format != "markdown" and result["content"]:
+        filtered, bm25_meta = filter_content_by_query(
+            result["content"],
+            query,
+            top_k=query_top_k
+        )
+        result["content"] = filtered
+        result["metadata"]["bm25_filter"] = bm25_meta
+
+    return result
