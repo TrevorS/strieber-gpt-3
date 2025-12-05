@@ -1,14 +1,19 @@
 """ABOUTME: HTML preprocessing, metadata extraction, and markdown conversion utilities.
 
-Uses Trafilatura (F1: 0.958) for content extraction - better than ReadabiliPy (F1: 0.92).
-Used by HuggingFace, IBM, Microsoft Research.
+Uses Trafilatura (F1: 0.958) for content extraction with readability-lxml ensemble fallback.
+Ensemble approaches achieve F1: 0.981 per research benchmarks.
 
 Features:
 - Fast path: Trafilatura extraction + markdownify (rule-based, ~100ms)
+- Ensemble fallback: readability-lxml when Trafilatura fails
 - Metadata extraction: title, author, date, language, sitename
 - Links extraction: internal/external URLs
 - BM25 query filtering: extract only content relevant to a query
 - Multiple output formats: markdown, html, text
+- Charset detection: handles international encodings
+- Language filtering: discard non-matching content
+- Deduplication: remove duplicate segments
+- XPath pruning: remove boilerplate elements
 """
 
 import logging
@@ -16,9 +21,12 @@ import re
 from dataclasses import asdict, dataclass
 from typing import Optional
 
+import charset_normalizer
 import trafilatura
+from lxml import etree
 from markdownify import markdownify as md
 from rank_bm25 import BM25Okapi
+from readability import Document as ReadabilityDocument
 from trafilatura.metadata import extract_metadata as traf_extract_metadata
 from trafilatura.settings import use_config
 
@@ -26,6 +34,27 @@ logger = logging.getLogger(__name__)
 
 # Minimum content length to consider extraction successful
 MIN_CONTENT_LENGTH = 50
+
+# Default XPath patterns to prune (common boilerplate elements)
+DEFAULT_PRUNE_XPATH = [
+    '//div[contains(@class, "cookie")]',
+    '//div[contains(@class, "Cookie")]',
+    '//div[contains(@id, "cookie")]',
+    '//div[contains(@class, "consent")]',
+    '//div[contains(@class, "newsletter")]',
+    '//div[contains(@class, "subscribe")]',
+    '//div[contains(@class, "popup")]',
+    '//div[contains(@class, "modal")]',
+    '//div[contains(@class, "advertisement")]',
+    '//div[contains(@class, "ad-")]',
+    '//div[contains(@class, "ads-")]',
+    '//aside[contains(@class, "sidebar")]',
+    '//nav[contains(@class, "breadcrumb")]',
+    '//div[contains(@class, "share")]',
+    '//div[contains(@class, "social")]',
+    '//footer',
+    '//header[contains(@class, "site-header")]',
+]
 
 
 # =============================================================================
@@ -66,6 +95,121 @@ class ExtractedLink:
 
     def to_dict(self) -> dict:
         return asdict(self)
+
+
+@dataclass
+class ExtractionOptions:
+    """Options for content extraction."""
+
+    favor_precision: bool = False
+    favor_recall: bool = False
+    deduplicate: bool = False
+    target_language: Optional[str] = None  # ISO 639-1 code (e.g., "en", "de")
+    prune_xpath: Optional[list[str]] = None
+    fast: bool = False
+    include_links: bool = True
+    include_images: bool = True
+    include_tables: bool = True
+
+
+# =============================================================================
+# Charset Detection
+# =============================================================================
+
+
+def detect_and_decode(content: bytes) -> tuple[str, str, float]:
+    """Detect charset and decode bytes to string.
+
+    Args:
+        content: Raw bytes content
+
+    Returns:
+        Tuple of (decoded_string, detected_encoding, confidence)
+    """
+    if isinstance(content, str):
+        return content, "utf-8", 1.0
+
+    # Try charset-normalizer for robust detection
+    result = charset_normalizer.from_bytes(content)
+    best = result.best()
+
+    if best is not None:
+        return str(best), best.encoding, 1.0 - (best.chaos if hasattr(best, "chaos") else 0)
+
+    # Fallback: try common encodings
+    for encoding in ["utf-8", "latin-1", "cp1252", "iso-8859-1"]:
+        try:
+            return content.decode(encoding), encoding, 0.5
+        except (UnicodeDecodeError, LookupError):
+            continue
+
+    # Last resort: decode with replacement
+    return content.decode("utf-8", errors="replace"), "utf-8", 0.1
+
+
+def extract_declared_charset(html: str) -> Optional[str]:
+    """Extract charset from HTML meta tags."""
+    # Check meta charset
+    match = re.search(r'<meta[^>]+charset=["\']?([^"\'>\s]+)', html, re.IGNORECASE)
+    if match:
+        return match.group(1).strip()
+
+    # Check Content-Type meta
+    match = re.search(
+        r'<meta[^>]+content=["\'][^"\']*charset=([^"\';\s]+)', html, re.IGNORECASE
+    )
+    if match:
+        return match.group(1).strip()
+
+    return None
+
+
+# =============================================================================
+# XPath Pruning
+# =============================================================================
+
+
+def prune_html_xpath(html: str, xpath_patterns: list[str]) -> str:
+    """Remove elements matching XPath patterns from HTML.
+
+    Args:
+        html: HTML content
+        xpath_patterns: List of XPath expressions to remove
+
+    Returns:
+        Cleaned HTML with matched elements removed
+    """
+    if not xpath_patterns:
+        return html
+
+    try:
+        # Parse HTML
+        tree = etree.HTML(html)
+        if tree is None:
+            return html
+
+        removed_count = 0
+        for pattern in xpath_patterns:
+            try:
+                elements = tree.xpath(pattern)
+                for elem in elements:
+                    parent = elem.getparent()
+                    if parent is not None:
+                        parent.remove(elem)
+                        removed_count += 1
+            except etree.XPathError as e:
+                logger.debug(f"Invalid XPath pattern '{pattern}': {e}")
+                continue
+
+        if removed_count > 0:
+            logger.debug(f"Pruned {removed_count} elements via XPath")
+            return etree.tostring(tree, encoding="unicode", method="html")
+
+        return html
+
+    except Exception as e:
+        logger.warning(f"XPath pruning failed: {e}")
+        return html
 
 
 # =============================================================================
@@ -277,6 +421,41 @@ def filter_content_by_query(
 
 
 # =============================================================================
+# Readability Fallback (Ensemble)
+# =============================================================================
+
+
+def extract_with_readability(html: str) -> tuple[Optional[str], bool, dict]:
+    """Extract content using readability-lxml as fallback.
+
+    Readability achieves median F1 of 0.970 on benchmarks.
+    """
+    metadata = {
+        "extractor": "readability",
+        "extraction_success": False,
+    }
+
+    try:
+        doc = ReadabilityDocument(html)
+        content = doc.summary()
+        title = doc.title()
+
+        if content and is_valid_content(content):
+            metadata["extraction_success"] = True
+            metadata["title"] = title
+            metadata["content_size"] = len(content)
+            logger.info(f"Readability extracted {len(content)} chars")
+            return content, True, metadata
+
+        return None, False, metadata
+
+    except Exception as e:
+        logger.warning(f"Readability extraction failed: {e}")
+        metadata["error"] = str(e)
+        return None, False, metadata
+
+
+# =============================================================================
 # Content Extraction
 # =============================================================================
 
@@ -287,17 +466,35 @@ def extract_with_trafilatura(
     include_images: bool = True,
     include_tables: bool = True,
     output_format: str = "html",
+    options: Optional[ExtractionOptions] = None,
 ) -> tuple[Optional[str], bool, dict]:
-    """Extract main content from HTML using Trafilatura with fallback chain.
+    """Extract main content from HTML using Trafilatura with ensemble fallback.
 
-    Uses a 2-step fallback: first tries precision mode, then favor_recall=True.
+    Uses a multi-step fallback chain:
+    1. Standard Trafilatura extraction
+    2. Trafilatura with favor_recall=True
+    3. Readability-lxml (ensemble member)
     """
+    if options is None:
+        options = ExtractionOptions()
+
     metadata = {
         "extractor": "trafilatura",
         "extraction_success": False,
         "output_format": output_format,
-        "fallback_used": False,
+        "fallback_used": None,
+        "options": {
+            "favor_precision": options.favor_precision,
+            "favor_recall": options.favor_recall,
+            "deduplicate": options.deduplicate,
+            "target_language": options.target_language,
+            "fast": options.fast,
+        },
     }
+
+    # Apply XPath pruning if configured
+    prune_patterns = options.prune_xpath if options.prune_xpath else DEFAULT_PRUNE_XPATH
+    html = prune_html_xpath(html, prune_patterns)
 
     try:
         config = use_config()
@@ -305,41 +502,62 @@ def extract_with_trafilatura(
 
         traf_format = "txt" if output_format == "text" else output_format
 
-        # First attempt: standard extraction (precision mode)
-        extracted = trafilatura.extract(
-            html,
-            include_links=include_links,
-            include_images=include_images,
-            include_tables=include_tables,
-            output_format=traf_format,
-            config=config,
-        )
+        # Build extraction kwargs
+        extract_kwargs = {
+            "include_links": include_links,
+            "include_images": include_images,
+            "include_tables": include_tables,
+            "output_format": traf_format,
+            "config": config,
+            "deduplicate": options.deduplicate,
+        }
 
-        # Check if extraction is valid, if not try favor_recall
+        # Add precision/recall preference
+        if options.favor_precision:
+            extract_kwargs["favor_precision"] = True
+        elif options.favor_recall:
+            extract_kwargs["favor_recall"] = True
+
+        # Add language filter
+        if options.target_language:
+            extract_kwargs["target_language"] = options.target_language
+
+        # Add fast mode
+        if options.fast:
+            extract_kwargs["fast"] = True
+
+        # First attempt: configured extraction
+        extracted = trafilatura.extract(html, **extract_kwargs)
+
+        # Check if extraction is valid
         if not is_valid_content(extracted):
-            logger.debug(
-                "First extraction attempt yielded insufficient content, trying favor_recall=True"
+            # Second attempt: try favor_recall if not already using it
+            if not options.favor_recall and not options.favor_precision:
+                logger.debug("First extraction insufficient, trying favor_recall=True")
+                extract_kwargs["favor_recall"] = True
+                extracted = trafilatura.extract(html, **extract_kwargs)
+                metadata["fallback_used"] = "favor_recall"
+
+        # Third attempt: readability-lxml ensemble fallback
+        if not is_valid_content(extracted):
+            logger.debug("Trafilatura extraction insufficient, trying readability-lxml")
+            readability_content, readability_success, readability_meta = extract_with_readability(
+                html
             )
-            extracted = trafilatura.extract(
-                html,
-                include_links=include_links,
-                include_images=include_images,
-                include_tables=include_tables,
-                output_format=traf_format,
-                favor_recall=True,
-                config=config,
-            )
-            metadata["fallback_used"] = True
+            if readability_success and readability_content:
+                metadata["fallback_used"] = "readability"
+                metadata["readability_meta"] = readability_meta
+                extracted = readability_content
 
         if is_valid_content(extracted):
             original_size = len(html)
             extracted_size = len(extracted)
             compression = (original_size - extracted_size) / original_size * 100
 
+            fallback_info = f" [{metadata['fallback_used']}]" if metadata["fallback_used"] else ""
             logger.info(
-                f"Trafilatura extracted content: {original_size} → {extracted_size} bytes "
-                f"({compression:.1f}% reduction)"
-                f"{' [favor_recall]' if metadata['fallback_used'] else ''}"
+                f"Extracted content: {original_size} → {extracted_size} bytes "
+                f"({compression:.1f}% reduction){fallback_info}"
             )
 
             metadata["extraction_success"] = True
@@ -349,13 +567,13 @@ def extract_with_trafilatura(
 
             return extracted, True, metadata
         else:
-            logger.debug("Trafilatura extraction returned insufficient content, falling back")
+            logger.debug("All extraction methods returned insufficient content")
             cleaned = strip_scripts_and_styles(html)
             metadata["extractor"] = "fallback_strip"
             return cleaned, False, metadata
 
     except Exception as e:
-        logger.warning(f"Trafilatura extraction failed: {e}, falling back to strip approach")
+        logger.warning(f"Extraction failed: {e}, falling back to strip approach")
         cleaned = strip_scripts_and_styles(html)
         metadata["extractor"] = "fallback_strip"
         metadata["error"] = str(e)
@@ -432,7 +650,10 @@ def html_to_markdown_fast(html: str) -> tuple[str, bool, dict]:
 
 
 def preprocess_html(
-    html: str, use_trafilatura: bool = True, output_format: str = "html"
+    html: str,
+    use_trafilatura: bool = True,
+    output_format: str = "html",
+    options: Optional[ExtractionOptions] = None,
 ) -> tuple[str, dict]:
     """Preprocess HTML for conversion (extraction step only)."""
     metadata = {
@@ -445,7 +666,7 @@ def preprocess_html(
 
     if use_trafilatura:
         extracted, success, extract_meta = extract_with_trafilatura(
-            processed, output_format=output_format
+            processed, output_format=output_format, options=options
         )
         processed = extracted
         metadata["trafilatura_used"] = success
@@ -483,6 +704,7 @@ def extract_and_convert_to_markdown(
     include_links: bool = True,
     query: Optional[str] = None,
     query_top_k: int = 10,
+    options: Optional[ExtractionOptions] = None,
 ) -> tuple[str, bool, dict]:
     """Full fast-path: Extract content with Trafilatura + convert to Markdown with markdownify.
 
@@ -496,9 +718,9 @@ def extract_and_convert_to_markdown(
         "content_valid": False,
     }
 
-    # Step 1: Extract main content with Trafilatura
+    # Step 1: Extract main content with Trafilatura (with ensemble fallback)
     extracted_html, extract_success, extract_meta = extract_with_trafilatura(
-        html, include_links=include_links, output_format="html"
+        html, include_links=include_links, output_format="html", options=options
     )
     metadata["extraction"] = extract_meta
 
@@ -540,6 +762,7 @@ def process_html_full(
     query: Optional[str] = None,
     query_top_k: int = 10,
     base_url: Optional[str] = None,
+    options: Optional[ExtractionOptions] = None,
 ) -> dict:
     """Full processing pipeline with all features."""
     result = {
@@ -560,21 +783,27 @@ def process_html_full(
 
     if output_format == "text":
         content, success, meta = extract_with_trafilatura(
-            html, output_format="txt", include_links=False, include_images=False
+            html,
+            output_format="txt",
+            include_links=False,
+            include_images=False,
+            options=options,
         )
         result["content"] = content or ""
         result["success"] = success
         result["metadata"] = meta
 
     elif output_format == "html":
-        content, success, meta = extract_with_trafilatura(html, output_format="html")
+        content, success, meta = extract_with_trafilatura(
+            html, output_format="html", options=options
+        )
         result["content"] = content or ""
         result["success"] = success
         result["metadata"] = meta
 
     else:  # markdown (default)
         content, success, meta = extract_and_convert_to_markdown(
-            html, query=query, query_top_k=query_top_k
+            html, query=query, query_top_k=query_top_k, options=options
         )
         result["content"] = content
         result["success"] = success

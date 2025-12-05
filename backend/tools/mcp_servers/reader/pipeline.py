@@ -27,7 +27,8 @@ from html_preprocessor import (
     filter_content_by_query,
     extract_with_trafilatura,
     PageMetadata,
-    ExtractedLink
+    ExtractedLink,
+    ExtractionOptions,
 )
 
 logger = logging.getLogger(__name__)
@@ -95,7 +96,8 @@ class ReaderPipeline:
         query: Optional[str] = None,
         query_top_k: int = 10,
         wait_for_selector: Optional[str] = None,
-        capture_screenshot: bool = False
+        capture_screenshot: bool = False,
+        extraction_options: Optional[ExtractionOptions] = None,
     ) -> ProcessResult:
         """
         Full-featured pipeline with all options.
@@ -112,6 +114,7 @@ class ReaderPipeline:
             query_top_k: Max paragraphs when filtering by query
             wait_for_selector: CSS selector to wait for before scraping
             capture_screenshot: Capture full-page screenshot
+            extraction_options: Advanced extraction options (precision/recall, language, etc.)
 
         Returns:
             ProcessResult with content, success, metadata, and optional extras
@@ -194,7 +197,8 @@ class ReaderPipeline:
                     html,
                     output_format="txt",
                     include_links=False,
-                    include_images=False
+                    include_images=False,
+                    options=extraction_options,
                 )
                 result.content = content or ""
                 result.success = success
@@ -204,7 +208,8 @@ class ReaderPipeline:
                 # Cleaned HTML
                 content, success, conv_meta = extract_with_trafilatura(
                     html,
-                    output_format="html"
+                    output_format="html",
+                    options=extraction_options,
                 )
                 result.content = content or ""
                 result.success = success
@@ -221,7 +226,9 @@ class ReaderPipeline:
 
             else:
                 # Fast Path: Trafilatura extraction → markdownify conversion
-                content, conv_success, conv_meta = self._convert_fast(html, query, query_top_k)
+                content, conv_success, conv_meta = self._convert_fast(
+                    html, query, query_top_k, extraction_options
+                )
                 result.content = content
                 result.success = conv_success
                 metadata["conversion"] = conv_meta
@@ -255,7 +262,8 @@ class ReaderPipeline:
         self,
         html: str,
         query: Optional[str] = None,
-        query_top_k: int = 10
+        query_top_k: int = 10,
+        extraction_options: Optional[ExtractionOptions] = None,
     ) -> tuple[str, bool, dict]:
         """Fast path: Trafilatura + markdownify (no LLM).
 
@@ -263,6 +271,7 @@ class ReaderPipeline:
             html: Raw HTML content
             query: Optional BM25 query for filtering
             query_top_k: Max paragraphs when filtering
+            extraction_options: Advanced extraction options
 
         Returns:
             (markdown, success, metadata)
@@ -272,7 +281,8 @@ class ReaderPipeline:
         content, success, metadata = extract_and_convert_to_markdown(
             html,
             query=query,
-            query_top_k=query_top_k
+            query_top_k=query_top_k,
+            options=extraction_options,
         )
 
         elapsed_ms = int((time.time() - start_time) * 1000)

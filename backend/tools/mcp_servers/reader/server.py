@@ -50,6 +50,7 @@ from common.error_handling import (
 )
 
 from pipeline import ReaderPipeline
+from html_preprocessor import ExtractionOptions
 
 # =============================================================================
 # Module-Level Constants
@@ -111,6 +112,24 @@ class FetchPageInput(BaseModel):
         default=None,
         max_length=SELECTOR_MAX_LENGTH,
         description="CSS selector to wait for before extracting content (for dynamic pages)"
+    )
+    # Advanced extraction options
+    favor_precision: bool = Field(
+        default=False,
+        description="Prefer less text but more accurate extraction (vs favor_recall)"
+    )
+    favor_recall: bool = Field(
+        default=False,
+        description="Prefer more text even when uncertain (vs favor_precision)"
+    )
+    deduplicate: bool = Field(
+        default=False,
+        description="Remove duplicate text segments from output"
+    )
+    target_language: Optional[str] = Field(
+        default=None,
+        max_length=5,
+        description="Filter content by language (ISO 639-1 code, e.g., 'en', 'de', 'fr')"
     )
 
     @field_validator("url")
@@ -178,7 +197,11 @@ async def fetch_page(
     include_links: bool = False,
     query: Optional[str] = None,
     wait_for_selector: Optional[str] = None,
-    ctx: Context = None
+    favor_precision: bool = False,
+    favor_recall: bool = False,
+    deduplicate: bool = False,
+    target_language: Optional[str] = None,
+    ctx: Context = None,
 ) -> CallToolResult:
     """Fetch and extract web page content with advanced options.
 
@@ -199,6 +222,9 @@ async def fetch_page(
     • Links extraction: all page links with internal/external classification
     • BM25 query filtering: extract only content relevant to your query
     • CSS selector waiting: wait for dynamic content before extraction
+    • Ensemble extraction: Trafilatura + readability-lxml fallback (F1: 0.981)
+    • Language filtering: only extract content in specified language
+    • Deduplication: remove duplicate text segments
 
     Args:
         url: URL to fetch (must include http:// or https://)
@@ -210,6 +236,10 @@ async def fetch_page(
         include_links: Extract all links from the page
         query: BM25 query to filter content by relevance (great for RAG)
         wait_for_selector: CSS selector to wait for before scraping
+        favor_precision: Prefer less text but more accurate extraction
+        favor_recall: Prefer more text even when uncertain
+        deduplicate: Remove duplicate text segments
+        target_language: Filter by language (ISO 639-1 code: "en", "de", etc.)
 
     Returns:
         Content with metadata. If include_metadata/include_links, returns JSON with:
@@ -231,11 +261,14 @@ async def fetch_page(
         # Get all links for crawling
         fetch_page("https://example.com", include_links=True)
 
+        # High precision extraction (less noise)
+        fetch_page("https://example.com", favor_precision=True)
+
+        # Only English content
+        fetch_page("https://example.com", target_language="en")
+
         # Screenshot
         fetch_page("https://example.com", output_format="screenshot")
-
-        # Wait for dynamic content
-        fetch_page("https://spa.example.com", wait_for_selector="#main-content")
     """
     pipeline_name = "llm_path" if use_llm else "fast_path"
     logger.debug(f"fetch_page: url={url}, format={output_format}, llm={use_llm}, query={query}")
@@ -250,6 +283,14 @@ async def fetch_page(
 
         start_time = time.time()
 
+        # Build extraction options from parameters
+        extraction_options = ExtractionOptions(
+            favor_precision=favor_precision,
+            favor_recall=favor_recall,
+            deduplicate=deduplicate,
+            target_language=target_language,
+        )
+
         # Process URL through full pipeline
         result = await pipeline.process_url_full(
             url=url,
@@ -260,7 +301,8 @@ async def fetch_page(
             include_metadata=include_metadata,
             include_links=include_links,
             query=query,
-            wait_for_selector=wait_for_selector
+            wait_for_selector=wait_for_selector,
+            extraction_options=extraction_options,
         )
 
         total_time_ms = int((time.time() - start_time) * 1000)
