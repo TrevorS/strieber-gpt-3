@@ -215,7 +215,7 @@
 </script>
 
 <div
-	class="border-t p-4 {isDragging ? 'bg-accent/30' : ''} transition-colors"
+	class="p-4 {isDragging ? 'bg-accent/30' : ''} transition-colors"
 	ondragover={handleDragOver}
 	ondragleave={handleDragLeave}
 	ondrop={handleDrop}
@@ -224,9 +224,16 @@
 >
 	<div class="max-w-3xl mx-auto">
 		{#if attachments.length > 0}
-			<AttachmentStrip {attachments} onremove={removeAttachment} />
+			<div class="mb-3">
+				<AttachmentStrip {attachments} onremove={removeAttachment} />
+			</div>
 		{/if}
-		<div class="flex gap-2 items-end">
+
+		<!-- Floating input container -->
+		<div class="relative flex items-center gap-1 rounded-2xl border bg-background
+					shadow-sm ring-1 ring-border/50
+					focus-within:ring-2 focus-within:ring-ring/50 focus-within:shadow-md
+					transition-all duration-200 py-2 px-3">
 			<!-- Hidden file input -->
 			<input
 				bind:this={fileInput}
@@ -238,41 +245,63 @@
 				aria-hidden="true"
 			/>
 
-			<!-- File picker button -->
-			<Button
+			<!-- Attach button (left, inside) -->
+			<button
 				onclick={openFilePicker}
-				variant="ghost"
-				size="icon"
-				class="shrink-0"
+				type="button"
+				class="shrink-0 p-2 rounded-xl text-muted-foreground
+					   hover:text-foreground hover:bg-accent transition-colors"
 				aria-label="Attach files"
 				data-testid="attach-button"
 			>
-				<Paperclip class="h-4 w-4" />
-			</Button>
+				<Paperclip class="h-5 w-5" />
+			</button>
 
+			<!-- Textarea (center) -->
 			<textarea
 				bind:this={textarea}
 				bind:value
 				onkeydown={handleKeydown}
 				oninput={autoResize}
 				onpaste={handlePaste}
-				placeholder="Send a message..."
+				placeholder="Message Strieber GPT..."
 				rows="1"
-				class="flex-1 resize-none rounded-lg border p-3 focus:outline-none focus:ring-2 focus:ring-ring"
+				class="flex-1 resize-none bg-transparent py-2 px-1 text-base leading-relaxed
+					   placeholder:text-muted-foreground/70 focus:outline-none
+					   max-h-[200px] overflow-y-auto"
 			></textarea>
+
+			<!-- Send/Stop button (right, inside) -->
 			{#if streaming}
-				<Button onclick={handleStop} variant="destructive" size="icon" data-testid="stop-button">
-					<Square class="h-4 w-4" />
-				</Button>
+				<button
+					onclick={handleStop}
+					type="button"
+					class="shrink-0 p-2 rounded-xl bg-destructive text-destructive-foreground
+						   hover:bg-destructive/90 transition-colors"
+					data-testid="stop-button"
+					aria-label="Stop generating"
+				>
+					<Square class="h-5 w-5 fill-current" />
+				</button>
 			{:else}
-				<Button onclick={submit} disabled={!canSubmit} size="icon" data-testid="send-button">
-					<Send class="h-4 w-4" />
-				</Button>
+				<button
+					onclick={submit}
+					type="button"
+					disabled={!canSubmit}
+					class="shrink-0 p-2 rounded-xl transition-colors
+						   {canSubmit
+							 ? 'bg-primary text-primary-foreground hover:bg-primary/90'
+							 : 'text-muted-foreground/50 cursor-not-allowed'}"
+					data-testid="send-button"
+					aria-label="Send message"
+				>
+					<Send class="h-5 w-5" />
+				</button>
 			{/if}
 		</div>
 
 		{#if isDragging}
-			<div class="mt-2 text-center text-sm text-muted-foreground">
+			<div class="mt-3 text-center text-sm text-muted-foreground animate-pulse">
 				Drop files here to attach
 			</div>
 		{/if}

@@ -30,7 +30,7 @@ describe('ChatInput', () => {
 		it('should render with placeholder text', () => {
 			render(ChatInput, { props: { onsubmit: mockOnSubmit } });
 
-			const textarea = screen.getByPlaceholderText('Send a message...');
+			const textarea = screen.getByPlaceholderText('Message Strieber GPT...');
 			expect(textarea).toBeInTheDocument();
 		});
 
@@ -57,7 +57,9 @@ describe('ChatInput', () => {
 		it('should update value when typing', async () => {
 			render(ChatInput, { props: { onsubmit: mockOnSubmit } });
 
-			const textarea = screen.getByPlaceholderText('Send a message...') as HTMLTextAreaElement;
+			const textarea = screen.getByPlaceholderText(
+				'Message Strieber GPT...'
+			) as HTMLTextAreaElement;
 			await fireEvent.input(textarea, { target: { value: 'Hello world' } });
 
 			expect(textarea.value).toBe('Hello world');
@@ -72,7 +74,7 @@ describe('ChatInput', () => {
 		it('should call onsubmit with trimmed text when Enter is pressed', async () => {
 			render(ChatInput, { props: { onsubmit: mockOnSubmit } });
 
-			const textarea = screen.getByPlaceholderText('Send a message...');
+			const textarea = screen.getByPlaceholderText('Message Strieber GPT...');
 			await fireEvent.input(textarea, { target: { value: '  Hello world  ' } });
 			await fireEvent.keyDown(textarea, { key: 'Enter', shiftKey: false });
 
@@ -82,7 +84,7 @@ describe('ChatInput', () => {
 		it('should not submit when Shift+Enter is pressed', async () => {
 			render(ChatInput, { props: { onsubmit: mockOnSubmit } });
 
-			const textarea = screen.getByPlaceholderText('Send a message...');
+			const textarea = screen.getByPlaceholderText('Message Strieber GPT...');
 			await fireEvent.input(textarea, { target: { value: 'Hello' } });
 			await fireEvent.keyDown(textarea, { key: 'Enter', shiftKey: true });
 
@@ -92,7 +94,7 @@ describe('ChatInput', () => {
 		it('should call onsubmit when button is clicked', async () => {
 			render(ChatInput, { props: { onsubmit: mockOnSubmit } });
 
-			const textarea = screen.getByPlaceholderText('Send a message...');
+			const textarea = screen.getByPlaceholderText('Message Strieber GPT...');
 			await fireEvent.input(textarea, { target: { value: 'Hello' } });
 
 			const button = screen.getByTestId('send-button');
@@ -104,7 +106,9 @@ describe('ChatInput', () => {
 		it('should clear input after successful submit', async () => {
 			render(ChatInput, { props: { onsubmit: mockOnSubmit } });
 
-			const textarea = screen.getByPlaceholderText('Send a message...') as HTMLTextAreaElement;
+			const textarea = screen.getByPlaceholderText(
+				'Message Strieber GPT...'
+			) as HTMLTextAreaElement;
 			await fireEvent.input(textarea, { target: { value: 'Hello' } });
 			await fireEvent.keyDown(textarea, { key: 'Enter' });
 
@@ -114,7 +118,7 @@ describe('ChatInput', () => {
 		it('should not submit when input is empty', async () => {
 			render(ChatInput, { props: { onsubmit: mockOnSubmit } });
 
-			const textarea = screen.getByPlaceholderText('Send a message...');
+			const textarea = screen.getByPlaceholderText('Message Strieber GPT...');
 			await fireEvent.keyDown(textarea, { key: 'Enter' });
 
 			expect(mockOnSubmit).not.toHaveBeenCalled();
@@ -123,7 +127,7 @@ describe('ChatInput', () => {
 		it('should not submit when input is only whitespace', async () => {
 			render(ChatInput, { props: { onsubmit: mockOnSubmit } });
 
-			const textarea = screen.getByPlaceholderText('Send a message...');
+			const textarea = screen.getByPlaceholderText('Message Strieber GPT...');
 			await fireEvent.input(textarea, { target: { value: '   ' } });
 			await fireEvent.keyDown(textarea, { key: 'Enter' });
 
@@ -139,7 +143,7 @@ describe('ChatInput', () => {
 		it('should keep textarea enabled when disabled prop is true (only blocks submission)', () => {
 			render(ChatInput, { props: { onsubmit: mockOnSubmit, disabled: true } });
 
-			const textarea = screen.getByPlaceholderText('Send a message...');
+			const textarea = screen.getByPlaceholderText('Message Strieber GPT...');
 			// Textarea stays enabled so user can type while streaming
 			expect(textarea).toBeEnabled();
 		});
@@ -161,7 +165,7 @@ describe('ChatInput', () => {
 		it('should enable send button when input has text', async () => {
 			render(ChatInput, { props: { onsubmit: mockOnSubmit } });
 
-			const textarea = screen.getByPlaceholderText('Send a message...');
+			const textarea = screen.getByPlaceholderText('Message Strieber GPT...');
 			await fireEvent.input(textarea, { target: { value: 'Hello' } });
 
 			const button = screen.getByTestId('send-button');
@@ -171,7 +175,7 @@ describe('ChatInput', () => {
 		it('should not submit when disabled even with text', async () => {
 			render(ChatInput, { props: { onsubmit: mockOnSubmit, disabled: true } });
 
-			const textarea = screen.getByPlaceholderText('Send a message...');
+			const textarea = screen.getByPlaceholderText('Message Strieber GPT...');
 			await fireEvent.input(textarea, { target: { value: 'Hello' } });
 			await fireEvent.keyDown(textarea, { key: 'Enter' });
 

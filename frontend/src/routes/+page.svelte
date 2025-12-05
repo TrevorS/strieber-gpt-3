@@ -12,6 +12,11 @@
 	let isStreaming = $state(false);
 	let abortController: AbortController | null = $state(null);
 	let settingsOpen = $state(false);
+	let hasScrolled = $state(false);
+
+	function handleMessageScroll(scrollTop: number) {
+		hasScrolled = scrollTop > 0;
+	}
 
 	// Explicitly track activeId to ensure reactivity when it changes to null
 	let activeId = $derived(conversationStore.activeId);
@@ -61,7 +66,8 @@
 					{ type: 'reader' }
 				]),
 				attachments,
-				signal: abortController.signal
+				signal: abortController.signal,
+				instructions: settingsStore.systemPrompt || undefined
 			},
 			{
 				onDelta: (content) => {
@@ -108,14 +114,29 @@
 			abortController.abort();
 		}
 	}
+
+	// Handle Escape key to stop streaming or close settings
+	function handleKeydown(e: KeyboardEvent) {
+		if (e.key === 'Escape') {
+			if (settingsOpen) {
+				settingsOpen = false;
+				e.preventDefault();
+			} else if (isStreaming) {
+				handleStop();
+				e.preventDefault();
+			}
+		}
+	}
 </script>
 
-<div class="flex items-center justify-end gap-2 p-2 border-b">
+<svelte:window onkeydown={handleKeydown} />
+
+<div class="h-14 flex items-center justify-end gap-3 px-4 transition-colors {hasScrolled ? 'border-b' : ''}">
 	<ModelSelector />
 	<Button variant="ghost" size="icon" onclick={() => (settingsOpen = true)} aria-label="Settings" data-testid="settings-button">
 		<Settings class="h-5 w-5" />
 	</Button>
 </div>
-<MessageList {messages} />
+<MessageList {messages} onscroll={handleMessageScroll} />
 <ChatInput onsubmit={handleSubmit} onstop={handleStop} disabled={isStreaming} streaming={isStreaming} />
 <SettingsPanel open={settingsOpen} onclose={() => (settingsOpen = false)} />

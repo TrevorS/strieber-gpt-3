@@ -12,7 +12,7 @@
 </script>
 
 {#if attachments.length > 0}
-	<div class="flex flex-wrap gap-2 p-2 border-b bg-muted/30">
+	<div class="flex flex-wrap gap-2 p-2 rounded-xl">
 		{#each attachments as attachment (attachment.id)}
 			<div
 				class="relative group flex items-center gap-2 px-2 py-1 bg-background border rounded-md text-sm"

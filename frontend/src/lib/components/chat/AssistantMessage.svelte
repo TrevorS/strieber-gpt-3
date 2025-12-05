@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { RefreshCw } from 'lucide-svelte';
+	import { RefreshCw, Copy, Check } from 'lucide-svelte';
 	import { Button } from '$lib/components/ui/button';
 	import type { Message } from '$lib/stores/types';
 	import { isMessageItem } from '$lib/stores/types';
@@ -32,9 +32,19 @@
 	let hasContent = $derived(message.content.trim().length > 0);
 	let hasToolItems = $derived(toolItems.length > 0);
 	let showRegenerate = $derived(isLast && canRegenerate && !message.isStreaming);
+	let showActions = $derived(hasContent && !message.isStreaming);
 
 	// Show content container if there's content OR if streaming (to show loading state)
 	let showContentContainer = $derived(hasContent || message.isStreaming);
+
+	// Copy message state
+	let copied = $state(false);
+
+	async function copyMessage() {
+		await navigator.clipboard.writeText(message.content);
+		copied = true;
+		setTimeout(() => (copied = false), 2000);
+	}
 </script>
 
 <div class="group flex flex-col items-start space-y-3">
@@ -51,7 +61,7 @@
 	<!-- Render text content or streaming placeholder -->
 	<!-- Text content is limited to 80% width -->
 	{#if showContentContainer}
-		<div class="max-w-[80%] rounded-lg bg-muted px-4 py-2">
+		<div class="max-w-[80%] xl:max-w-[85%] 2xl:max-w-[90%] rounded-lg bg-muted px-4 py-2">
 			{#if hasContent}
 				<MarkdownContent content={message.content} {citations} />
 				<!-- Citation list appears after content, inside the container -->
@@ -64,19 +74,36 @@
 		</div>
 	{/if}
 
-	<!-- Regenerate button (shown on hover for last message) -->
-	{#if showRegenerate}
-		<div class="opacity-0 group-hover:opacity-100 transition-opacity">
+	<!-- Action buttons (shown on hover) -->
+	{#if showActions}
+		<div class="flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
 			<Button
 				variant="ghost"
 				size="sm"
-				onclick={() => onregenerate?.()}
+				onclick={copyMessage}
 				class="text-muted-foreground hover:text-foreground"
-				data-testid="regenerate-button"
+				data-testid="copy-button"
 			>
-				<RefreshCw class="h-4 w-4 mr-1" />
-				Regenerate
+				{#if copied}
+					<Check class="h-4 w-4 mr-1" />
+					Copied
+				{:else}
+					<Copy class="h-4 w-4 mr-1" />
+					Copy
+				{/if}
 			</Button>
+			{#if showRegenerate}
+				<Button
+					variant="ghost"
+					size="sm"
+					onclick={() => onregenerate?.()}
+					class="text-muted-foreground hover:text-foreground"
+					data-testid="regenerate-button"
+				>
+					<RefreshCw class="h-4 w-4 mr-1" />
+					Regenerate
+				</Button>
+			{/if}
 		</div>
 	{/if}
 </div>

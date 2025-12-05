@@ -7,11 +7,13 @@
 	let {
 		messages,
 		canRegenerate = false,
-		onregenerate
+		onregenerate,
+		onscroll
 	}: {
 		messages: Message[];
 		canRegenerate?: boolean;
 		onregenerate?: () => void;
+		onscroll?: (scrollTop: number) => void;
 	} = $props();
 
 	let container: HTMLDivElement;
@@ -22,6 +24,7 @@
 		if (!container) return;
 		const { scrollTop, scrollHeight, clientHeight } = container;
 		isAtBottom = scrollHeight - scrollTop - clientHeight < SCROLL_THRESHOLD;
+		onscroll?.(scrollTop);
 	}
 
 	$effect(() => {
@@ -55,7 +58,7 @@
 </script>
 
 <div bind:this={container} onscroll={handleScroll} class="flex-1 overflow-y-auto p-4">
-	<div class="max-w-3xl mx-auto space-y-4">
+	<div class="max-w-3xl xl:max-w-4xl 2xl:max-w-5xl mx-auto space-y-4">
 		{#each messages as message, index (message.id)}
 			{#if message.role === 'user'}
 				<UserMessage {message} />

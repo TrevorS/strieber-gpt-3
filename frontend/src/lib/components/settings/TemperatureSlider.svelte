@@ -8,7 +8,7 @@
 </script>
 
 <div class="space-y-2" data-testid="temperature-slider">
-	<div class="flex justify-between text-sm">
+	<div class="flex justify-between text-xs">
 		<label for="temperature">Temperature</label>
 		<span class="text-muted-foreground">{settingsStore.temperature.toFixed(1)}</span>
 	</div>
@@ -22,7 +22,7 @@
 		oninput={handleInput}
 		class="w-full accent-primary"
 	/>
-	<div class="flex justify-between text-xs text-muted-foreground">
+	<div class="flex justify-between text-[10px] text-muted-foreground">
 		<span>Precise</span>
 		<span>Creative</span>
 	</div>

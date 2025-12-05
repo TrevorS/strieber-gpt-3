@@ -5,7 +5,7 @@
 </script>
 
 <div class="flex justify-end">
-	<div class="max-w-[80%] space-y-2">
+	<div class="max-w-[80%] xl:max-w-[85%] 2xl:max-w-[90%] space-y-2">
 		{#if message.attachments?.length}
 			<div class="flex flex-wrap justify-end gap-2">
 				{#each message.attachments as attachment (attachment.id)}

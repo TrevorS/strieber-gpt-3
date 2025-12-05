@@ -24,9 +24,9 @@
 	let statusLabel = $derived(isStreaming ? 'Thinking...' : 'Reasoning');
 </script>
 
-<Collapsible.Root bind:open class="rounded-lg border bg-muted/30">
+<Collapsible.Root bind:open class="rounded-lg border bg-muted/30 p-1">
 	<Collapsible.Trigger
-		class="flex w-full items-center gap-2 p-3 text-sm text-muted-foreground hover:bg-muted/50"
+		class="flex w-full items-center gap-2 p-4 text-sm text-muted-foreground hover:bg-muted/50 rounded-lg"
 	>
 		<Brain class="h-4 w-4" />
 		<span>{statusLabel}</span>
@@ -35,7 +35,7 @@
 		{/if}
 		<ChevronDown class="ml-auto h-4 w-4 transition-transform {open ? 'rotate-180' : ''}" />
 	</Collapsible.Trigger>
-	<Collapsible.Content class="px-3 pb-3">
+	<Collapsible.Content class="px-4 pb-4 pt-2">
 		<p class="whitespace-pre-wrap text-sm text-muted-foreground">{reasoningText()}</p>
 	</Collapsible.Content>
 </Collapsible.Root>

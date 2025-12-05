@@ -19,6 +19,11 @@
 	let isStreaming = $state(false);
 	let abortController: AbortController | null = $state(null);
 	let settingsOpen = $state(false);
+	let hasScrolled = $state(false);
+
+	function handleMessageScroll(scrollTop: number) {
+		hasScrolled = scrollTop > 0;
+	}
 
 	// Track navigation to prevent effect from re-setting activeId during navigation away
 	let isNavigatingAway = $state(false);
@@ -81,7 +86,8 @@
 					{ type: 'reader' }
 				]),
 				attachments,
-				signal: abortController.signal
+				signal: abortController.signal,
+				instructions: settingsStore.systemPrompt || undefined
 			},
 			{
 				onDelta: (content) => {
@@ -166,7 +172,8 @@
 					{ type: 'weather' },
 					{ type: 'reader' }
 				]),
-				signal: abortController.signal
+				signal: abortController.signal,
+				instructions: settingsStore.systemPrompt || undefined
 			},
 			{
 				onDelta: (content) => {
@@ -212,14 +219,29 @@
 			}
 		);
 	}
+
+	// Handle Escape key to stop streaming or close settings
+	function handleKeydown(e: KeyboardEvent) {
+		if (e.key === 'Escape') {
+			if (settingsOpen) {
+				settingsOpen = false;
+				e.preventDefault();
+			} else if (isStreaming) {
+				handleStop();
+				e.preventDefault();
+			}
+		}
+	}
 </script>
 
-<div class="flex items-center justify-end gap-2 p-2 border-b">
+<svelte:window onkeydown={handleKeydown} />
+
+<div class="h-14 flex items-center justify-end gap-3 px-4 transition-colors {hasScrolled ? 'border-b' : ''}">
 	<ModelSelector />
 	<Button variant="ghost" size="icon" onclick={() => (settingsOpen = true)} aria-label="Settings" data-testid="settings-button">
 		<Settings class="h-5 w-5" />
 	</Button>
 </div>
-<MessageList {messages} canRegenerate={!isStreaming} onregenerate={handleRegenerate} />
+<MessageList {messages} canRegenerate={!isStreaming} onregenerate={handleRegenerate} onscroll={handleMessageScroll} />
 <ChatInput onsubmit={handleSubmit} onstop={handleStop} disabled={isStreaming} streaming={isStreaming} />
 <SettingsPanel open={settingsOpen} onclose={() => (settingsOpen = false)} />
