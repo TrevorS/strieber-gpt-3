@@ -53,13 +53,9 @@ export function extractCitations(rawOutput: ResponseOutputItem[]): Citation[] {
 				};
 
 				if (ann.type === 'url_citation' && ann.url && ann.title !== undefined) {
-					// Calculate index from start position by parsing the marker
-					// The marker [N] has index N
 					const startIdx = ann.start_index ?? 0;
 					const endIdx = ann.end_index ?? startIdx;
 
-					// We need to derive the index from the position
-					// For now, collect all and we'll sort by position
 					citations.push({
 						index: citations.length + 1, // Will be recalculated
 						url: ann.url,

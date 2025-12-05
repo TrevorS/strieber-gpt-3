@@ -79,18 +79,21 @@ def extract_with_readability(html: str, use_readability: bool = True) -> tuple[s
 def preprocess_html(
     html: str,
     use_readability: bool = True,
-    strip_scripts: bool = True
+    strip_scripts: bool = True,
+    max_content_size: int = 50_000
 ) -> tuple[str, dict]:
     """Preprocess HTML for ReaderLM inference.
 
     Applies a pipeline of cleaning steps:
     1. Extract main content with ReadabiliPy (if enabled)
     2. Strip script/style tags (if enabled)
+    3. Truncate if content exceeds max_content_size
 
     Args:
         html: Raw HTML content
         use_readability: Whether to use Readability content extraction (default True)
         strip_scripts: Whether to strip script/style tags (default True)
+        max_content_size: Maximum content size in bytes (default 50KB). Larger content is truncated.
 
     Returns:
         Tuple of (processed_html, metadata) where metadata contains info about preprocessing
@@ -127,5 +130,23 @@ def preprocess_html(
             f"HTML preprocessed: {metadata['original_size_bytes']} → "
             f"{metadata['final_size_bytes']} bytes ({compression:.1f}% reduction)"
         )
+
+    # Truncate if still too large (prevents LLM inference timeout)
+    if len(processed_html.encode('utf-8')) > max_content_size:
+        # Truncate at a reasonable point (try to break at paragraph or section)
+        truncated = processed_html.encode('utf-8')[:max_content_size].decode('utf-8', errors='ignore')
+        # Find last complete paragraph or section
+        for ending in ['</p>', '</div>', '</section>', '</article>', '\n\n']:
+            last_idx = truncated.rfind(ending)
+            if last_idx > max_content_size // 2:
+                truncated = truncated[:last_idx + len(ending)]
+                break
+        processed_html = truncated
+        metadata['truncated'] = True
+        metadata['truncated_size_bytes'] = len(processed_html.encode('utf-8'))
+        logger.warning(
+            f"HTML truncated: {metadata['final_size_bytes']} → {metadata['truncated_size_bytes']} bytes (exceeds {max_content_size} limit)"
+        )
+        metadata['final_size_bytes'] = metadata['truncated_size_bytes']
 
     return processed_html, metadata

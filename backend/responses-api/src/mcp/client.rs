@@ -350,7 +350,7 @@ mod tests {
             routing.get("code_interpreter"),
             Some(&"code-server".to_string())
         );
-        assert!(routing.get("nonexistent").is_none());
+        assert!(!routing.contains_key("nonexistent"));
         // generic-server has no builtin_type so shouldn't be in routing
         assert!(!routing.values().any(|v| v == "generic-server"));
     }

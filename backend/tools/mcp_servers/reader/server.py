@@ -167,6 +167,7 @@ async def fetch_page(
     url: str,
     timeout: int = TIMEOUT_DEFAULT,
     force_js_rendering: bool = False,
+    max_content_size: int = 50000,
     ctx: Context = None
 ) -> CallToolResult:
     """Fetch and convert web page to clean, optimized Markdown.
@@ -185,6 +186,9 @@ async def fetch_page(
         timeout: Maximum page load time in seconds (range: 5-300, default: 30)
         force_js_rendering: Force Playwright even for simple pages (default: False).
                           Use True for JavaScript-heavy sites: Twitter, Reddit, Medium, etc.
+        max_content_size: Maximum content size in bytes after preprocessing (range: 10000-200000, default: 50000).
+                         Larger pages are truncated. Use higher values (100000-200000) for comprehensive
+                         Wikipedia/documentation articles, lower values (10000-30000) for faster responses.
 
     Returns:
         CallToolResult with clean Markdown content and metadata:
@@ -219,7 +223,7 @@ async def fetch_page(
         # Then extract price/availability from the markdown yourself
     """
     # Step 1: Log request details (Pydantic validation already done by framework)
-    logger.debug(f"fetch_page called with url={url}, timeout={timeout}, force_js_rendering={force_js_rendering}")
+    logger.debug(f"fetch_page called with url={url}, timeout={timeout}, force_js_rendering={force_js_rendering}, max_content_size={max_content_size}")
 
     # Step 2: Process request
     try:
@@ -238,7 +242,8 @@ async def fetch_page(
             instruction=None,  # Always use default extraction - custom instructions reduce quality
             timeout=timeout,
             force_playwright=force_js_rendering,
-            use_readability=True  # Always enabled: extract main content, remove ads/navigation
+            use_readability=True,  # Always enabled: extract main content, remove ads/navigation
+            max_content_size=max_content_size
         )
 
         total_time_ms = int((time.time() - start_time) * 1000)

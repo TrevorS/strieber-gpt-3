@@ -4,7 +4,7 @@
  * Tests cover:
  * - Function name display
  * - Arguments formatting
- * - Streaming vs completed states
+ * - Status indicator states (based on item.status)
  * - Collapsible behavior
  */
 
@@ -16,14 +16,15 @@ import FunctionCallDisplay from '../FunctionCallDisplay.svelte';
 function createFunctionCallItem(
 	name: string,
 	args: Record<string, unknown>,
-	options?: { id?: string; callId?: string }
+	options?: { id?: string; callId?: string; status?: 'in_progress' | 'completed' | 'incomplete' }
 ): ResponseFunctionToolCall {
 	return {
 		id: options?.id || 'func-call-1',
 		type: 'function_call',
 		name,
 		arguments: JSON.stringify(args),
-		call_id: options?.callId || 'call-1'
+		call_id: options?.callId || 'call-1',
+		status: options?.status || 'in_progress'
 	};
 }
 
@@ -48,26 +49,31 @@ describe('FunctionCallDisplay', () => {
 	});
 
 	describe('status indicators', () => {
-		it('should show spinner when streaming', () => {
-			const item = createFunctionCallItem('test_func', {});
+		it('should show spinner when status is in_progress', () => {
+			const item = createFunctionCallItem('test_func', {}, { status: 'in_progress' });
 
-			const { container } = render(FunctionCallDisplay, {
-				props: { item, isStreaming: true }
-			});
+			const { container } = render(FunctionCallDisplay, { props: { item } });
 
 			const spinner = container.querySelector('.animate-spin');
 			expect(spinner).toBeInTheDocument();
 		});
 
-		it('should show checkmark when not streaming', () => {
-			const item = createFunctionCallItem('test_func', {});
+		it('should show checkmark when status is completed', () => {
+			const item = createFunctionCallItem('test_func', {}, { status: 'completed' });
 
-			const { container } = render(FunctionCallDisplay, {
-				props: { item, isStreaming: false }
-			});
+			const { container } = render(FunctionCallDisplay, { props: { item } });
 
 			const greenIcon = container.querySelector('.text-green-600');
 			expect(greenIcon).toBeInTheDocument();
+		});
+
+		it('should show red X when status is incomplete', () => {
+			const item = createFunctionCallItem('test_func', {}, { status: 'incomplete' });
+
+			const { container } = render(FunctionCallDisplay, { props: { item } });
+
+			const redIcon = container.querySelector('.text-red-600');
+			expect(redIcon).toBeInTheDocument();
 		});
 	});
 
@@ -141,7 +147,8 @@ describe('FunctionCallDisplay', () => {
 				type: 'function_call',
 				name: 'bad_func',
 				arguments: 'not valid json',
-				call_id: 'call-1'
+				call_id: 'call-1',
+				status: 'completed'
 			};
 
 			const { container } = render(FunctionCallDisplay, { props: { item } });

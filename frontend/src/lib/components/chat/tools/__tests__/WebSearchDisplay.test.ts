@@ -22,7 +22,7 @@ type WebSearchWithAction = ResponseFunctionWebSearch & {
 };
 
 function createWebSearchItem(
-	status: 'in_progress' | 'searching' | 'completed' | 'failed',
+	status: 'in_progress' | 'completed' | 'searching',
 	options?: { query?: string; sources?: Array<{ url: string; title?: string }> }
 ): WebSearchWithAction {
 	return {
@@ -44,27 +44,27 @@ describe('WebSearchDisplay', () => {
 		it('should show loading indicator when in_progress', () => {
 			const item = createWebSearchItem('in_progress');
 
-			render(WebSearchDisplay, { props: { item } });
+			const { container } = render(WebSearchDisplay, { props: { item } });
 
-			expect(screen.getByText('Searching the web...')).toBeInTheDocument();
+			const spinner = container.querySelector('.animate-spin');
+			expect(spinner).toBeInTheDocument();
 		});
 
 		it('should show loading indicator when searching', () => {
 			const item = createWebSearchItem('searching');
 
-			render(WebSearchDisplay, { props: { item } });
-
-			expect(screen.getByText('Searching the web...')).toBeInTheDocument();
-		});
-
-		it('should render spinner icon when loading', () => {
-			const item = createWebSearchItem('in_progress');
-
 			const { container } = render(WebSearchDisplay, { props: { item } });
 
-			// Loader2 icon has animate-spin class
 			const spinner = container.querySelector('.animate-spin');
 			expect(spinner).toBeInTheDocument();
+		});
+
+		it('should show "Web Search" title when loading without query', () => {
+			const item = createWebSearchItem('in_progress');
+
+			render(WebSearchDisplay, { props: { item } });
+
+			expect(screen.getByText('Web Search')).toBeInTheDocument();
 		});
 	});
 
@@ -79,22 +79,21 @@ describe('WebSearchDisplay', () => {
 			expect(screen.getByText('Searched: "test query"')).toBeInTheDocument();
 		});
 
-		it('should show fallback text when no query', () => {
+		it('should show fallback title when no query', () => {
 			const item = createWebSearchItem('completed');
 
 			render(WebSearchDisplay, { props: { item } });
 
-			expect(screen.getByText('Web search completed')).toBeInTheDocument();
+			expect(screen.getByText('Web Search')).toBeInTheDocument();
 		});
 
-		it('should render Search icon when completed', () => {
+		it('should show checkmark when completed', () => {
 			const item = createWebSearchItem('completed');
 
 			const { container } = render(WebSearchDisplay, { props: { item } });
 
-			// Should have SVG icon
-			const svg = container.querySelector('svg');
-			expect(svg).toBeInTheDocument();
+			const greenIcon = container.querySelector('.text-green-600');
+			expect(greenIcon).toBeInTheDocument();
 		});
 	});
 
@@ -133,7 +132,7 @@ describe('WebSearchDisplay', () => {
 
 			render(WebSearchDisplay, { props: { item } });
 
-			const link = screen.getByRole('link', { name: /Example/i });
+			const link = screen.getByText('Example').closest('a');
 			expect(link).toHaveAttribute('target', '_blank');
 		});
 
@@ -145,7 +144,7 @@ describe('WebSearchDisplay', () => {
 
 			render(WebSearchDisplay, { props: { item } });
 
-			const link = screen.getByRole('link', { name: /Example/i });
+			const link = screen.getByText('Example').closest('a');
 			expect(link).toHaveAttribute('rel', 'noopener noreferrer');
 		});
 
@@ -160,23 +159,43 @@ describe('WebSearchDisplay', () => {
 
 			const { container } = render(WebSearchDisplay, { props: { item } });
 
-			// Should have multiple SVGs (Search icon + 2 ExternalLink icons)
+			// Should have multiple SVGs (Search icon + status icon + chevron + 2 ExternalLink icons)
 			const svgs = container.querySelectorAll('svg');
-			expect(svgs.length).toBeGreaterThanOrEqual(3);
+			expect(svgs.length).toBeGreaterThanOrEqual(4);
 		});
 	});
 
 	describe('empty sources', () => {
-		it('should not render source list when empty', () => {
+		it('should show "No results" when sources empty', () => {
 			const item = createWebSearchItem('completed', {
 				query: 'test',
 				sources: []
 			});
 
+			render(WebSearchDisplay, { props: { item } });
+
+			expect(screen.getByText('No results')).toBeInTheDocument();
+		});
+	});
+
+	describe('collapsible behavior', () => {
+		it('should render as a collapsible element', () => {
+			const item = createWebSearchItem('completed', { query: 'test' });
+
 			const { container } = render(WebSearchDisplay, { props: { item } });
 
-			const list = container.querySelector('ul');
-			expect(list).not.toBeInTheDocument();
+			const trigger = container.querySelector('button');
+			expect(trigger).toBeInTheDocument();
+		});
+
+		it('should have chevron icon', () => {
+			const item = createWebSearchItem('completed');
+
+			const { container } = render(WebSearchDisplay, { props: { item } });
+
+			// Should have SVG icons including chevron
+			const svgs = container.querySelectorAll('svg');
+			expect(svgs.length).toBeGreaterThanOrEqual(2);
 		});
 	});
 });

@@ -30,6 +30,7 @@
 		const lastMsg = messages[len - 1];
 		const _lastContent = lastMsg?.content;
 		const _lastStreaming = lastMsg?.isStreaming;
+		const _rawOutputLen = lastMsg?.rawOutput?.length; // Track tool output items
 
 		if (container && untrack(() => isAtBottom)) {
 			// Use requestAnimationFrame to ensure DOM has updated

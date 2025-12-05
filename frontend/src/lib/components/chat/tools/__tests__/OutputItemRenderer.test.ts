@@ -61,20 +61,22 @@ describe('OutputItemRenderer', () => {
 
 			render(OutputItemRenderer, { props: { item } });
 
-			// WebSearchDisplay shows "Web search completed" for completed status without query
-			expect(screen.getByText('Web search completed')).toBeInTheDocument();
+			// WebSearchDisplay shows "Web Search" title when no query
+			expect(screen.getByText('Web Search')).toBeInTheDocument();
 		});
 
-		it('should show loading state for in_progress web search', () => {
+		it('should show loading spinner for in_progress web search', () => {
 			const item: ResponseFunctionWebSearch = {
 				id: 'web-search-1',
 				type: 'web_search_call',
 				status: 'in_progress'
 			};
 
-			render(OutputItemRenderer, { props: { item } });
+			const { container } = render(OutputItemRenderer, { props: { item } });
 
-			expect(screen.getByText('Searching the web...')).toBeInTheDocument();
+			// Should show spinner when in_progress
+			const spinner = container.querySelector('.animate-spin');
+			expect(spinner).toBeInTheDocument();
 		});
 	});
 
@@ -110,20 +112,21 @@ describe('OutputItemRenderer', () => {
 			expect(screen.getByText('get_weather')).toBeInTheDocument();
 		});
 
-		it('should pass isStreaming to FunctionCallDisplay', () => {
+		it('should show spinner when function call is in_progress', () => {
 			const item: ResponseFunctionToolCall = {
 				id: 'func-1',
 				type: 'function_call',
 				name: 'my_func',
 				arguments: '{}',
-				call_id: 'call-1'
+				call_id: 'call-1',
+				status: 'in_progress'
 			};
 
 			const { container } = render(OutputItemRenderer, {
-				props: { item, isStreaming: true }
+				props: { item }
 			});
 
-			// Should show spinner when streaming
+			// Should show spinner when status is in_progress
 			const spinner = container.querySelector('.animate-spin');
 			expect(spinner).toBeInTheDocument();
 		});

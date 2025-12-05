@@ -14,7 +14,8 @@ use crate::models::{
     ChatCompletionChunk, ChatFunctionCall, ChatMessage, ChatRole, ChatToolCall, ChatToolType,
     CreateResponseRequest, FinishReason, FunctionCallOutput, FunctionToolWrapper, MessageOutput,
     OutputContent, OutputItem, OutputRole, OutputStatus, ReasoningContent, ReasoningOutput,
-    Response, ResponseStatus, SseEvent, Tool, Usage, WebSearchSource,
+    Response, ResponseStatus, SseEvent, Tool, Usage, WebSearchAction, WebSearchCallOutput,
+    WebSearchSource,
 };
 use crate::state::{InMemoryStore, ResponseStore};
 use crate::translation::{
@@ -29,11 +30,11 @@ use super::{ExecutionError, ExecutorConfig};
 struct StreamState {
     output_index: u32,
     current_message_id: Option<String>,
+    current_reasoning_id: Option<String>,
     accumulated_text: String,
+    accumulated_reasoning: String,
     accumulated_tool_calls: Vec<AccumulatedToolCall>,
     finish_reason: Option<FinishReason>,
-    /// Web search sources accumulated from tool results (for citation annotations)
-    web_search_sources: Vec<WebSearchSource>,
 }
 
 /// Tool call being accumulated from stream chunks.
@@ -146,6 +147,11 @@ async fn run_streaming_loop(
     );
     send(&tx, SseEvent::response_created(initial_response.clone())).await?;
     send(&tx, SseEvent::response_in_progress(initial_response)).await?;
+
+    // Web search sources must persist across loop iterations (tool call cycles)
+    // because sources are extracted during tool execution but used for annotations
+    // in the final message after all tool calls complete.
+    let mut persistent_web_search_sources: Vec<WebSearchSource> = Vec::new();
 
     loop {
         iteration += 1;
@@ -270,6 +276,47 @@ async fn run_streaming_loop(
                     .await?;
                 }
 
+                // Handle reasoning_content delta (gpt-oss, DeepSeek-R1, etc.)
+                if let Some(reasoning) = &choice.delta.reasoning_content {
+                    if state.current_reasoning_id.is_none() {
+                        let reason_id = reasoning_id();
+                        state.current_reasoning_id = Some(reason_id.clone());
+
+                        // Emit output_item.added for new reasoning
+                        let item = OutputItem::Reasoning(ReasoningOutput {
+                            id: reason_id.clone(),
+                            status: OutputStatus::InProgress,
+                            content: vec![],
+                            summary: vec![],
+                            encrypted_content: None,
+                        });
+                        send(
+                            &tx,
+                            SseEvent::output_item_added(resp_id.clone(), state.output_index, item),
+                        )
+                        .await?;
+                        state.output_index += 1;
+                    }
+
+                    state.accumulated_reasoning.push_str(reasoning);
+
+                    // Emit reasoning delta
+                    send(
+                        &tx,
+                        SseEvent::reasoning_delta(
+                            resp_id.clone(),
+                            state
+                                .current_reasoning_id
+                                .clone()
+                                .unwrap_or_else(reasoning_id),
+                            state.output_index - 1, // Use the reasoning item's index
+                            0,
+                            reasoning.clone(),
+                        ),
+                    )
+                    .await?;
+                }
+
                 // Handle tool call deltas
                 if let Some(tool_calls) = &choice.delta.tool_calls {
                     for tc_delta in tool_calls {
@@ -298,13 +345,21 @@ async fn run_streaming_loop(
                                 if tc.output_id.is_empty() {
                                     tc.output_id = function_call_id();
                                 }
-                                let item = OutputItem::FunctionCall(FunctionCallOutput {
-                                    id: tc.output_id.clone(),
-                                    call_id: tc.id.clone(),
-                                    name: tc.name.clone(),
-                                    arguments: String::new(),
-                                    status: OutputStatus::InProgress,
-                                });
+                                let item = if tc.name == "web_search" {
+                                    OutputItem::WebSearchCall(WebSearchCallOutput {
+                                        id: tc.output_id.clone(),
+                                        status: OutputStatus::InProgress,
+                                        action: None, // No sources yet during streaming
+                                    })
+                                } else {
+                                    OutputItem::FunctionCall(FunctionCallOutput {
+                                        id: tc.output_id.clone(),
+                                        call_id: tc.id.clone(),
+                                        name: tc.name.clone(),
+                                        arguments: String::new(),
+                                        status: OutputStatus::InProgress,
+                                    })
+                                };
                                 send(
                                     &tx,
                                     SseEvent::output_item_added(
@@ -340,13 +395,45 @@ async fn run_streaming_loop(
             }
         }
 
+        // Finalize reasoning from reasoning_content field (gpt-oss, DeepSeek-R1, etc.)
+        // This was streamed via reasoning_delta events, now we complete it
+        if !state.accumulated_reasoning.is_empty()
+            && let Some(reason_id) = &state.current_reasoning_id
+        {
+            let reasoning_item = OutputItem::Reasoning(ReasoningOutput {
+                id: reason_id.clone(),
+                status: OutputStatus::Completed,
+                content: vec![ReasoningContent::ReasoningText {
+                    text: state.accumulated_reasoning.clone(),
+                }],
+                summary: vec![],
+                encrypted_content: None,
+            });
+            // Emit done for the reasoning item we already added during streaming
+            // The output_index for reasoning was incremented when we added it
+            send(
+                &tx,
+                SseEvent::output_item_done(
+                    resp_id.clone(),
+                    0, // Reasoning is always first output item
+                    reasoning_item,
+                ),
+            )
+            .await?;
+        }
+
         // Finalize text output if any
         if !state.accumulated_text.is_empty() {
-            // Parse reasoning tags from accumulated text
-            let (reasoning_text, clean_text) = parse_reasoning_tags(&state.accumulated_text);
+            // Parse reasoning tags from accumulated text (fallback for models using <think> tags)
+            // Skip if we already got reasoning from reasoning_content field
+            let (reasoning_text, clean_text) = if state.accumulated_reasoning.is_empty() {
+                parse_reasoning_tags(&state.accumulated_text)
+            } else {
+                (None, state.accumulated_text.clone())
+            };
             let mut current_output_index = state.output_index;
 
-            // Emit reasoning output item if present
+            // Emit reasoning output item if present (only for <think> tag models)
             if let Some(reasoning) = reasoning_text {
                 let reasoning_item = OutputItem::Reasoning(ReasoningOutput {
                     id: reasoning_id(),
@@ -393,13 +480,27 @@ async fn run_streaming_loop(
                 )
                 .await?;
 
+                // Build URL citation annotations from accumulated web search sources
+                let annotations = if !persistent_web_search_sources.is_empty() {
+                    build_url_citations(&clean_text, &persistent_web_search_sources)
+                } else {
+                    vec![]
+                };
+
+                if !annotations.is_empty() {
+                    tracing::debug!(
+                        annotation_count = annotations.len(),
+                        "Including URL citation annotations in streaming output"
+                    );
+                }
+
                 let item = OutputItem::Message(MessageOutput {
                     id: msg_id,
                     status: OutputStatus::Completed,
                     role: OutputRole::Assistant,
                     content: vec![OutputContent::OutputText {
                         text: clean_text,
-                        annotations: vec![],
+                        annotations,
                     }],
                 });
                 send(
@@ -414,7 +515,7 @@ async fn run_streaming_loop(
         if state.finish_reason == Some(FinishReason::ToolCalls)
             && !state.accumulated_tool_calls.is_empty()
         {
-            // Finalize all tool calls
+            // Finalize all tool calls (except web_search which needs sources from execution)
             for (i, tc) in state.accumulated_tool_calls.iter().enumerate() {
                 send(
                     &tx,
@@ -427,22 +528,26 @@ async fn run_streaming_loop(
                 )
                 .await?;
 
-                let item = OutputItem::FunctionCall(FunctionCallOutput {
-                    id: tc.output_id.clone(),
-                    call_id: tc.id.clone(),
-                    name: tc.name.clone(),
-                    arguments: tc.arguments.clone(),
-                    status: OutputStatus::Completed,
-                });
-                send(
-                    &tx,
-                    SseEvent::output_item_done(
-                        resp_id.clone(),
-                        state.output_index + i as u32 + 1,
-                        item,
-                    ),
-                )
-                .await?;
+                // For non-web_search tools, send output_item_done now
+                // web_search will be sent after execution with sources
+                if tc.name != "web_search" {
+                    let item = OutputItem::FunctionCall(FunctionCallOutput {
+                        id: tc.output_id.clone(),
+                        call_id: tc.id.clone(),
+                        name: tc.name.clone(),
+                        arguments: tc.arguments.clone(),
+                        status: OutputStatus::Completed,
+                    });
+                    send(
+                        &tx,
+                        SseEvent::output_item_done(
+                            resp_id.clone(),
+                            state.output_index + i as u32 + 1,
+                            item,
+                        ),
+                    )
+                    .await?;
+                }
             }
 
             // Build assistant message with tool calls for conversation
@@ -468,14 +573,15 @@ async fn run_streaming_loop(
                         state.accumulated_text.clone(),
                     ))
                 },
+                reasoning_content: None,
                 tool_calls: Some(tool_calls),
                 tool_call_id: None,
             });
 
             // Execute tool calls
-            for tc in &state.accumulated_tool_calls {
+            for (i, tc) in state.accumulated_tool_calls.iter().enumerate() {
                 let arguments: Value = serde_json::from_str(&tc.arguments).unwrap_or(Value::Null);
-                let result_text = match mcp.call_tool(&tc.name, arguments).await {
+                let result_text = match mcp.call_tool(&tc.name, arguments.clone()).await {
                     Ok(tool_result) => {
                         // Extract text for conversation
                         let text = extract_text_from_result(&tool_result);
@@ -491,13 +597,33 @@ async fn run_streaming_loop(
                             );
 
                             let sources = extract_sources_from_result(&tool_result);
+
+                            // Send output_item_done for web_search with sources
+                            let item = OutputItem::WebSearchCall(WebSearchCallOutput {
+                                id: tc.output_id.clone(),
+                                status: OutputStatus::Completed,
+                                action: Some(WebSearchAction {
+                                    query: extract_query_from_args(&tc.arguments),
+                                    sources: sources.clone(),
+                                }),
+                            });
+                            send(
+                                &tx,
+                                SseEvent::output_item_done(
+                                    resp_id.clone(),
+                                    state.output_index + i as u32 + 1,
+                                    item,
+                                ),
+                            )
+                            .await?;
+
                             if !sources.is_empty() {
                                 tracing::info!(
                                     tool = %tc.name,
                                     source_count = sources.len(),
                                     "Extracted web search sources for citations"
                                 );
-                                state.web_search_sources.extend(sources);
+                                persistent_web_search_sources.extend(sources);
                             } else {
                                 tracing::info!(
                                     tool = %tc.name,
@@ -523,7 +649,7 @@ async fn run_streaming_loop(
         }
 
         // No tool calls - we're done
-        let final_output = build_final_output(&state);
+        let final_output = build_final_output(&state, &persistent_web_search_sources);
         let final_response = build_response(
             &resp_id,
             &req,
@@ -555,7 +681,10 @@ async fn run_streaming_loop(
     }
 }
 
-fn build_final_output(state: &StreamState) -> Vec<OutputItem> {
+fn build_final_output(
+    state: &StreamState,
+    web_search_sources: &[WebSearchSource],
+) -> Vec<OutputItem> {
     let mut output = Vec::new();
 
     if !state.accumulated_text.is_empty() {
@@ -576,8 +705,8 @@ fn build_final_output(state: &StreamState) -> Vec<OutputItem> {
         // Then emit message with clean text (without <think> tags)
         if !clean_text.is_empty() {
             // Build URL citation annotations from accumulated web search sources
-            let annotations = if !state.web_search_sources.is_empty() {
-                build_url_citations(&clean_text, &state.web_search_sources)
+            let annotations = if !web_search_sources.is_empty() {
+                build_url_citations(&clean_text, web_search_sources)
             } else {
                 vec![]
             };
@@ -585,7 +714,7 @@ fn build_final_output(state: &StreamState) -> Vec<OutputItem> {
             if !annotations.is_empty() {
                 tracing::debug!(
                     annotation_count = annotations.len(),
-                    source_count = state.web_search_sources.len(),
+                    source_count = web_search_sources.len(),
                     "Built URL citation annotations for message"
                 );
             }
@@ -603,13 +732,25 @@ fn build_final_output(state: &StreamState) -> Vec<OutputItem> {
     }
 
     for tc in &state.accumulated_tool_calls {
-        output.push(OutputItem::FunctionCall(FunctionCallOutput {
-            id: tc.output_id.clone(),
-            call_id: tc.id.clone(),
-            name: tc.name.clone(),
-            arguments: tc.arguments.clone(),
-            status: OutputStatus::Completed,
-        }));
+        if tc.name.contains("web_search") || tc.name.contains("news_search") {
+            // Emit WebSearchCall for web_search tools
+            output.push(OutputItem::WebSearchCall(WebSearchCallOutput {
+                id: tc.output_id.clone(),
+                status: OutputStatus::Completed,
+                action: Some(WebSearchAction {
+                    query: extract_query_from_args(&tc.arguments),
+                    sources: web_search_sources.to_vec(),
+                }),
+            }));
+        } else {
+            output.push(OutputItem::FunctionCall(FunctionCallOutput {
+                id: tc.output_id.clone(),
+                call_id: tc.id.clone(),
+                name: tc.name.clone(),
+                arguments: tc.arguments.clone(),
+                status: OutputStatus::Completed,
+            }));
+        }
     }
 
     output
@@ -701,9 +842,10 @@ fn extract_text_from_result(result: &CallToolResult) -> String {
 fn extract_sources_from_result(result: &CallToolResult) -> Vec<WebSearchSource> {
     // First try structuredContent which is the official MCP field
     if let Some(structured) = &result.structured_content
-        && let Some(sources) = extract_sources_from_value(structured) {
-            return sources;
-        }
+        && let Some(sources) = extract_sources_from_value(structured)
+    {
+        return sources;
+    }
 
     // Also check the _meta field for backwards compatibility
     if let Some(meta) = &result.meta {
@@ -715,6 +857,14 @@ fn extract_sources_from_result(result: &CallToolResult) -> Vec<WebSearchSource> 
     }
 
     vec![]
+}
+
+/// Extract the query parameter from tool call arguments JSON.
+fn extract_query_from_args(args: &str) -> String {
+    serde_json::from_str::<Value>(args)
+        .ok()
+        .and_then(|v| v.get("query")?.as_str().map(String::from))
+        .unwrap_or_default()
 }
 
 /// Extract sources from a JSON value that may contain a "sources" array.

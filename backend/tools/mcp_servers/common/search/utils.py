@@ -204,6 +204,9 @@ def format_as_markdown(
 
         output.append("---\n")
 
+    # Add citation instruction for the LLM
+    output.append("\n**Citation Format:** When referencing these sources in your response, use [N] notation (e.g., [1], [2]) corresponding to the result numbers above.\n")
+
     return "\n".join(output)
 
 

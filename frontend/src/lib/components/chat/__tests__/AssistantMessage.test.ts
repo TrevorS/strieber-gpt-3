@@ -125,7 +125,7 @@ describe('AssistantMessage', () => {
 
 			const { container } = render(AssistantMessage, { props: { message } });
 
-			const flexContainer = container.querySelector('.justify-start');
+			const flexContainer = container.querySelector('.items-start');
 			expect(flexContainer).toBeInTheDocument();
 		});
 

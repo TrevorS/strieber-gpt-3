@@ -179,6 +179,22 @@ fn extract_output_items(
             }
         }
 
+        // Check for reasoning_content field first (gpt-oss, DeepSeek-R1, etc.)
+        // llama.cpp sends this as a separate field when using `--reasoning-format auto`
+        if let Some(reasoning_text) = &choice.message.reasoning_content
+            && !reasoning_text.is_empty()
+        {
+            items.push(OutputItem::Reasoning(ReasoningOutput {
+                id: reasoning_id(),
+                status: OutputStatus::Completed,
+                content: vec![ReasoningContent::ReasoningText {
+                    text: reasoning_text.clone(),
+                }],
+                summary: vec![],
+                encrypted_content: None,
+            }));
+        }
+
         // Handle text content
         if let Some(content) = &choice.message.content {
             let text = match content {
@@ -197,10 +213,16 @@ fn extract_output_items(
             };
 
             if !text.is_empty() {
-                // Parse reasoning tags if present
-                let (reasoning, remaining_text) = parse_reasoning_tags(&text);
+                // If no reasoning_content field was present, try parsing <think> tags
+                // (fallback for Qwen-QwQ and other models that use tags)
+                let (reasoning, remaining_text) = if choice.message.reasoning_content.is_none() {
+                    parse_reasoning_tags(&text)
+                } else {
+                    // reasoning_content field was present, don't parse tags
+                    (None, text.clone())
+                };
 
-                // If we found reasoning, emit it first
+                // If we found reasoning from tags, emit it
                 if let Some(reasoning_text) = reasoning {
                     items.push(OutputItem::Reasoning(ReasoningOutput {
                         id: reasoning_id(),
@@ -318,6 +340,7 @@ pub fn tool_result_message(call_id: String, result: String) -> ChatMessage {
     ChatMessage {
         role: ChatRole::Tool,
         content: Some(ChatContent::Text(result)),
+        reasoning_content: None,
         tool_calls: None,
         tool_call_id: Some(call_id),
     }
@@ -465,6 +488,7 @@ mod tests {
                 message: ChatMessage {
                     role: ChatRole::Assistant,
                     content: Some(ChatContent::Text("Hello! How can I help?".to_string())),
+                    reasoning_content: None,
                     tool_calls: None,
                     tool_call_id: None,
                 },
@@ -509,6 +533,7 @@ mod tests {
                 message: ChatMessage {
                     role: ChatRole::Assistant,
                     content: None,
+                    reasoning_content: None,
                     tool_calls: Some(vec![ChatToolCall {
                         id: "call_abc123".to_string(),
                         tool_type: ChatToolType::Function,
@@ -555,6 +580,7 @@ mod tests {
                 message: ChatMessage {
                     role: ChatRole::Assistant,
                     content: None,
+                    reasoning_content: None,
                     tool_calls: Some(vec![
                         ChatToolCall {
                             id: "call_1".to_string(),
@@ -599,6 +625,7 @@ mod tests {
                 message: ChatMessage {
                     role: ChatRole::Assistant,
                     content: Some(ChatContent::Text("Hi".to_string())),
+                    reasoning_content: None,
                     tool_calls: None,
                     tool_call_id: None,
                 },
@@ -646,6 +673,7 @@ mod tests {
                 message: ChatMessage {
                     role: ChatRole::Assistant,
                     content: None,
+                    reasoning_content: None,
                     tool_calls: Some(vec![ChatToolCall {
                         id: "call_1".to_string(),
                         tool_type: ChatToolType::Function,
@@ -671,6 +699,7 @@ mod tests {
                 message: ChatMessage {
                     role: ChatRole::Assistant,
                     content: Some(ChatContent::Text("Hello".to_string())),
+                    reasoning_content: None,
                     tool_calls: None,
                     tool_call_id: None,
                 },
@@ -715,6 +744,7 @@ mod tests {
                         "<think>Let me analyze this problem step by step...</think>The answer is 42."
                             .to_string(),
                     )),
+                    reasoning_content: None,
                     tool_calls: None,
                     tool_call_id: None,
                 },
@@ -772,6 +802,7 @@ mod tests {
                     content: Some(ChatContent::Text(
                         "<think>Just thinking, no response</think>".to_string(),
                     )),
+                    reasoning_content: None,
                     tool_calls: None,
                     tool_call_id: None,
                 },

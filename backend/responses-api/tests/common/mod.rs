@@ -220,19 +220,14 @@ pub fn extract_final_message_text(output: &[OutputItem]) -> Option<&str> {
 /// Looks for response.created or response.completed events.
 pub fn extract_response_id_from_sse(body: &str) -> Option<String> {
     for line in body.lines() {
-        if let Some(data) = line.strip_prefix("data: ") {
-            if let Ok(json) = serde_json::from_str::<serde_json::Value>(data) {
-                // Check for response.created or response.completed events
-                if let Some(event_type) = json.get("type").and_then(|t| t.as_str()) {
-                    if event_type == "response.created" || event_type == "response.completed" {
-                        if let Some(response) = json.get("response") {
-                            if let Some(id) = response.get("id").and_then(|i| i.as_str()) {
-                                return Some(id.to_string());
-                            }
-                        }
-                    }
-                }
-            }
+        if let Some(data) = line.strip_prefix("data: ")
+            && let Ok(json) = serde_json::from_str::<serde_json::Value>(data)
+            && let Some(event_type) = json.get("type").and_then(|t| t.as_str())
+            && (event_type == "response.created" || event_type == "response.completed")
+            && let Some(response) = json.get("response")
+            && let Some(id) = response.get("id").and_then(|i| i.as_str())
+        {
+            return Some(id.to_string());
         }
     }
     None

@@ -34,7 +34,8 @@ class ReaderPipeline:
         timeout: int = 30,
         force_playwright: bool = False,
         max_tokens: int = 8192,
-        use_readability: bool = True
+        use_readability: bool = True,
+        max_content_size: int = 50_000
     ) -> tuple[str, bool, dict]:
         """
         Complete pipeline: Scrape URL → Preprocess HTML → Convert to Markdown.
@@ -47,6 +48,7 @@ class ReaderPipeline:
             force_playwright: Force Playwright rendering
             max_tokens: Max output tokens
             use_readability: Use ReadabiliPy to extract main content (default True)
+            max_content_size: Maximum content size in bytes after preprocessing (default 50KB)
 
         Returns:
             (content, success, metadata)
@@ -86,7 +88,11 @@ class ReaderPipeline:
 
             # Step 2: Preprocess HTML (extract main content, strip scripts/styles)
             logger.info(f"Preprocessing HTML for ReaderLM-v2")
-            html_processed, preprocess_metadata = preprocess_html(html, use_readability=use_readability)
+            html_processed, preprocess_metadata = preprocess_html(
+                html,
+                use_readability=use_readability,
+                max_content_size=max_content_size
+            )
             metadata["preprocessing"] = preprocess_metadata
 
             # Step 3: Convert HTML to Markdown (with optional extraction)

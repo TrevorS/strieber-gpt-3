@@ -23,7 +23,7 @@
 {:else if isCodeInterpreterItem(item)}
 	<CodeInterpreterDisplay {item} />
 {:else if isFunctionCallItem(item)}
-	<FunctionCallDisplay {item} {isStreaming} />
+	<FunctionCallDisplay {item} />
 {:else if isMessageItem(item)}
 	<!-- Message items are handled by MarkdownContent in the parent, skip here -->
 {:else}

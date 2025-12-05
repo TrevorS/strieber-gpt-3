@@ -81,7 +81,7 @@ describe('MessageList', () => {
 
 			const { container } = render(MessageList, { props: { messages } });
 
-			const assistantMessageContainer = container.querySelector('.justify-start');
+			const assistantMessageContainer = container.querySelector('.items-start');
 			expect(assistantMessageContainer).toBeInTheDocument();
 		});
 	});
@@ -128,7 +128,7 @@ describe('MessageList', () => {
 
 			// Should have both alignment styles
 			expect(container.querySelector('.justify-end')).toBeInTheDocument();
-			expect(container.querySelector('.justify-start')).toBeInTheDocument();
+			expect(container.querySelector('.items-start')).toBeInTheDocument();
 		});
 	});
 

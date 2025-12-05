@@ -629,37 +629,33 @@ async fn test_multi_turn_with_reasoning_input() {
     }));
 
     // Add reasoning if present (to test reasoning input)
-    if let Some(reasoning) = body1.output.iter().find(|o| o.item_type == "reasoning") {
-        if let Some(content) = &reasoning.content {
-            if let Some(text_part) = content.iter().find(|c| c.content_type == "output_text") {
-                if let Some(text) = &text_part.text {
-                    println!(
-                        "Including reasoning context: {}...",
-                        &text[..text.len().min(50)]
-                    );
-                    input_items.push(json!({
-                        "type": "reasoning",
-                        "id": reasoning.id,
-                        "content": [{"type": "input_text", "text": text}]
-                    }));
-                }
-            }
-        }
+    if let Some(reasoning) = body1.output.iter().find(|o| o.item_type == "reasoning")
+        && let Some(content) = &reasoning.content
+        && let Some(text_part) = content.iter().find(|c| c.content_type == "output_text")
+        && let Some(text) = &text_part.text
+    {
+        println!(
+            "Including reasoning context: {}...",
+            &text[..text.len().min(50)]
+        );
+        input_items.push(json!({
+            "type": "reasoning",
+            "id": reasoning.id,
+            "content": [{"type": "input_text", "text": text}]
+        }));
     }
 
     // Add assistant response
-    if let Some(msg) = body1.output.iter().find(|o| o.item_type == "message") {
-        if let Some(content) = &msg.content {
-            if let Some(text_part) = content.iter().find(|c| c.content_type == "output_text") {
-                if let Some(text) = &text_part.text {
-                    input_items.push(json!({
-                        "type": "message",
-                        "role": "assistant",
-                        "content": text
-                    }));
-                }
-            }
-        }
+    if let Some(msg) = body1.output.iter().find(|o| o.item_type == "message")
+        && let Some(content) = &msg.content
+        && let Some(text_part) = content.iter().find(|c| c.content_type == "output_text")
+        && let Some(text) = &text_part.text
+    {
+        input_items.push(json!({
+            "type": "message",
+            "role": "assistant",
+            "content": text
+        }));
     }
 
     // Add follow-up question

@@ -19,6 +19,7 @@ pub fn to_chat_completion(
         messages.push(ChatMessage {
             role: ChatRole::System,
             content: Some(ChatContent::Text(instructions.clone())),
+            reasoning_content: None,
             tool_calls: None,
             tool_call_id: None,
         });
@@ -70,6 +71,7 @@ fn input_to_messages(input: &Input) -> Vec<ChatMessage> {
         Input::Text(text) => vec![ChatMessage {
             role: ChatRole::User,
             content: Some(ChatContent::Text(text.clone())),
+            reasoning_content: None,
             tool_calls: None,
             tool_call_id: None,
         }],
@@ -84,12 +86,14 @@ fn input_item_to_message(item: &InputItem) -> Option<ChatMessage> {
         InputItem::FunctionCallOutput(output) => Some(ChatMessage {
             role: ChatRole::Tool,
             content: Some(ChatContent::Text(output.output.clone())),
+            reasoning_content: None,
             tool_calls: None,
             tool_call_id: Some(output.call_id.clone()),
         }),
         InputItem::FunctionCall(fc) => Some(ChatMessage {
             role: ChatRole::Assistant,
             content: None,
+            reasoning_content: None,
             tool_calls: Some(vec![crate::models::ChatToolCall {
                 id: fc.call_id.clone(),
                 tool_type: ChatToolType::Function,
@@ -107,6 +111,7 @@ fn input_item_to_message(item: &InputItem) -> Option<ChatMessage> {
         InputItem::CustomToolCallOutput(output) => Some(ChatMessage {
             role: ChatRole::Tool,
             content: Some(ChatContent::Text(output.output.clone())),
+            reasoning_content: None,
             tool_calls: None,
             tool_call_id: Some(output.call_id.clone()),
         }),
@@ -155,6 +160,7 @@ fn reasoning_input_to_chat(reasoning: &ReasoningInput) -> Option<ChatMessage> {
     Some(ChatMessage {
         role: ChatRole::Assistant,
         content: Some(ChatContent::Text(wrapped_reasoning)),
+        reasoning_content: None,
         tool_calls: None,
         tool_call_id: None,
     })
@@ -165,6 +171,7 @@ fn message_input_to_chat(msg: &MessageInput) -> ChatMessage {
     ChatMessage {
         role: role_to_chat_role(msg.role),
         content: Some(message_content_to_chat(&msg.content)),
+        reasoning_content: None,
         tool_calls: None,
         tool_call_id: None,
     }
@@ -527,12 +534,14 @@ mod tests {
             ChatMessage {
                 role: ChatRole::User,
                 content: Some(ChatContent::Text("First question".to_string())),
+                reasoning_content: None,
                 tool_calls: None,
                 tool_call_id: None,
             },
             ChatMessage {
                 role: ChatRole::Assistant,
                 content: Some(ChatContent::Text("First answer".to_string())),
+                reasoning_content: None,
                 tool_calls: None,
                 tool_call_id: None,
             },

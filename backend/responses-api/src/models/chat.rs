@@ -31,6 +31,10 @@ pub struct ChatMessage {
     pub role: ChatRole,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub content: Option<ChatContent>,
+    /// Reasoning content from chain-of-thought models (gpt-oss, DeepSeek-R1, etc.)
+    /// llama.cpp sends this as a separate field when using `--reasoning-format auto`
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub reasoning_content: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub tool_calls: Option<Vec<ChatToolCall>>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -184,6 +188,8 @@ pub struct ChatChunkChoice {
 pub struct ChatDelta {
     pub role: Option<ChatRole>,
     pub content: Option<String>,
+    /// Reasoning content delta from chain-of-thought models
+    pub reasoning_content: Option<String>,
     pub tool_calls: Option<Vec<ChatToolCallDelta>>,
 }
 
