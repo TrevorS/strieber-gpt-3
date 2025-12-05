@@ -15,12 +15,23 @@ interface SettingsData {
 	selectedModel: string;
 	temperature: number;
 	theme: 'light' | 'dark' | 'system';
+	systemPrompt: string;
+	enabledTools: Record<string, boolean>;
+	sidebarCollapsed: boolean;
 }
 
 const defaultSettings: SettingsData = {
 	selectedModel: DEFAULT_MODEL,
 	temperature: 1.0,
-	theme: 'system'
+	theme: 'system',
+	systemPrompt: '',
+	enabledTools: {
+		web_search: true,
+		code_interpreter: true,
+		weather: true,
+		reader: true
+	},
+	sidebarCollapsed: false
 };
 
 /**
@@ -69,6 +80,20 @@ class SettingsStore {
 	/** Theme preference */
 	theme = $state<'light' | 'dark' | 'system'>('system');
 
+	/** Custom system prompt */
+	systemPrompt = $state('');
+
+	/** Tool enable/disable state */
+	enabledTools = $state<Record<string, boolean>>({
+		web_search: true,
+		code_interpreter: true,
+		weather: true,
+		reader: true
+	});
+
+	/** Whether sidebar is collapsed (desktop only) */
+	sidebarCollapsed = $state(false);
+
 	/** Available models from API */
 	models = $state<Model[]>([]);
 
@@ -90,6 +115,9 @@ class SettingsStore {
 			this.selectedModel = saved.selectedModel;
 			this.temperature = saved.temperature;
 			this.theme = saved.theme;
+			this.systemPrompt = saved.systemPrompt;
+			this.enabledTools = saved.enabledTools;
+			this.sidebarCollapsed = saved.sidebarCollapsed ?? false;
 		}
 	}
 
@@ -125,18 +153,57 @@ class SettingsStore {
 	}
 
 	/**
-	 * Filter tools based on current model's supported_tools.
+	 * Update system prompt and persist.
+	 */
+	setSystemPrompt(prompt: string): void {
+		this.systemPrompt = prompt;
+		this.persist();
+	}
+
+	/**
+	 * Enable or disable a specific tool.
+	 */
+	setToolEnabled(toolId: string, enabled: boolean): void {
+		this.enabledTools = { ...this.enabledTools, [toolId]: enabled };
+		this.persist();
+	}
+
+	/**
+	 * Enable or disable all tools at once.
+	 */
+	setAllToolsEnabled(enabled: boolean): void {
+		const newState: Record<string, boolean> = {};
+		for (const toolId of Object.keys(this.enabledTools)) {
+			newState[toolId] = enabled;
+		}
+		this.enabledTools = newState;
+		this.persist();
+	}
+
+	/**
+	 * Toggle sidebar collapsed state and persist.
+	 */
+	toggleSidebarCollapsed(): void {
+		this.sidebarCollapsed = !this.sidebarCollapsed;
+		this.persist();
+	}
+
+	/**
+	 * Filter tools based on current model's supported_tools AND user's enabled tools.
 	 * Returns empty array if model supports no tools.
-	 * Returns all tools if model supports all tools (null).
+	 * Returns filtered tools based on model support and user preferences.
 	 */
 	filterTools<T extends { type: string }>(tools: T[]): T[] {
 		const supported = this.supportedTools();
-		// null = all tools supported
-		if (supported === null) {
-			return tools;
-		}
-		// Filter to only supported tool types
-		return tools.filter((tool) => supported.includes(tool.type));
+
+		return tools.filter((tool) => {
+			// Check model support (null = all supported)
+			if (supported !== null && !supported.includes(tool.type)) {
+				return false;
+			}
+			// Check user's enabled state (default to true if not in map)
+			return this.enabledTools[tool.type] !== false;
+		});
 	}
 
 	/**
@@ -146,7 +213,10 @@ class SettingsStore {
 		saveSettings({
 			selectedModel: this.selectedModel,
 			temperature: this.temperature,
-			theme: this.theme
+			theme: this.theme,
+			systemPrompt: this.systemPrompt,
+			enabledTools: this.enabledTools,
+			sidebarCollapsed: this.sidebarCollapsed
 		});
 	}
 }

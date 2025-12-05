@@ -7,10 +7,11 @@
 	import { fade } from 'svelte/transition';
 	import { conversationStore, settingsStore } from '$lib/stores';
 	import { loadConversations, saveConversations } from '$lib/utils/storage';
+	import { createShortcutHandler, type ShortcutAction } from '$lib/utils/shortcuts';
 	import { ConversationList } from '$lib/components/sidebar';
 	import { Button } from '$lib/components/ui/button';
 	import { ToastContainer } from '$lib/components/ui/toast';
-	import { Menu } from 'lucide-svelte';
+	import { Menu, PanelLeftClose, PanelLeft, Plus, MessageSquare } from 'lucide-svelte';
 	import { logger } from '$lib/utils/logger';
 
 	let { children } = $props();
@@ -29,6 +30,11 @@
 			sidebarOpen = false;
 			logger.ui.event('Sidebar', 'Close', {});
 		}
+	}
+
+	function toggleCollapse() {
+		settingsStore.toggleSidebarCollapsed();
+		logger.ui.event('Sidebar', 'Toggle Collapse', { collapsed: settingsStore.sidebarCollapsed });
 	}
 
 	// Load conversations from localStorage on mount (browser only)
@@ -135,14 +141,50 @@
 			}
 		}
 	}
+
+	// Global keyboard shortcuts
+	const shortcuts: ShortcutAction[] = [
+		{
+			key: 'n',
+			cmdOrCtrl: true,
+			handler: () => {
+				logger.ui.event('Shortcut', 'New Chat', {});
+				handleNew();
+			},
+			description: 'New chat'
+		},
+		{
+			key: '/',
+			cmdOrCtrl: true,
+			handler: () => {
+				logger.ui.event('Shortcut', 'Toggle Sidebar', {});
+				toggleSidebar();
+			},
+			description: 'Toggle sidebar'
+		},
+		{
+			key: 'Escape',
+			handler: () => {
+				// Close sidebar if open, otherwise let the event propagate to pages
+				// for stopping streaming
+				if (sidebarOpen) {
+					logger.ui.event('Shortcut', 'Close Sidebar', {});
+					closeSidebar();
+				}
+			},
+			description: 'Close sidebar / Stop streaming'
+		}
+	];
+
+	const handleKeydown = createShortcutHandler(shortcuts);
 </script>
 
 <svelte:head>
 	<link rel="icon" href={favicon} />
 </svelte:head>
 
-<!-- Escape key handler -->
-<svelte:window onkeydown={(e) => e.key === 'Escape' && sidebarOpen && closeSidebar()} />
+<!-- Global keyboard shortcuts -->
+<svelte:window onkeydown={handleKeydown} />
 
 <div class="flex h-screen">
 	<!-- Mobile header -->
@@ -158,7 +200,7 @@
 		>
 			<Menu class="h-5 w-5" />
 		</Button>
-		<h1 class="font-semibold ml-3">Strieber</h1>
+		<h1 class="font-semibold ml-3 text-lg tracking-tight">Strieber GPT</h1>
 	</header>
 
 	<!-- Backdrop overlay (mobile only) -->
@@ -177,24 +219,72 @@
 
 	<!-- Sidebar -->
 	<aside
-		class="w-64 border-r bg-sidebar text-sidebar-foreground flex flex-col
+		class="border-r bg-sidebar text-sidebar-foreground flex flex-col
 			fixed md:static inset-y-0 left-0 z-50
-			transform transition-transform duration-300 ease-in-out
+			transform transition-all duration-300 ease-in-out
 			{sidebarOpen ? 'translate-x-0' : '-translate-x-full'}
-			md:translate-x-0"
+			md:translate-x-0
+			{settingsStore.sidebarCollapsed ? 'md:w-16' : 'w-64'}"
 		data-testid="sidebar"
 	>
-		<div class="p-4 border-b">
-			<h1 class="font-semibold">Strieber</h1>
+		<!-- Header -->
+		<div class="h-14 px-4 border-b flex items-center shrink-0 {settingsStore.sidebarCollapsed ? 'justify-center' : 'justify-between'}">
+			{#if !settingsStore.sidebarCollapsed}
+				<h1 class="font-semibold text-lg tracking-tight whitespace-nowrap">Strieber GPT</h1>
+			{/if}
+			<Button
+				variant="ghost"
+				size="icon"
+				onclick={toggleCollapse}
+				class="hidden md:flex shrink-0"
+				aria-label={settingsStore.sidebarCollapsed ? 'Expand sidebar' : 'Collapse sidebar'}
+				data-testid="sidebar-collapse-toggle"
+			>
+				{#if settingsStore.sidebarCollapsed}
+					<PanelLeft class="h-5 w-5" />
+				{:else}
+					<PanelLeftClose class="h-5 w-5" />
+				{/if}
+			</Button>
 		</div>
-		<ConversationList
-			loading={!loaded}
-			conversations={conversationStore.sorted}
-			activeId={conversationStore.activeId}
-			onselect={handleSelect}
-			onnew={handleNew}
-			ondelete={handleDelete}
-		/>
+
+		<!-- Collapsed: Icon rail -->
+		{#if settingsStore.sidebarCollapsed}
+			<div class="flex-1 flex flex-col items-center py-3 gap-2 overflow-hidden">
+				<Button
+					variant="ghost"
+					size="icon"
+					onclick={handleNew}
+					aria-label="New chat"
+					class="w-10 h-10"
+					data-testid="new-chat-icon"
+				>
+					<Plus class="h-5 w-5" />
+				</Button>
+				<!-- Recent conversation indicators -->
+				{#each conversationStore.sorted.slice(0, 5) as conv (conv.id)}
+					<Button
+						variant={conversationStore.activeId === conv.id ? 'secondary' : 'ghost'}
+						size="icon"
+						onclick={() => handleSelect(conv.id)}
+						aria-label={conv.title}
+						class="w-10 h-10"
+					>
+						<MessageSquare class="h-4 w-4" />
+					</Button>
+				{/each}
+			</div>
+		{:else}
+			<!-- Expanded: Full conversation list -->
+			<ConversationList
+				loading={!loaded}
+				conversations={conversationStore.sorted}
+				activeId={conversationStore.activeId}
+				onselect={handleSelect}
+				onnew={handleNew}
+				ondelete={handleDelete}
+			/>
+		{/if}
 	</aside>
 
 	<!-- Main content -->

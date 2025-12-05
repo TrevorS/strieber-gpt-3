@@ -34,6 +34,8 @@ export interface StreamingOptions {
 	tools?: ToolDefinition[];
 	/** File attachments to include with the message */
 	attachments?: Attachment[];
+	/** System prompt / custom instructions */
+	instructions?: string;
 }
 
 /**
@@ -138,7 +140,8 @@ export async function sendMessageStreaming(
 		previousResponseId = null,
 		signal,
 		tools = [],
-		attachments = []
+		attachments = [],
+		instructions
 	} = options;
 	const { onDelta, onComplete, onError, onOutputItem, onReasoning } = callbacks;
 
@@ -182,7 +185,8 @@ export async function sendMessageStreaming(
 				previous_response_id: previousResponseId,
 				stream: true,
 				store: true,
-				tools
+				tools,
+				...(instructions && { instructions })
 			}),
 			signal
 		});
