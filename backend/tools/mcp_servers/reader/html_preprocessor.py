@@ -80,6 +80,13 @@ class ExtractedLink:
 
 
 # =============================================================================
+# Constants
+# =============================================================================
+
+# Minimum content length to consider extraction successful
+MIN_CONTENT_LENGTH = 50
+
+# =============================================================================
 # Utility Functions
 # =============================================================================
 
@@ -96,14 +103,65 @@ def tokenize_simple(text: str) -> List[str]:
     return re.findall(r'\b\w+\b', text.lower())
 
 
+def is_valid_content(content: Optional[str], min_length: int = MIN_CONTENT_LENGTH) -> bool:
+    """Check if extracted content is valid (not empty, not just whitespace, meets minimum length).
+
+    Args:
+        content: The extracted content to validate
+        min_length: Minimum character length for valid content
+
+    Returns:
+        True if content is valid, False otherwise
+    """
+    if not content:
+        return False
+    stripped = content.strip()
+    if len(stripped) < min_length:
+        return False
+    # Check if it's just whitespace/newlines
+    if not re.search(r'[a-zA-Z0-9]', stripped):
+        return False
+    return True
+
+
+def extract_title_fallback(html: str) -> Optional[str]:
+    """Extract title from HTML using regex as fallback.
+
+    Args:
+        html: Raw HTML content
+
+    Returns:
+        Title string or None if not found
+    """
+    # Try <title> tag
+    match = re.search(r'<title[^>]*>([^<]+)</title>', html, re.IGNORECASE)
+    if match:
+        title = match.group(1).strip()
+        if title:
+            return title
+
+    # Try og:title meta tag
+    match = re.search(r'<meta[^>]+property=["\']og:title["\'][^>]+content=["\']([^"\']+)["\']', html, re.IGNORECASE)
+    if match:
+        return match.group(1).strip()
+
+    # Try twitter:title meta tag
+    match = re.search(r'<meta[^>]+name=["\']twitter:title["\'][^>]+content=["\']([^"\']+)["\']', html, re.IGNORECASE)
+    if match:
+        return match.group(1).strip()
+
+    return None
+
+
 # =============================================================================
 # Metadata Extraction
 # =============================================================================
 
 def extract_metadata(html: str) -> PageMetadata:
-    """Extract metadata from HTML using Trafilatura.
+    """Extract metadata from HTML using Trafilatura with regex fallbacks.
 
     Extracts: title, author, date, sitename, description, language, categories, tags.
+    Uses regex fallback for title if Trafilatura fails.
 
     Args:
         html: Raw HTML content
@@ -111,31 +169,43 @@ def extract_metadata(html: str) -> PageMetadata:
     Returns:
         PageMetadata object with extracted fields
     """
+    result = PageMetadata()
+
     if not TRAFILATURA_AVAILABLE:
-        logger.warning("Trafilatura not available for metadata extraction")
-        return PageMetadata()
+        logger.warning("Trafilatura not available for metadata extraction, using fallback")
+        # Use fallback for title at minimum
+        result.title = extract_title_fallback(html)
+        return result
 
     try:
         # Use Trafilatura's metadata extraction
         metadata = traf_extract_metadata(html)
 
-        if metadata is None:
-            return PageMetadata()
+        if metadata is not None:
+            result = PageMetadata(
+                title=metadata.title if hasattr(metadata, 'title') else None,
+                author=metadata.author if hasattr(metadata, 'author') else None,
+                date=metadata.date if hasattr(metadata, 'date') else None,
+                sitename=metadata.sitename if hasattr(metadata, 'sitename') else None,
+                description=metadata.description if hasattr(metadata, 'description') else None,
+                language=metadata.language if hasattr(metadata, 'language') else None,
+                categories=list(metadata.categories) if hasattr(metadata, 'categories') and metadata.categories else [],
+                tags=list(metadata.tags) if hasattr(metadata, 'tags') and metadata.tags else []
+            )
 
-        return PageMetadata(
-            title=metadata.title if hasattr(metadata, 'title') else None,
-            author=metadata.author if hasattr(metadata, 'author') else None,
-            date=metadata.date if hasattr(metadata, 'date') else None,
-            sitename=metadata.sitename if hasattr(metadata, 'sitename') else None,
-            description=metadata.description if hasattr(metadata, 'description') else None,
-            language=metadata.language if hasattr(metadata, 'language') else None,
-            categories=list(metadata.categories) if hasattr(metadata, 'categories') and metadata.categories else [],
-            tags=list(metadata.tags) if hasattr(metadata, 'tags') and metadata.tags else []
-        )
+        # Fallback: if title is still None, try regex extraction
+        if result.title is None:
+            result.title = extract_title_fallback(html)
+            if result.title:
+                logger.debug(f"Used regex fallback for title: {result.title[:50]}...")
+
+        return result
 
     except Exception as e:
         logger.warning(f"Metadata extraction failed: {e}")
-        return PageMetadata()
+        # Still try to get title via fallback
+        result.title = extract_title_fallback(html)
+        return result
 
 
 # =============================================================================
@@ -295,9 +365,10 @@ def extract_with_trafilatura(
     include_tables: bool = True,
     output_format: str = "html"
 ) -> tuple[Optional[str], bool, dict]:
-    """Extract main content from HTML using Trafilatura.
+    """Extract main content from HTML using Trafilatura with fallback chain.
 
     Trafilatura achieves F1: 0.958 on benchmarks (vs ReadabiliPy ~0.92).
+    Uses a 2-step fallback: first tries precision mode, then favor_recall=True.
 
     Args:
         html: Raw HTML content
@@ -312,7 +383,8 @@ def extract_with_trafilatura(
     metadata = {
         "extractor": "trafilatura",
         "extraction_success": False,
-        "output_format": output_format
+        "output_format": output_format,
+        "fallback_used": False
     }
 
     if not TRAFILATURA_AVAILABLE:
@@ -331,7 +403,7 @@ def extract_with_trafilatura(
         if output_format == "text":
             traf_format = "txt"
 
-        # Extract content
+        # First attempt: standard extraction (precision mode)
         extracted = trafilatura.extract(
             html,
             include_links=include_links,
@@ -341,14 +413,29 @@ def extract_with_trafilatura(
             config=config
         )
 
-        if extracted and len(extracted.strip()) > 0:
+        # Check if extraction is valid
+        if not is_valid_content(extracted):
+            # Fallback: try with favor_recall=True (captures more content)
+            logger.debug("First extraction attempt yielded insufficient content, trying favor_recall=True")
+            extracted = trafilatura.extract(
+                html,
+                include_links=include_links,
+                include_images=include_images,
+                include_tables=include_tables,
+                output_format=traf_format,
+                favor_recall=True,
+                config=config
+            )
+            metadata["fallback_used"] = True
+
+        if is_valid_content(extracted):
             original_size = len(html)
             extracted_size = len(extracted)
             compression = (original_size - extracted_size) / original_size * 100
 
             logger.info(
                 f"Trafilatura extracted content: {original_size} → {extracted_size} bytes "
-                f"({compression:.1f}% reduction)"
+                f"({compression:.1f}% reduction){' [favor_recall]' if metadata['fallback_used'] else ''}"
             )
 
             metadata["extraction_success"] = True
@@ -358,7 +445,7 @@ def extract_with_trafilatura(
 
             return extracted, True, metadata
         else:
-            logger.debug("Trafilatura extraction returned empty content, falling back")
+            logger.debug("Trafilatura extraction returned insufficient content, falling back to strip")
             cleaned = strip_scripts_and_styles(html)
             metadata["extractor"] = "fallback_strip"
             return cleaned, False, metadata
@@ -515,7 +602,8 @@ def extract_and_convert_to_markdown(
         "pipeline": "fast_path",
         "extraction": {},
         "conversion": {},
-        "bm25_filter": None
+        "bm25_filter": None,
+        "content_valid": False
     }
 
     # Step 1: Extract main content with Trafilatura (output as HTML for markdownify)
@@ -542,7 +630,18 @@ def extract_and_convert_to_markdown(
         )
         metadata["bm25_filter"] = bm25_meta
 
-    overall_success = extract_success and convert_success
+    # Step 4: Validate final content meets minimum threshold
+    content_valid = is_valid_content(markdown)
+    metadata["content_valid"] = content_valid
+
+    # Overall success requires extraction, conversion, AND valid content
+    overall_success = extract_success and convert_success and content_valid
+
+    if not content_valid and convert_success:
+        logger.warning(
+            f"Content validation failed: extracted {len(markdown) if markdown else 0} chars "
+            f"(minimum: {MIN_CONTENT_LENGTH})"
+        )
 
     if overall_success:
         logger.info(
