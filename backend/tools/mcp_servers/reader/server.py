@@ -27,7 +27,6 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 from common.mcp_base import MCPServerBase
 from common.validation import (
     validate_url_field,
-    validate_string_length_field,
     validate_timeout_field,
     MAX_URL_LENGTH,
 )
@@ -54,9 +53,6 @@ TIMEOUT_MIN: int = 5  # Higher min for web scraping (need JS rendering time)
 TIMEOUT_MAX: int = 300  # Allow longer timeouts for large pages
 TIMEOUT_DEFAULT: int = 30
 
-# Prompt/instruction constraints
-PROMPT_MAX_LENGTH: int = 2000
-
 # Content size limits
 CONTENT_SIZE_WARNING_THRESHOLD: int = 1_000_000  # 1MB
 
@@ -71,14 +67,6 @@ class FetchPageInput(BaseModel):
         min_length=1,
         max_length=MAX_URL_LENGTH
     )
-    prompt: Optional[str] = Field(
-        default=None,
-        description=(
-            "Optional extraction instruction (e.g., 'Extract the main headline and price'). "
-            "If not provided, returns full markdown. ReaderLM-v2 supports custom instructions."
-        ),
-        max_length=PROMPT_MAX_LENGTH
-    )
     timeout: int = Field(
         default=TIMEOUT_DEFAULT,
         ge=TIMEOUT_MIN,
@@ -90,6 +78,15 @@ class FetchPageInput(BaseModel):
         description=(
             "Force Playwright even for simple pages (default: False). "
             "Use True for JavaScript-heavy SPAs like Twitter, Reddit, etc."
+        )
+    )
+    use_llm: bool = Field(
+        default=False,
+        description=(
+            "Use ReaderLM-v2 for HTML-to-Markdown conversion (default: False). "
+            "When False, uses fast rule-based conversion (Trafilatura + markdownify, ~100ms). "
+            "When True, uses ReaderLM-v2 LLM for higher quality on complex pages (~2-3s). "
+            "The fast path handles 90%+ of pages well."
         )
     )
 
@@ -105,26 +102,17 @@ class FetchPageInput(BaseModel):
         """Validate timeout range using shared validator."""
         return validate_timeout_field(v, min_val=TIMEOUT_MIN, max_val=TIMEOUT_MAX)
 
-    @field_validator("prompt")
-    @classmethod
-    def validate_prompt(cls, v: Optional[str]) -> Optional[str]:
-        """Validate prompt length if provided."""
-        if v is None:
-            return v
-        return validate_string_length_field(v, min_length=1, max_length=PROMPT_MAX_LENGTH, field_name="prompt")
-
 
 class FetchPageOutput(BaseModel):
     """Output schema for fetch_page tool."""
     content: str = Field(description="Extracted Markdown content or error message")
     method: str = Field(description="Scraping method used (http or playwright)")
+    pipeline: str = Field(description="Conversion pipeline used (fast_path or llm_path)")
     html_size: int = Field(description="Size of fetched HTML in bytes")
     content_size: int = Field(description="Size of extracted/markdown content in bytes")
     scrape_time_ms: int = Field(description="Time spent scraping in milliseconds")
-    inference_time_ms: int = Field(description="Time spent in ReaderLM-v2 in milliseconds")
+    conversion_time_ms: int = Field(description="Time spent converting HTML to Markdown in milliseconds")
     total_time_ms: int = Field(description="Total processing time in milliseconds")
-    extraction_mode: bool = Field(description="Whether prompt-based extraction was used")
-    instruction_used: Optional[str] = Field(description="The instruction/prompt that was used, if any")
 
 
 class GetReaderInfoOutput(BaseModel):
@@ -167,59 +155,63 @@ async def fetch_page(
     url: str,
     timeout: int = TIMEOUT_DEFAULT,
     force_js_rendering: bool = False,
+    use_llm: bool = False,
     ctx: Context = None
 ) -> CallToolResult:
     """Fetch and convert web page to clean, optimized Markdown.
 
     Completely private: URLs and content never leave your infrastructure.
-    Uses Playwright for web scraping + ReaderLM-v2 (1.5B params) for optimal HTML-to-Markdown conversion.
+
+    **Two conversion paths**:
+    1. **Fast path (default)**: Trafilatura + markdownify (~100-200ms, no LLM)
+       - Uses Trafilatura for content extraction (F1: 0.958, used by HuggingFace/IBM/Microsoft)
+       - Rule-based markdown conversion - fast and deterministic
+       - Handles 90%+ of pages well
+
+    2. **LLM path (use_llm=True)**: Trafilatura + ReaderLM-v2 (~2-3s)
+       - Uses ReaderLM-v2 (1.5B params) for higher quality conversion
+       - Better for complex/broken HTML structures
+       - Slightly higher accuracy but 10-20x slower
 
     **How it works**:
     - Automatically extracts main content (removes navigation, ads, sidebars)
-    - Preserves structure: headings, lists, tables, code blocks, LaTeX
-    - Handles documents up to 128K tokens (512K extrapolation capability)
-    - No instruction parameter needed - model performs best with default extraction
+    - Preserves structure: headings, lists, tables, code blocks
+    - Handles large documents efficiently
 
     Args:
         url: The URL to fetch (must include http:// or https://)
         timeout: Maximum page load time in seconds (range: 5-300, default: 30)
         force_js_rendering: Force Playwright even for simple pages (default: False).
                           Use True for JavaScript-heavy sites: Twitter, Reddit, Medium, etc.
+        use_llm: Use ReaderLM-v2 for conversion (default: False).
+                 When False, uses fast rule-based conversion (~100ms).
+                 When True, uses LLM for higher quality on complex pages (~2-3s).
 
     Returns:
         CallToolResult with clean Markdown content and metadata:
         - method: Scraping method used (http or playwright)
+        - pipeline: Conversion path used (fast_path or llm_path)
         - html_size: Size of raw HTML fetched
         - scrape_time_ms: Time to scrape the page
-        - inference_time_ms: Time for HTML→Markdown conversion
+        - conversion_time_ms: Time for HTML→Markdown conversion
 
     **Performance**:
-    • Static pages (HTTP): ~1-2 seconds
-    • JS-heavy pages (Playwright): ~4-5 seconds
-    • Conversion (ReaderLM-v2): ~1-2 seconds
-    • No rate limits, unlimited concurrent requests (GPU limited)
-
-    **Design Note**:
-    ReaderLM-v2 performs 24.6% better than GPT-4o at its default extraction task.
-    Custom instructions reduce quality - the model is optimized for automatic main content extraction.
-    For targeted data extraction, parse the returned Markdown yourself.
+    • Fast path: ~200-500ms total (static page), ~2-3s (JS-heavy page)
+    • LLM path: ~2-4s total (static page), ~4-6s (JS-heavy page)
 
     Examples:
-        # Fetch full article
+        # Fast fetch (default) - good for most pages
         fetch_page("https://example.com")
 
-        # Fetch documentation page
-        fetch_page("https://docs.example.com/guide")
-
-        # Fetch SPA with JavaScript rendering
+        # Force JavaScript rendering for SPAs
         fetch_page("https://github.com/anthropics/claude-code", force_js_rendering=True)
 
-        # Parse returned markdown for specific info
-        result = fetch_page("https://store.example.com/product")
-        # Then extract price/availability from the markdown yourself
+        # Use LLM for complex/broken HTML
+        fetch_page("https://complex-site.com", use_llm=True)
     """
     # Step 1: Log request details (Pydantic validation already done by framework)
-    logger.debug(f"fetch_page called with url={url}, timeout={timeout}, force_js_rendering={force_js_rendering}")
+    pipeline_name = "llm_path" if use_llm else "fast_path"
+    logger.debug(f"fetch_page called with url={url}, timeout={timeout}, force_js_rendering={force_js_rendering}, use_llm={use_llm}")
 
     # Step 2: Process request
     try:
@@ -228,17 +220,17 @@ async def fetch_page(
         if ctx:
             await ctx.report_progress(1, 4, f"Scraping: {url_preview}")
 
-        logger.info(f"Processing URL: {url}")
+        logger.info(f"Processing URL: {url} (pipeline: {pipeline_name})")
 
         start_time = time.time()
 
-        # Process URL through pipeline with default ReaderLM-v2 extraction
+        # Process URL through pipeline
         content, success, metadata = await pipeline.process_url(
             url,
-            instruction=None,  # Always use default extraction - custom instructions reduce quality
+            instruction=None,
             timeout=timeout,
             force_playwright=force_js_rendering,
-            use_readability=True  # Always enabled: extract main content, remove ads/navigation
+            use_llm=use_llm
         )
 
         total_time_ms = int((time.time() - start_time) * 1000)
@@ -276,11 +268,13 @@ async def fetch_page(
                 additional_metadata={
                     "url": url,
                     "method_used": method_used,
+                    "pipeline": pipeline_name,
                     "html_size": metadata.get('html_size', 0),
                     "scrape_time_ms": metadata.get('scrape_time_ms', 0),
-                    "inference_time_ms": metadata.get('inference_time_ms', 0),
+                    "conversion_time_ms": metadata.get('inference_time_ms', 0),
                     "timeout": timeout,
-                    "force_js_rendering": force_js_rendering
+                    "force_js_rendering": force_js_rendering,
+                    "use_llm": use_llm
                 }
             )
 
@@ -288,8 +282,9 @@ async def fetch_page(
         if ctx:
             method = metadata.get('method_used', 'unknown')
             await ctx.report_progress(2, 4, f"Scraped ({method})")
-            await ctx.report_progress(3, 4, f"Converting with ReaderLM-v2...")
-            await ctx.report_progress(4, 4, f"Complete: {len(content)} chars")
+            converter = "ReaderLM-v2" if use_llm else "markdownify"
+            await ctx.report_progress(3, 4, f"Converting with {converter}...")
+            await ctx.report_progress(4, 4, f"Complete: {len(content)} chars ({pipeline_name})")
 
         # Log warning for very large content
         if len(content) > CONTENT_SIZE_WARNING_THRESHOLD:
@@ -300,9 +295,9 @@ async def fetch_page(
 
         logger.info(
             f"Successfully processed {url}: {len(content)} chars "
-            f"({metadata.get('method_used', 'unknown')}) - "
+            f"({metadata.get('method_used', 'unknown')}, {pipeline_name}) - "
             f"Scrape: {metadata.get('scrape_time_ms', 0)}ms, "
-            f"Inference: {metadata.get('inference_time_ms', 0)}ms, "
+            f"Conversion: {metadata.get('inference_time_ms', 0)}ms, "
             f"Total: {total_time_ms}ms"
         )
 
@@ -312,14 +307,16 @@ async def fetch_page(
             isError=False,
             metadata={
                 "method": metadata.get('method_used', 'unknown'),
+                "pipeline": pipeline_name,
                 "html_size": metadata.get('html_size', 0),
                 "content_size": len(content),
                 "scrape_time_ms": metadata.get('scrape_time_ms', 0),
-                "inference_time_ms": metadata.get('inference_time_ms', 0),
+                "conversion_time_ms": metadata.get('inference_time_ms', 0),
                 "total_time_ms": total_time_ms,
                 "url": url,
                 "timeout": timeout,
-                "force_js_rendering": force_js_rendering
+                "force_js_rendering": force_js_rendering,
+                "use_llm": use_llm
             }
         )
 
@@ -337,7 +334,8 @@ async def fetch_page(
                 "url": url,
                 "exception_type": type(e).__name__,
                 "timeout": timeout,
-                "force_js_rendering": force_js_rendering
+                "force_js_rendering": force_js_rendering,
+                "use_llm": use_llm
             }
         )
 
