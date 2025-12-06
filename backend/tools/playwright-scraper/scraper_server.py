@@ -6,21 +6,22 @@ Implements smart fallback: tries simple HTTP first, falls back to Playwright if 
 Privacy-first: All fetching happens locally, URLs never transmitted externally.
 """
 
-import asyncio
 import logging
 import re
 from typing import Optional
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI
 from pydantic import BaseModel
 import httpx
-from playwright.async_api import async_playwright, TimeoutError as PlaywrightTimeoutError
+from playwright.async_api import (
+    async_playwright,
+    TimeoutError as PlaywrightTimeoutError,
+)
 
 # Configure logging
 logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+    level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s"
 )
 logger = logging.getLogger(__name__)
 
@@ -30,6 +31,7 @@ playwright_instance = None
 
 class ScrapeRequest(BaseModel):
     """Request model for scraping."""
+
     url: str
     wait_for_selector: Optional[str] = None
     timeout: int = 30  # seconds
@@ -40,6 +42,7 @@ class ScrapeRequest(BaseModel):
 
 class ScrapeResponse(BaseModel):
     """Response model for scraping."""
+
     url: str
     html: str
     method: str  # "http" or "playwright"
@@ -84,9 +87,9 @@ async def requires_js_rendering(url: str, html: str = None) -> bool:
         spa_markers = [
             r'<div id="app"[^>]*>',
             r'<div id="root"[^>]*>',
-            r'<noscript>',
-            r'__NEXT_DATA__',
-            r'__NUXT__',
+            r"<noscript>",
+            r"__NEXT_DATA__",
+            r"__NUXT__",
         ]
 
         if any(re.search(marker, html, re.IGNORECASE) for marker in spa_markers):
@@ -95,7 +98,9 @@ async def requires_js_rendering(url: str, html: str = None) -> bool:
     return False
 
 
-async def scrape_with_http(url: str, timeout: int = 30, user_agent: Optional[str] = None) -> tuple[str, bool]:
+async def scrape_with_http(
+    url: str, timeout: int = 30, user_agent: Optional[str] = None
+) -> tuple[str, bool]:
     """
     Attempt simple HTTP fetch.
 
@@ -105,10 +110,8 @@ async def scrape_with_http(url: str, timeout: int = 30, user_agent: Optional[str
         async with httpx.AsyncClient(timeout=timeout) as client:
             response = await client.get(
                 url,
-                headers={
-                    "User-Agent": user_agent or DEFAULT_USER_AGENT
-                },
-                follow_redirects=True
+                headers={"User-Agent": user_agent or DEFAULT_USER_AGENT},
+                follow_redirects=True,
             )
             response.raise_for_status()
             return response.text, True
@@ -122,7 +125,7 @@ async def scrape_with_playwright(
     wait_for_selector: Optional[str] = None,
     timeout: int = 30,
     capture_screenshot: bool = False,
-    user_agent: Optional[str] = None
+    user_agent: Optional[str] = None,
 ) -> tuple[str, bool, Optional[str]]:
     """
     Scrape with Playwright for JavaScript rendering.
@@ -142,7 +145,7 @@ async def scrape_with_playwright(
         browser = await playwright_instance.chromium.launch(headless=True)
         context = await browser.new_context(
             viewport={"width": 1920, "height": 1080},
-            user_agent=user_agent or DEFAULT_USER_AGENT
+            user_agent=user_agent or DEFAULT_USER_AGENT,
         )
 
         page = await context.new_page()
@@ -152,7 +155,9 @@ async def scrape_with_playwright(
         try:
             await page.goto(url, wait_until="networkidle")
         except PlaywrightTimeoutError:
-            logger.warning(f"Navigation timeout for {url}, trying with domcontentloaded")
+            logger.warning(
+                f"Navigation timeout for {url}, trying with domcontentloaded"
+            )
             try:
                 await page.goto(url, wait_until="domcontentloaded")
             except Exception as e:
@@ -174,7 +179,7 @@ async def scrape_with_playwright(
         if capture_screenshot:
             try:
                 screenshot_bytes = await page.screenshot(full_page=True)
-                screenshot_b64 = base64.b64encode(screenshot_bytes).decode('utf-8')
+                screenshot_b64 = base64.b64encode(screenshot_bytes).decode("utf-8")
                 logger.info(f"Screenshot captured: {len(screenshot_bytes)} bytes")
             except Exception as e:
                 logger.warning(f"Screenshot capture failed: {e}")
@@ -189,7 +194,7 @@ async def scrape_with_playwright(
         if browser:
             try:
                 await browser.close()
-            except:
+            except Exception:
                 pass
         return None, False, None
 
@@ -215,7 +220,7 @@ app = FastAPI(
     title="Playwright Scraper",
     description="Web scraping API with JavaScript rendering support",
     version="1.0.0",
-    lifespan=lifespan
+    lifespan=lifespan,
 )
 
 
@@ -234,13 +239,15 @@ async def scrape(request: ScrapeRequest) -> ScrapeResponse:
 
     # Screenshot requires Playwright
     if request.force_playwright or request.capture_screenshot:
-        logger.info(f"Playwright mode for {request.url} (force={request.force_playwright}, screenshot={request.capture_screenshot})")
+        logger.info(
+            f"Playwright mode for {request.url} (force={request.force_playwright}, screenshot={request.capture_screenshot})"
+        )
         html, success, screenshot = await scrape_with_playwright(
             request.url,
             request.wait_for_selector,
             request.timeout,
             request.capture_screenshot,
-            request.user_agent
+            request.user_agent,
         )
         if success:
             return ScrapeResponse(
@@ -248,7 +255,7 @@ async def scrape(request: ScrapeRequest) -> ScrapeResponse:
                 html=html,
                 method="playwright",
                 success=True,
-                screenshot=screenshot
+                screenshot=screenshot,
             )
         else:
             return ScrapeResponse(
@@ -256,11 +263,13 @@ async def scrape(request: ScrapeRequest) -> ScrapeResponse:
                 html="",
                 method="playwright",
                 success=False,
-                error="Playwright scrape failed"
+                error="Playwright scrape failed",
             )
 
     # Try HTTP first
-    html, http_success = await scrape_with_http(request.url, request.timeout, request.user_agent)
+    html, http_success = await scrape_with_http(
+        request.url, request.timeout, request.user_agent
+    )
 
     if http_success:
         # Check if we actually need JS rendering
@@ -269,13 +278,12 @@ async def scrape(request: ScrapeRequest) -> ScrapeResponse:
         if not needs_js:
             logger.info(f"HTTP fetch successful for {request.url}")
             return ScrapeResponse(
-                url=request.url,
-                html=html,
-                method="http",
-                success=True
+                url=request.url, html=html, method="http", success=True
             )
         else:
-            logger.info(f"HTTP content appears incomplete, trying Playwright for {request.url}")
+            logger.info(
+                f"HTTP content appears incomplete, trying Playwright for {request.url}"
+            )
 
     # Fall back to Playwright
     html, pw_success, screenshot = await scrape_with_playwright(
@@ -283,7 +291,7 @@ async def scrape(request: ScrapeRequest) -> ScrapeResponse:
         request.wait_for_selector,
         request.timeout,
         request.capture_screenshot,
-        request.user_agent
+        request.user_agent,
     )
 
     if pw_success:
@@ -292,7 +300,7 @@ async def scrape(request: ScrapeRequest) -> ScrapeResponse:
             html=html,
             method="playwright",
             success=True,
-            screenshot=screenshot
+            screenshot=screenshot,
         )
     else:
         return ScrapeResponse(
@@ -300,7 +308,7 @@ async def scrape(request: ScrapeRequest) -> ScrapeResponse:
             html="",
             method="playwright",
             success=False,
-            error="Both HTTP and Playwright scraping failed"
+            error="Both HTTP and Playwright scraping failed",
         )
 
 
@@ -310,10 +318,11 @@ async def health_check():
     return {
         "status": "healthy",
         "service": "playwright-scraper",
-        "playwright_ready": playwright_instance is not None
+        "playwright_ready": playwright_instance is not None,
     }
 
 
 if __name__ == "__main__":
     import uvicorn
+
     uvicorn.run(app, host="0.0.0.0", port=8000)

@@ -14,10 +14,10 @@ logger = logging.getLogger(__name__)
 
 # Context window limits
 MAX_CONTEXT_TOKENS = 131072  # llama-server-readerlm context size
-SYSTEM_PROMPT_TOKENS = 500   # Approximate tokens for system prompt
-OUTPUT_TOKENS = 8000         # Budget for output generation
+SYSTEM_PROMPT_TOKENS = 500  # Approximate tokens for system prompt
+OUTPUT_TOKENS = 8000  # Budget for output generation
 SAFE_INPUT_TOKENS = MAX_CONTEXT_TOKENS - SYSTEM_PROMPT_TOKENS - OUTPUT_TOKENS
-BYTES_PER_TOKEN = 3.5        # Conservative estimate: 3.5 bytes = 1 token
+BYTES_PER_TOKEN = 3.5  # Conservative estimate: 3.5 bytes = 1 token
 
 
 def estimate_tokens(text: str) -> int:
@@ -29,7 +29,7 @@ def estimate_tokens(text: str) -> int:
     Returns:
         Approximate token count
     """
-    return max(1, len(text.encode('utf-8')) // int(BYTES_PER_TOKEN))
+    return max(1, len(text.encode("utf-8")) // int(BYTES_PER_TOKEN))
 
 
 def truncate_html(html: str, max_bytes: int = 300000) -> tuple[str, bool]:
@@ -44,7 +44,7 @@ def truncate_html(html: str, max_bytes: int = 300000) -> tuple[str, bool]:
     Returns:
         (truncated_html, was_truncated) tuple
     """
-    html_bytes = len(html.encode('utf-8'))
+    html_bytes = len(html.encode("utf-8"))
 
     if html_bytes <= max_bytes:
         return html, False
@@ -57,9 +57,9 @@ def truncate_html(html: str, max_bytes: int = 300000) -> tuple[str, bool]:
     html_truncated = html[:target_bytes]
 
     # Try to truncate at a tag boundary
-    last_close_tag = html_truncated.rfind('>')
+    last_close_tag = html_truncated.rfind(">")
     if last_close_tag > target_bytes * 0.75:  # Must be reasonably close to target
-        html_truncated = html_truncated[:last_close_tag + 1]
+        html_truncated = html_truncated[: last_close_tag + 1]
 
     html_truncated += "\n<!-- [Content truncated due to size] -->\n"
 
@@ -77,7 +77,11 @@ def truncate_html(html: str, max_bytes: int = 300000) -> tuple[str, bool]:
 class LlamaReaderClient:
     """Client for communicating with llama-server-readerlm inference service."""
 
-    def __init__(self, endpoint: str = "http://llama-server-readerlm:8000", default_timeout: float = 180.0):
+    def __init__(
+        self,
+        endpoint: str = "http://llama-server-readerlm:8000",
+        default_timeout: float = 180.0,
+    ):
         """
         Initialize llama-server client.
 
@@ -96,7 +100,7 @@ class LlamaReaderClient:
         instruction: Optional[str] = None,
         max_tokens: int = 8192,
         temperature: float = 0.1,
-        timeout: Optional[float] = None
+        timeout: Optional[float] = None,
     ) -> tuple[str, bool]:
         """
         Convert HTML to Markdown using ReaderLM-v2 with optimal default extraction.
@@ -137,20 +141,14 @@ class LlamaReaderClient:
                 json={
                     "model": self.model,
                     "messages": [
-                        {
-                            "role": "system",
-                            "content": instruction
-                        },
-                        {
-                            "role": "user",
-                            "content": html_truncated
-                        }
+                        {"role": "system", "content": instruction},
+                        {"role": "user", "content": html_truncated},
                     ],
                     "max_tokens": max_tokens,
                     "temperature": temperature,
-                    "top_p": 0.95
+                    "top_p": 0.95,
                 },
-                timeout=request_timeout
+                timeout=request_timeout,
             )
             response.raise_for_status()
 
@@ -177,10 +175,7 @@ class LlamaReaderClient:
     async def health_check(self) -> bool:
         """Check if llama-server is healthy."""
         try:
-            response = await self.client.get(
-                f"{self.endpoint}/health",
-                timeout=5.0
-            )
+            response = await self.client.get(f"{self.endpoint}/health", timeout=5.0)
             return response.status_code == 200
         except Exception as e:
             logger.error(f"Llama-server health check failed: {e}")
@@ -189,10 +184,7 @@ class LlamaReaderClient:
     async def get_info(self) -> Optional[dict]:
         """Get model information from llama-server."""
         try:
-            response = await self.client.get(
-                f"{self.endpoint}/props",
-                timeout=5.0
-            )
+            response = await self.client.get(f"{self.endpoint}/props", timeout=5.0)
             if response.status_code == 200:
                 return response.json()
         except Exception as e:

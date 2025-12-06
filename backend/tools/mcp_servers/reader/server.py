@@ -14,13 +14,12 @@ Features:
 Zero external API calls. All URLs and content processed locally.
 """
 
-import logging
 import sys
 import os
 import time
 import json
 from pathlib import Path
-from typing import Optional, Dict, Any, List
+from typing import Optional
 
 # Add parent directory to path for imports
 sys.path.insert(0, str(Path(__file__).parent))
@@ -38,15 +37,12 @@ from common.validation import (
     MAX_URL_LENGTH,
 )
 from common.error_handling import (
-    ERROR_INVALID_URL,
     ERROR_TIMEOUT,
     ERROR_FETCH_FAILED,
     ERROR_EXTRACTION_FAILED,
     ERROR_JS_RENDERING_FAILED,
-    ERROR_VALIDATION_FAILED,
     ERROR_UNEXPECTED,
     create_error_result,
-    create_validation_error,
 )
 
 from pipeline import ReaderPipeline
@@ -70,66 +66,67 @@ VALID_OUTPUT_FORMATS = ["markdown", "html", "text", "screenshot"]
 # Pydantic Models for Input/Output Schemas
 # =============================================================================
 
+
 class FetchPageInput(BaseModel):
     """Input schema for fetch_page tool."""
+
     url: str = Field(
         description="The URL to fetch (must include http:// or https://)",
         min_length=1,
-        max_length=MAX_URL_LENGTH
+        max_length=MAX_URL_LENGTH,
     )
     timeout: int = Field(
         default=TIMEOUT_DEFAULT,
         ge=TIMEOUT_MIN,
         le=TIMEOUT_MAX,
-        description=f"Maximum page load time in seconds (range: {TIMEOUT_MIN}-{TIMEOUT_MAX})"
+        description=f"Maximum page load time in seconds (range: {TIMEOUT_MIN}-{TIMEOUT_MAX})",
     )
     force_js_rendering: bool = Field(
         default=False,
-        description="Force Playwright rendering for JavaScript-heavy SPAs"
+        description="Force Playwright rendering for JavaScript-heavy SPAs",
     )
     use_llm: bool = Field(
         default=False,
-        description="Use ReaderLM-v2 for higher quality conversion (~2-3s vs ~100ms)"
+        description="Use ReaderLM-v2 for higher quality conversion (~2-3s vs ~100ms)",
     )
     output_format: str = Field(
         default="markdown",
-        description="Output format: 'markdown' (default), 'html', 'text', or 'screenshot'"
+        description="Output format: 'markdown' (default), 'html', 'text', or 'screenshot'",
     )
     include_metadata: bool = Field(
         default=False,
-        description="Extract page metadata (title, author, date, language, sitename)"
+        description="Extract page metadata (title, author, date, language, sitename)",
     )
     include_links: bool = Field(
         default=False,
-        description="Extract all links from the page with internal/external classification"
+        description="Extract all links from the page with internal/external classification",
     )
     query: Optional[str] = Field(
         default=None,
         max_length=QUERY_MAX_LENGTH,
-        description="BM25 query to filter content - returns only paragraphs relevant to query (great for RAG)"
+        description="BM25 query to filter content - returns only paragraphs relevant to query (great for RAG)",
     )
     wait_for_selector: Optional[str] = Field(
         default=None,
         max_length=SELECTOR_MAX_LENGTH,
-        description="CSS selector to wait for before extracting content (for dynamic pages)"
+        description="CSS selector to wait for before extracting content (for dynamic pages)",
     )
     # Advanced extraction options
     favor_precision: bool = Field(
         default=False,
-        description="Prefer less text but more accurate extraction (vs favor_recall)"
+        description="Prefer less text but more accurate extraction (vs favor_recall)",
     )
     favor_recall: bool = Field(
         default=False,
-        description="Prefer more text even when uncertain (vs favor_precision)"
+        description="Prefer more text even when uncertain (vs favor_precision)",
     )
     deduplicate: bool = Field(
-        default=False,
-        description="Remove duplicate text segments from output"
+        default=False, description="Remove duplicate text segments from output"
     )
     target_language: Optional[str] = Field(
         default=None,
         max_length=5,
-        description="Filter content by language (ISO 639-1 code, e.g., 'en', 'de', 'fr')"
+        description="Filter content by language (ISO 639-1 code, e.g., 'en', 'de', 'fr')",
     )
 
     @field_validator("url")
@@ -146,15 +143,20 @@ class FetchPageInput(BaseModel):
     @classmethod
     def validate_output_format(cls, v: str) -> str:
         if v not in VALID_OUTPUT_FORMATS:
-            raise ValueError(f"Invalid output_format: {v}. Must be one of: {VALID_OUTPUT_FORMATS}")
+            raise ValueError(
+                f"Invalid output_format: {v}. Must be one of: {VALID_OUTPUT_FORMATS}"
+            )
         return v
 
 
 class FetchPageOutput(BaseModel):
     """Output schema for fetch_page tool."""
+
     content: str = Field(description="Extracted content or error message")
     method: str = Field(description="Scraping method used (http or playwright)")
-    pipeline: str = Field(description="Conversion pipeline used (fast_path or llm_path)")
+    pipeline: str = Field(
+        description="Conversion pipeline used (fast_path or llm_path)"
+    )
     output_format: str = Field(description="Output format used")
     html_size: int = Field(description="Size of fetched HTML in bytes")
     content_size: int = Field(description="Size of extracted content in bytes")
@@ -173,7 +175,7 @@ logger = server.get_logger()
 
 pipeline = ReaderPipeline(
     scraper_endpoint=os.getenv("SCRAPER_ENDPOINT", "http://playwright-scraper:8000"),
-    llama_endpoint=os.getenv("LLAMA_ENDPOINT", "http://llama-server-readerlm:8000")
+    llama_endpoint=os.getenv("LLAMA_ENDPOINT", "http://llama-server-readerlm:8000"),
 )
 
 
@@ -185,6 +187,7 @@ def get_mcp():
 # =============================================================================
 # MCP Tools
 # =============================================================================
+
 
 @mcp.tool()
 async def fetch_page(
@@ -271,7 +274,9 @@ async def fetch_page(
         fetch_page("https://example.com", output_format="screenshot")
     """
     pipeline_name = "llm_path" if use_llm else "fast_path"
-    logger.debug(f"fetch_page: url={url}, format={output_format}, llm={use_llm}, query={query}")
+    logger.debug(
+        f"fetch_page: url={url}, format={output_format}, llm={use_llm}, query={query}"
+    )
 
     try:
         url_preview = url[:50] + ("..." if len(url) > 50 else "")
@@ -279,7 +284,9 @@ async def fetch_page(
         if ctx:
             await ctx.report_progress(1, 4, f"Scraping: {url_preview}")
 
-        logger.info(f"Processing URL: {url} (format={output_format}, pipeline={pipeline_name})")
+        logger.info(
+            f"Processing URL: {url} (format={output_format}, pipeline={pipeline_name})"
+        )
 
         start_time = time.time()
 
@@ -310,19 +317,21 @@ async def fetch_page(
 
         # Handle failure
         if not result.success:
-            method_used = metadata.get('method_used', 'unknown')
+            method_used = metadata.get("method_used", "unknown")
             error_msg = f"Failed to process {url}"
 
-            if method_used == 'playwright' and force_js_rendering:
+            if method_used == "playwright" and force_js_rendering:
                 error_code = ERROR_JS_RENDERING_FAILED
-            elif metadata.get('scrape_time_ms', 0) >= timeout * 1000:
+            elif metadata.get("scrape_time_ms", 0) >= timeout * 1000:
                 error_code = ERROR_TIMEOUT
-            elif metadata.get('html_size', 0) == 0:
+            elif metadata.get("html_size", 0) == 0:
                 error_code = ERROR_FETCH_FAILED
             else:
                 error_code = ERROR_EXTRACTION_FAILED
 
-            logger.error(f"{error_msg} - Method: {method_used}, HTML: {metadata.get('html_size', 0)} bytes")
+            logger.error(
+                f"{error_msg} - Method: {method_used}, HTML: {metadata.get('html_size', 0)} bytes"
+            )
 
             if ctx:
                 await ctx.error(error_msg)
@@ -335,13 +344,13 @@ async def fetch_page(
                     "url": url,
                     "method_used": method_used,
                     "pipeline": pipeline_name,
-                    "output_format": output_format
-                }
+                    "output_format": output_format,
+                },
             )
 
         # Report progress
         if ctx:
-            method = metadata.get('method_used', 'unknown')
+            method = metadata.get("method_used", "unknown")
             await ctx.report_progress(2, 4, f"Scraped ({method})")
             converter = "ReaderLM-v2" if use_llm else "markdownify"
             await ctx.report_progress(3, 4, f"Converting with {converter}...")
@@ -363,9 +372,7 @@ async def fetch_page(
         has_extras = include_metadata or include_links or output_format == "screenshot"
 
         if has_extras:
-            response_data = {
-                "content": result.content
-            }
+            response_data = {"content": result.content}
             if include_metadata and result.page_metadata:
                 response_data["metadata"] = result.page_metadata
             if include_links and result.links:
@@ -381,20 +388,20 @@ async def fetch_page(
             content=[TextContent(type="text", text=content_text)],
             isError=False,
             metadata={
-                "method": metadata.get('method_used', 'unknown'),
+                "method": metadata.get("method_used", "unknown"),
                 "pipeline": pipeline_name,
                 "output_format": output_format,
-                "html_size": metadata.get('html_size', 0),
+                "html_size": metadata.get("html_size", 0),
                 "content_size": len(result.content),
-                "scrape_time_ms": metadata.get('scrape_time_ms', 0),
-                "conversion_time_ms": metadata.get('inference_time_ms', 0),
+                "scrape_time_ms": metadata.get("scrape_time_ms", 0),
+                "conversion_time_ms": metadata.get("inference_time_ms", 0),
                 "total_time_ms": total_time_ms,
                 "url": url,
                 "has_metadata": result.page_metadata is not None,
                 "has_links": result.links is not None,
                 "has_screenshot": result.screenshot is not None,
-                "query_used": query
-            }
+                "query_used": query,
+            },
         )
 
     except Exception as e:
@@ -409,16 +416,20 @@ async def fetch_page(
             additional_metadata={
                 "url": url,
                 "exception_type": type(e).__name__,
-                "output_format": output_format
-            }
+                "output_format": output_format,
+            },
         )
 
 
 if __name__ == "__main__":
     logger.info("Starting Reader MCP server (Streamable HTTP)...")
     logger.info("Configuration:")
-    logger.info(f"  Scraper endpoint: {os.getenv('SCRAPER_ENDPOINT', 'http://playwright-scraper:8000')}")
-    logger.info(f"  Llama endpoint: {os.getenv('LLAMA_ENDPOINT', 'http://llama-server-readerlm:8000')}")
+    logger.info(
+        f"  Scraper endpoint: {os.getenv('SCRAPER_ENDPOINT', 'http://playwright-scraper:8000')}"
+    )
+    logger.info(
+        f"  Llama endpoint: {os.getenv('LLAMA_ENDPOINT', 'http://llama-server-readerlm:8000')}"
+    )
     logger.info("")
     logger.info("Features:")
     logger.info("  - Output formats: markdown, html, text, screenshot")

@@ -15,9 +15,9 @@ Additional features:
 import logging
 import time
 from typing import Optional, List, Dict, Any
-from dataclasses import dataclass, asdict
+from dataclasses import dataclass
 
-from scraper_client import ScraperClient, ScrapeResult
+from scraper_client import ScraperClient
 from llama_client import LlamaReaderClient
 from html_preprocessor import (
     extract_and_convert_to_markdown,
@@ -26,8 +26,6 @@ from html_preprocessor import (
     extract_links,
     filter_content_by_query,
     extract_with_trafilatura,
-    PageMetadata,
-    ExtractedLink,
     ExtractionOptions,
 )
 
@@ -37,6 +35,7 @@ logger = logging.getLogger(__name__)
 @dataclass
 class ProcessResult:
     """Full result from processing a URL."""
+
     content: str
     success: bool
     metadata: Dict[str, Any]
@@ -55,7 +54,7 @@ class ReaderPipeline:
     def __init__(
         self,
         scraper_endpoint: str = "http://playwright-scraper:8000",
-        llama_endpoint: str = "http://llama-server-readerlm:8000"
+        llama_endpoint: str = "http://llama-server-readerlm:8000",
     ):
         """Initialize pipeline with service endpoints."""
         self.scraper = ScraperClient(scraper_endpoint)
@@ -68,7 +67,7 @@ class ReaderPipeline:
         timeout: int = 30,
         force_playwright: bool = False,
         max_tokens: int = 8192,
-        use_llm: bool = False
+        use_llm: bool = False,
     ) -> tuple[str, bool, dict]:
         """
         Legacy method: Complete pipeline with basic options.
@@ -80,7 +79,7 @@ class ReaderPipeline:
             timeout=timeout,
             force_playwright=force_playwright,
             use_llm=use_llm,
-            output_format="markdown"
+            output_format="markdown",
         )
         return result.to_tuple()
 
@@ -128,14 +127,10 @@ class ReaderPipeline:
             "scrape_time_ms": 0,
             "inference_time_ms": 0,
             "pipeline": pipeline_name,
-            "output_format": output_format
+            "output_format": output_format,
         }
 
-        result = ProcessResult(
-            content="",
-            success=False,
-            metadata=metadata
-        )
+        result = ProcessResult(content="", success=False, metadata=metadata)
 
         try:
             # Step 1: Scrape HTML
@@ -150,7 +145,7 @@ class ReaderPipeline:
                 wait_for_selector=wait_for_selector,
                 timeout=timeout,
                 force_playwright=force_playwright or needs_screenshot,
-                capture_screenshot=needs_screenshot
+                capture_screenshot=needs_screenshot,
             )
 
             scrape_time_ms = int((time.time() - scrape_start) * 1000)
@@ -176,7 +171,9 @@ class ReaderPipeline:
                 return result
 
             html = scrape_result.html
-            logger.info(f"Scraped {len(html)} bytes from {url} using {scrape_result.method} ({scrape_time_ms}ms)")
+            logger.info(
+                f"Scraped {len(html)} bytes from {url} using {scrape_result.method} ({scrape_time_ms}ms)"
+            )
 
             # Step 2: Extract metadata if requested
             if include_metadata:
@@ -239,9 +236,7 @@ class ReaderPipeline:
             # Step 5: Apply BM25 query filter for non-markdown formats if needed
             if query and output_format != "markdown" and result.content:
                 filtered, bm25_meta = filter_content_by_query(
-                    result.content,
-                    query,
-                    top_k=query_top_k
+                    result.content, query, top_k=query_top_k
                 )
                 result.content = filtered
                 metadata["bm25_filter"] = bm25_meta
@@ -294,11 +289,7 @@ class ReaderPipeline:
         return content, success, metadata
 
     async def _convert_with_llm(
-        self,
-        html: str,
-        instruction: Optional[str],
-        max_tokens: int,
-        timeout: int
+        self, html: str, instruction: Optional[str], max_tokens: int, timeout: int
     ) -> tuple[str, bool, dict]:
         """LLM path: Trafilatura extraction → ReaderLM-v2 conversion.
 
@@ -311,14 +302,13 @@ class ReaderPipeline:
         Returns:
             (markdown, success, metadata)
         """
-        metadata = {
-            "pipeline": "llm_path",
-            "inference_time_ms": 0
-        }
+        metadata = {"pipeline": "llm_path", "inference_time_ms": 0}
 
         # Step 1: Extract with Trafilatura (output as HTML for ReaderLM)
         logger.info("Preprocessing HTML with Trafilatura for ReaderLM-v2")
-        html_processed, preprocess_metadata = preprocess_html(html, use_trafilatura=True, output_format="html")
+        html_processed, preprocess_metadata = preprocess_html(
+            html, use_trafilatura=True, output_format="html"
+        )
         metadata["preprocessing"] = preprocess_metadata
 
         # Step 2: Convert with ReaderLM-v2
@@ -329,7 +319,7 @@ class ReaderPipeline:
             html_processed,
             instruction=instruction,
             max_tokens=max_tokens,
-            timeout=timeout
+            timeout=timeout,
         )
 
         inference_time_ms = int((time.time() - inference_start) * 1000)

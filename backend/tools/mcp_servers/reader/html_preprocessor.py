@@ -50,7 +50,7 @@ DEFAULT_PRUNE_XPATH = [
     '//nav[contains(@class, "breadcrumb")]',
     '//div[contains(@class, "share")]',
     '//div[contains(@class, "social")]',
-    '//footer',
+    "//footer",
     '//header[contains(@class, "site-header")]',
 ]
 
@@ -166,7 +166,10 @@ def prune_html_xpath(html: str, xpath_patterns: list[str]) -> str:
 def strip_scripts_and_styles(html: str) -> str:
     """Remove script and style tags from HTML."""
     html = re.sub(
-        r"<script\b[^<]*(?:(?!<\/script>)<[^<]*)*<\/script>", "", html, flags=re.IGNORECASE
+        r"<script\b[^<]*(?:(?!<\/script>)<[^<]*)*<\/script>",
+        "",
+        html,
+        flags=re.IGNORECASE,
     )
     html = re.sub(
         r"<style\b[^<]*(?:(?!<\/style>)<[^<]*)*<\/style>", "", html, flags=re.IGNORECASE
@@ -180,7 +183,9 @@ def tokenize_simple(text: str) -> list[str]:
     return re.findall(r"\b\w+\b", text.lower())
 
 
-def is_valid_content(content: Optional[str], min_length: int = MIN_CONTENT_LENGTH) -> bool:
+def is_valid_content(
+    content: Optional[str], min_length: int = MIN_CONTENT_LENGTH
+) -> bool:
     """Check if extracted content is valid (not empty, not just whitespace, meets minimum length)."""
     if not content:
         return False
@@ -240,12 +245,20 @@ def extract_metadata(html: str) -> PageMetadata:
                 author=metadata.author if hasattr(metadata, "author") else None,
                 date=metadata.date if hasattr(metadata, "date") else None,
                 sitename=metadata.sitename if hasattr(metadata, "sitename") else None,
-                description=metadata.description if hasattr(metadata, "description") else None,
+                description=(
+                    metadata.description if hasattr(metadata, "description") else None
+                ),
                 language=metadata.language if hasattr(metadata, "language") else None,
-                categories=list(metadata.categories)
-                if hasattr(metadata, "categories") and metadata.categories
-                else [],
-                tags=list(metadata.tags) if hasattr(metadata, "tags") and metadata.tags else [],
+                categories=(
+                    list(metadata.categories)
+                    if hasattr(metadata, "categories") and metadata.categories
+                    else []
+                ),
+                tags=(
+                    list(metadata.tags)
+                    if hasattr(metadata, "tags") and metadata.tags
+                    else []
+                ),
             )
 
         # Fallback: if title is still None, try regex extraction
@@ -342,7 +355,9 @@ def filter_content_by_query(
         scored_paragraphs.sort(key=lambda x: x[1], reverse=True)
 
         filtered = [
-            (p, score, idx) for p, score, idx in scored_paragraphs[:top_k] if score >= min_score
+            (p, score, idx)
+            for p, score, idx in scored_paragraphs[:top_k]
+            if score >= min_score
         ]
         filtered.sort(key=lambda x: x[2])
 
@@ -487,8 +502,8 @@ def extract_with_trafilatura(
         # Third attempt: readability-lxml ensemble fallback
         if not is_valid_content(extracted):
             logger.debug("Trafilatura extraction insufficient, trying readability-lxml")
-            readability_content, readability_success, readability_meta = extract_with_readability(
-                html
+            readability_content, readability_success, readability_meta = (
+                extract_with_readability(html)
             )
             if readability_success and readability_content:
                 metadata["fallback_used"] = "readability"
@@ -500,7 +515,9 @@ def extract_with_trafilatura(
             extracted_size = len(extracted)
             compression = (original_size - extracted_size) / original_size * 100
 
-            fallback_info = f" [{metadata['fallback_used']}]" if metadata["fallback_used"] else ""
+            fallback_info = (
+                f" [{metadata['fallback_used']}]" if metadata["fallback_used"] else ""
+            )
             logger.info(
                 f"Extracted content: {original_size} → {extracted_size} bytes "
                 f"({compression:.1f}% reduction){fallback_info}"
@@ -680,7 +697,9 @@ def extract_and_convert_to_markdown(
 
     # Step 3: Optional BM25 query filtering
     if query and convert_success:
-        markdown, bm25_meta = filter_content_by_query(markdown, query, top_k=query_top_k)
+        markdown, bm25_meta = filter_content_by_query(
+            markdown, query, top_k=query_top_k
+        )
         metadata["bm25_filter"] = bm25_meta
 
     # Step 4: Validate final content
@@ -696,7 +715,9 @@ def extract_and_convert_to_markdown(
         )
 
     if overall_success:
-        logger.info(f"Fast path complete: {len(html)} bytes HTML → {len(markdown)} chars Markdown")
+        logger.info(
+            f"Fast path complete: {len(html)} bytes HTML → {len(markdown)} chars Markdown"
+        )
 
     return markdown, overall_success, metadata
 
@@ -758,7 +779,9 @@ def process_html_full(
 
     # Apply BM25 filter for non-markdown formats if query provided
     if query and output_format != "markdown" and result["content"]:
-        filtered, bm25_meta = filter_content_by_query(result["content"], query, top_k=query_top_k)
+        filtered, bm25_meta = filter_content_by_query(
+            result["content"], query, top_k=query_top_k
+        )
         result["content"] = filtered
         result["metadata"]["bm25_filter"] = bm25_meta
 

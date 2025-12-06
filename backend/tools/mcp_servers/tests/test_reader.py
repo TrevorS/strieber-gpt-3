@@ -3,7 +3,6 @@
 Tests extraction, metadata, links, BM25 filtering, and scraper client utilities.
 """
 
-import pytest
 from reader.html_preprocessor import (
     is_valid_content,
     extract_title_fallback,
@@ -27,7 +26,6 @@ from reader.scraper_client import (
     get_random_user_agent,
     USER_AGENTS,
     INITIAL_BACKOFF_SECONDS,
-    BACKOFF_MULTIPLIER,
     MAX_BACKOFF_SECONDS,
     JITTER_FACTOR,
 )
@@ -272,8 +270,7 @@ class TestExtractLinks:
         html = '<a href="/page">Internal</a><a href="https://other.com">External</a>'
         links = extract_links(html, base_url="https://example.com")
 
-        internal = [l for l in links if l.is_internal]
-        external = [l for l in links if not l.is_internal]
+        internal = [link for link in links if link.is_internal]
 
         assert len(internal) == 1
         assert internal[0].url == "/page"
@@ -287,7 +284,9 @@ class TestExtractLinks:
 
     def test_skip_javascript_links(self):
         """Test that javascript: links are skipped."""
-        html = '<a href="javascript:void(0)">JS</a><a href="https://example.com">Real</a>'
+        html = (
+            '<a href="javascript:void(0)">JS</a><a href="https://example.com">Real</a>'
+        )
         links = extract_links(html)
         assert len(links) == 1
         assert links[0].url == "https://example.com"
@@ -438,7 +437,9 @@ class TestExtractWithTrafilatura:
     def test_different_output_formats(self):
         """Test extraction with different output formats."""
         for fmt in ["html", "text"]:
-            _, _, metadata = extract_with_trafilatura(SAMPLE_HTML_SIMPLE, output_format=fmt)
+            _, _, metadata = extract_with_trafilatura(
+                SAMPLE_HTML_SIMPLE, output_format=fmt
+            )
             assert metadata["output_format"] == fmt
 
 
@@ -600,7 +601,11 @@ class TestCalculateBackoff:
         """Test backoff for first attempt (0-indexed)."""
         backoff = calculate_backoff(0)
         # Should be around INITIAL_BACKOFF_SECONDS plus jitter
-        assert INITIAL_BACKOFF_SECONDS <= backoff <= INITIAL_BACKOFF_SECONDS * (1 + JITTER_FACTOR)
+        assert (
+            INITIAL_BACKOFF_SECONDS
+            <= backoff
+            <= INITIAL_BACKOFF_SECONDS * (1 + JITTER_FACTOR)
+        )
 
     def test_exponential_increase(self):
         """Test that backoff increases exponentially."""
@@ -611,6 +616,7 @@ class TestCalculateBackoff:
         # Each subsequent backoff should be roughly double (accounting for jitter)
         # Just verify increasing trend
         assert backoff_1 > backoff_0 * 0.8  # Allow for jitter variation
+        assert backoff_2 > backoff_1 * 0.8  # Continue increasing
 
     def test_max_backoff_respected(self):
         """Test that backoff doesn't exceed maximum."""

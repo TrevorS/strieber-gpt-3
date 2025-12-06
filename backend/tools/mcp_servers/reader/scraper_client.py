@@ -134,9 +134,7 @@ class ScraperClient:
                 request_payload = payload.copy()
                 request_payload["user_agent"] = self._get_user_agent()
 
-                response = await self.client.post(
-                    url, json=request_payload
-                )
+                response = await self.client.post(url, json=request_payload)
 
                 # Check if we should retry based on status code
                 if response.status_code in RETRY_STATUS_CODES:
@@ -149,7 +147,9 @@ class ScraperClient:
                         await asyncio.sleep(backoff)
                         continue
                     else:
-                        last_error = f"Max retries exceeded after {response.status_code}"
+                        last_error = (
+                            f"Max retries exceeded after {response.status_code}"
+                        )
                         return None, attempt, last_error
 
                 response.raise_for_status()
@@ -179,7 +179,10 @@ class ScraperClient:
 
             except httpx.HTTPStatusError as e:
                 # Don't retry client errors (4xx except 429)
-                if 400 <= e.response.status_code < 500 and e.response.status_code != 429:
+                if (
+                    400 <= e.response.status_code < 500
+                    and e.response.status_code != 429
+                ):
                     last_error = f"Client error: {e.response.status_code}"
                     return None, attempt, last_error
 
