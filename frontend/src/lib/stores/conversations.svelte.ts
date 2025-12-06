@@ -156,6 +156,35 @@ class ConversationStore {
 	}
 
 	/**
+	 * Update a message's content and mark it as edited (used for user message editing).
+	 */
+	updateMessage(conversationId: string, messageId: string, content: string): void {
+		const conv = this.conversations.find((c) => c.id === conversationId);
+		if (!conv) {
+			logger.warn('store', 'updateMessage: conversation not found', { conversationId });
+			return;
+		}
+
+		const message = conv.messages.find((m) => m.id === messageId);
+		if (!message) {
+			logger.warn('store', 'updateMessage: message not found', { conversationId, messageId });
+			return;
+		}
+
+		const oldContent = message.content;
+		message.content = content;
+		message.isEdited = true;
+		conv.updatedAt = Date.now();
+
+		logger.store.action('updateMessage', {
+			conversationId,
+			messageId,
+			oldContentLength: oldContent.length,
+			newContentLength: content.length
+		});
+	}
+
+	/**
 	 * Set a message's streaming status.
 	 */
 	setMessageStreaming(conversationId: string, messageId: string, isStreaming: boolean): void {
@@ -297,6 +326,35 @@ class ConversationStore {
 		});
 
 		return userMessage.content;
+	}
+
+	/**
+	 * Remove all messages after a given message ID (exclusive).
+	 * Used when editing a user message to remove subsequent responses.
+	 */
+	removeMessagesAfter(conversationId: string, messageId: string): void {
+		const conv = this.conversations.find((c) => c.id === conversationId);
+		if (!conv) {
+			logger.warn('store', 'removeMessagesAfter: conversation not found', { conversationId });
+			return;
+		}
+
+		const messageIndex = conv.messages.findIndex((m) => m.id === messageId);
+		if (messageIndex === -1) {
+			logger.warn('store', 'removeMessagesAfter: message not found', { conversationId, messageId });
+			return;
+		}
+
+		const removedCount = conv.messages.length - messageIndex - 1;
+		if (removedCount > 0) {
+			conv.messages.splice(messageIndex + 1);
+			conv.updatedAt = Date.now();
+			logger.store.action('removeMessagesAfter', {
+				conversationId,
+				messageId,
+				removedCount
+			});
+		}
 	}
 
 	/**

@@ -142,6 +142,22 @@
 		}
 	}
 
+	function handleRename(id: string, title: string) {
+		logger.ui.event('Sidebar', 'Rename', { id, title });
+		conversationStore.updateTitle(id, title);
+	}
+
+	function handleExport(id: string) {
+		const conversation = conversationStore.get(id);
+		if (conversation) {
+			logger.ui.event('Sidebar', 'Export', { id, title: conversation.title });
+			// Import dynamically to avoid SSR issues
+			import('$lib/utils/export').then(({ downloadConversationAsMarkdown }) => {
+				downloadConversationAsMarkdown(conversation);
+			});
+		}
+	}
+
 	// Global keyboard shortcuts
 	const shortcuts: ShortcutAction[] = [
 		{
@@ -185,6 +201,14 @@
 
 <!-- Global keyboard shortcuts -->
 <svelte:window onkeydown={handleKeydown} />
+
+<!-- Skip to main content link for keyboard users -->
+<a
+	href="#main-content"
+	class="sr-only focus:not-sr-only focus:absolute focus:top-4 focus:left-4 focus:z-[100] focus:bg-background focus:text-foreground focus:px-4 focus:py-2 focus:rounded-md focus:shadow-lg focus:ring-2 focus:ring-ring"
+>
+	Skip to main content
+</a>
 
 <div class="flex h-screen">
 	<!-- Mobile header -->
@@ -283,12 +307,14 @@
 				onselect={handleSelect}
 				onnew={handleNew}
 				ondelete={handleDelete}
+				onrename={handleRename}
+				onexport={handleExport}
 			/>
 		{/if}
 	</aside>
 
 	<!-- Main content -->
-	<main class="flex-1 flex flex-col min-w-0 pt-14 md:pt-0">
+	<main id="main-content" class="flex-1 flex flex-col min-w-0 pt-14 md:pt-0">
 		{@render children()}
 	</main>
 </div>

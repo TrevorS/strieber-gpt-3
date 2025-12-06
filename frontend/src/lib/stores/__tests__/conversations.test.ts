@@ -227,6 +227,120 @@ describe('conversationStore', () => {
 		});
 	});
 
+	describe('updateMessage', () => {
+		it('should update message content', () => {
+			const conv = conversationStore.create();
+			const message = conversationStore.addMessage(conv.id, 'user', 'Original content');
+
+			conversationStore.updateMessage(conv.id, message.id, 'Updated content');
+
+			const current = conversationStore.get(conv.id)!;
+			expect(current.messages[0].content).toBe('Updated content');
+		});
+
+		it('should mark message as edited', () => {
+			const conv = conversationStore.create();
+			const message = conversationStore.addMessage(conv.id, 'user', 'Original');
+
+			expect(conversationStore.get(conv.id)!.messages[0].isEdited).toBeFalsy();
+
+			conversationStore.updateMessage(conv.id, message.id, 'Edited');
+
+			const current = conversationStore.get(conv.id)!;
+			expect(current.messages[0].isEdited).toBe(true);
+		});
+
+		it('should not affect other messages', () => {
+			const conv = conversationStore.create();
+			conversationStore.addMessage(conv.id, 'user', 'First message');
+			const msg2 = conversationStore.addMessage(conv.id, 'assistant', 'Second message');
+			conversationStore.addMessage(conv.id, 'user', 'Third message');
+
+			conversationStore.updateMessage(conv.id, msg2.id, 'Updated second');
+
+			const current = conversationStore.get(conv.id)!;
+			expect(current.messages[0].content).toBe('First message');
+			expect(current.messages[0].isEdited).toBeFalsy();
+			expect(current.messages[1].content).toBe('Updated second');
+			expect(current.messages[1].isEdited).toBe(true);
+			expect(current.messages[2].content).toBe('Third message');
+			expect(current.messages[2].isEdited).toBeFalsy();
+		});
+
+		it('should update conversation updatedAt timestamp', () => {
+			const conv = conversationStore.create();
+			const message = conversationStore.addMessage(conv.id, 'user', 'Original');
+			const originalUpdatedAt = conversationStore.get(conv.id)!.updatedAt;
+
+			conversationStore.updateMessage(conv.id, message.id, 'Updated');
+
+			expect(conversationStore.get(conv.id)!.updatedAt).toBeGreaterThanOrEqual(originalUpdatedAt);
+		});
+
+		it('should do nothing for non-existent conversation', () => {
+			const conv = conversationStore.create();
+			conversationStore.addMessage(conv.id, 'user', 'Message');
+
+			// Should not throw
+			conversationStore.updateMessage('non-existent', 'msg-id', 'Updated');
+
+			// Original message unchanged
+			expect(conversationStore.get(conv.id)!.messages[0].content).toBe('Message');
+		});
+
+		it('should do nothing for non-existent message', () => {
+			const conv = conversationStore.create();
+			conversationStore.addMessage(conv.id, 'user', 'Message');
+
+			// Should not throw
+			conversationStore.updateMessage(conv.id, 'non-existent', 'Updated');
+
+			// Original message unchanged
+			expect(conversationStore.get(conv.id)!.messages[0].content).toBe('Message');
+		});
+	});
+
+	describe('removeMessagesAfter', () => {
+		it('should remove all messages after a given message', () => {
+			const conv = conversationStore.create();
+			const msg1 = conversationStore.addMessage(conv.id, 'user', 'First');
+			conversationStore.addMessage(conv.id, 'assistant', 'Second');
+			conversationStore.addMessage(conv.id, 'user', 'Third');
+			conversationStore.addMessage(conv.id, 'assistant', 'Fourth');
+
+			conversationStore.removeMessagesAfter(conv.id, msg1.id);
+
+			const current = conversationStore.get(conv.id)!;
+			expect(current.messages).toHaveLength(1);
+			expect(current.messages[0].content).toBe('First');
+		});
+
+		it('should do nothing if message is last', () => {
+			const conv = conversationStore.create();
+			conversationStore.addMessage(conv.id, 'user', 'First');
+			const msg2 = conversationStore.addMessage(conv.id, 'assistant', 'Second');
+
+			conversationStore.removeMessagesAfter(conv.id, msg2.id);
+
+			const current = conversationStore.get(conv.id)!;
+			expect(current.messages).toHaveLength(2);
+		});
+
+		it('should do nothing for non-existent conversation', () => {
+			conversationStore.removeMessagesAfter('non-existent', 'msg-id');
+			// Should not throw
+		});
+
+		it('should do nothing for non-existent message', () => {
+			const conv = conversationStore.create();
+			conversationStore.addMessage(conv.id, 'user', 'First');
+
+			conversationStore.removeMessagesAfter(conv.id, 'non-existent');
+
+			expect(conversationStore.get(conv.id)!.messages).toHaveLength(1);
+		});
+	});
+
 	// ============================================================================
 	// Response ID Tracking
 	// ============================================================================

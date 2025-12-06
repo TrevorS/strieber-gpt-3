@@ -8,12 +8,14 @@
 		messages,
 		canRegenerate = false,
 		onregenerate,
-		onscroll
+		onscroll,
+		onedit
 	}: {
 		messages: Message[];
 		canRegenerate?: boolean;
 		onregenerate?: () => void;
 		onscroll?: (scrollTop: number) => void;
+		onedit?: (messageId: string, newContent: string) => void;
 	} = $props();
 
 	let container: HTMLDivElement;
@@ -55,13 +57,35 @@
 		}
 		return false;
 	}
+
+	// Check if assistant is currently streaming
+	let isStreaming = $derived(
+		messages.length > 0 && messages[messages.length - 1]?.isStreaming === true
+	);
 </script>
 
-<div bind:this={container} onscroll={handleScroll} class="flex-1 overflow-y-auto p-4">
+<!-- Screen reader announcement for streaming status -->
+<div aria-live="polite" aria-atomic="true" class="sr-only">
+	{#if isStreaming}
+		Assistant is responding...
+	{/if}
+</div>
+
+<div
+	bind:this={container}
+	onscroll={handleScroll}
+	role="log"
+	aria-label="Message history"
+	class="flex-1 overflow-y-auto p-4"
+>
 	<div class="max-w-3xl xl:max-w-4xl 2xl:max-w-5xl mx-auto space-y-4">
 		{#each messages as message, index (message.id)}
 			{#if message.role === 'user'}
-				<UserMessage {message} />
+				<UserMessage
+					{message}
+					editable={!!onedit}
+					onedit={onedit ? (newContent) => onedit(message.id, newContent) : undefined}
+				/>
 			{:else}
 				<AssistantMessage
 					{message}

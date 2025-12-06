@@ -9,10 +9,12 @@ import { createConversation } from '$lib/stores/types';
 describe('ConversationItem', () => {
 	let mockOnSelect: () => void;
 	let mockOnDelete: () => void;
+	let mockOnRename: (newTitle: string) => void;
 
 	beforeEach(() => {
 		mockOnSelect = vi.fn();
 		mockOnDelete = vi.fn();
+		mockOnRename = vi.fn();
 	});
 
 	it('should render conversation title', () => {
@@ -131,5 +133,188 @@ describe('ConversationItem', () => {
 
 		expect(mockOnDelete).toHaveBeenCalled();
 		expect(mockOnSelect).not.toHaveBeenCalled();
+	});
+
+	describe('rename functionality', () => {
+		it('should show edit button on hover', () => {
+			const conversation = createConversation({ title: 'Rename Me' });
+			const { container } = render(ConversationItem, {
+				props: {
+					conversation,
+					isActive: false,
+					onselect: mockOnSelect,
+					ondelete: mockOnDelete,
+					onrename: mockOnRename
+				}
+			});
+
+			const editButton = container.querySelector('[data-testid="edit-button"]');
+			expect(editButton).toBeTruthy();
+		});
+
+		it('should enter edit mode when edit button clicked', async () => {
+			const conversation = createConversation({ title: 'Rename Me' });
+			const { container } = render(ConversationItem, {
+				props: {
+					conversation,
+					isActive: false,
+					onselect: mockOnSelect,
+					ondelete: mockOnDelete,
+					onrename: mockOnRename
+				}
+			});
+
+			const editButton = container.querySelector('[data-testid="edit-button"]');
+			await fireEvent.click(editButton!);
+
+			const input = container.querySelector('input[data-testid="rename-input"]');
+			expect(input).toBeTruthy();
+			expect((input as HTMLInputElement).value).toBe('Rename Me');
+		});
+
+		it('should enter edit mode on double-click', async () => {
+			const conversation = createConversation({ title: 'Double Click Me' });
+			const { container } = render(ConversationItem, {
+				props: {
+					conversation,
+					isActive: false,
+					onselect: mockOnSelect,
+					ondelete: mockOnDelete,
+					onrename: mockOnRename
+				}
+			});
+
+			const titleSpan = screen.getByText('Double Click Me');
+			await fireEvent.dblClick(titleSpan);
+
+			const input = container.querySelector('input[data-testid="rename-input"]');
+			expect(input).toBeTruthy();
+		});
+
+		it('should save on Enter key and call onrename', async () => {
+			const conversation = createConversation({ title: 'Original Title' });
+			const { container } = render(ConversationItem, {
+				props: {
+					conversation,
+					isActive: false,
+					onselect: mockOnSelect,
+					ondelete: mockOnDelete,
+					onrename: mockOnRename
+				}
+			});
+
+			// Enter edit mode
+			const editButton = container.querySelector('[data-testid="edit-button"]');
+			await fireEvent.click(editButton!);
+
+			// Change the input value
+			const input = container.querySelector(
+				'input[data-testid="rename-input"]'
+			) as HTMLInputElement;
+			await fireEvent.input(input, { target: { value: 'New Title' } });
+
+			// Press Enter
+			await fireEvent.keyDown(input, { key: 'Enter' });
+
+			expect(mockOnRename).toHaveBeenCalledWith('New Title');
+		});
+
+		it('should cancel on Escape key and restore original title', async () => {
+			const conversation = createConversation({ title: 'Original Title' });
+			const { container } = render(ConversationItem, {
+				props: {
+					conversation,
+					isActive: false,
+					onselect: mockOnSelect,
+					ondelete: mockOnDelete,
+					onrename: mockOnRename
+				}
+			});
+
+			// Enter edit mode
+			const editButton = container.querySelector('[data-testid="edit-button"]');
+			await fireEvent.click(editButton!);
+
+			// Change the input value
+			const input = container.querySelector(
+				'input[data-testid="rename-input"]'
+			) as HTMLInputElement;
+			await fireEvent.input(input, { target: { value: 'Changed Title' } });
+
+			// Press Escape
+			await fireEvent.keyDown(input, { key: 'Escape' });
+
+			// Should exit edit mode without calling onrename
+			expect(mockOnRename).not.toHaveBeenCalled();
+			expect(screen.getByText('Original Title')).toBeInTheDocument();
+		});
+
+		it('should not call onrename if title is unchanged', async () => {
+			const conversation = createConversation({ title: 'Same Title' });
+			const { container } = render(ConversationItem, {
+				props: {
+					conversation,
+					isActive: false,
+					onselect: mockOnSelect,
+					ondelete: mockOnDelete,
+					onrename: mockOnRename
+				}
+			});
+
+			// Enter edit mode
+			const editButton = container.querySelector('[data-testid="edit-button"]');
+			await fireEvent.click(editButton!);
+
+			// Don't change the value, just press Enter
+			const input = container.querySelector(
+				'input[data-testid="rename-input"]'
+			) as HTMLInputElement;
+			await fireEvent.keyDown(input, { key: 'Enter' });
+
+			expect(mockOnRename).not.toHaveBeenCalled();
+		});
+
+		it('should not call onrename if title is empty', async () => {
+			const conversation = createConversation({ title: 'Original Title' });
+			const { container } = render(ConversationItem, {
+				props: {
+					conversation,
+					isActive: false,
+					onselect: mockOnSelect,
+					ondelete: mockOnDelete,
+					onrename: mockOnRename
+				}
+			});
+
+			// Enter edit mode
+			const editButton = container.querySelector('[data-testid="edit-button"]');
+			await fireEvent.click(editButton!);
+
+			// Clear the input
+			const input = container.querySelector(
+				'input[data-testid="rename-input"]'
+			) as HTMLInputElement;
+			await fireEvent.input(input, { target: { value: '' } });
+			await fireEvent.keyDown(input, { key: 'Enter' });
+
+			expect(mockOnRename).not.toHaveBeenCalled();
+		});
+
+		it('should not prevent selection when onrename is not provided', async () => {
+			const conversation = createConversation({ title: 'No Rename' });
+			const { container } = render(ConversationItem, {
+				props: {
+					conversation,
+					isActive: false,
+					onselect: mockOnSelect,
+					ondelete: mockOnDelete
+					// onrename not provided
+				}
+			});
+
+			// Edit button should not be rendered
+			const editButton = container.querySelector('[data-testid="edit-button"]');
+			expect(editButton).toBeNull();
+		});
 	});
 });

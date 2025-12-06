@@ -220,6 +220,88 @@
 		);
 	}
 
+	function handleEdit(messageId: string, newContent: string) {
+		if (!conversation || isStreaming) return;
+
+		logger.ui.event('ConversationPage', 'Edit message', {
+			conversationId: conversation.id,
+			messageId,
+			newContentLength: newContent.length
+		});
+
+		// Update the message content and mark as edited
+		conversationStore.updateMessage(conversation.id, messageId, newContent);
+
+		// Remove all messages after the edited one
+		conversationStore.removeMessagesAfter(conversation.id, messageId);
+
+		// Create a new assistant response
+		const assistantMessage = conversationStore.addMessage(conversation.id, 'assistant', '');
+		conversationStore.setMessageStreaming(conversation.id, assistantMessage.id, true);
+
+		isStreaming = true;
+		abortController = new AbortController();
+
+		// Stream a new response with the edited content
+		sendMessageStreaming(
+			newContent,
+			{
+				model: settingsStore.selectedModel,
+				previousResponseId: conversation.lastResponseId,
+				tools: settingsStore.filterTools([
+					{ type: 'web_search' },
+					{ type: 'code_interpreter' },
+					{ type: 'weather' },
+					{ type: 'reader' }
+				]),
+				signal: abortController.signal,
+				instructions: settingsStore.systemPrompt || undefined
+			},
+			{
+				onDelta: (content) => {
+					conversationStore.updateMessageContent(conversation!.id, assistantMessage.id, content);
+				},
+				onOutputItem: (item) => {
+					conversationStore.setOutputItem(conversation!.id, assistantMessage.id, item);
+				},
+				onComplete: (responseId) => {
+					logger.api.streamComplete(
+						conversation!.id,
+						conversationStore.get(conversation!.id)?.messages.find((m) => m.id === assistantMessage.id)
+							?.content.length ?? 0
+					);
+					conversationStore.updateLastResponseId(conversation!.id, responseId);
+					conversationStore.setMessageStreaming(conversation!.id, assistantMessage.id, false);
+					isStreaming = false;
+					abortController = null;
+				},
+				onError: (error) => {
+					if (error.message === 'Request was cancelled') {
+						logger.info('api', 'Edit regenerate cancelled by user', { conversationId: conversation!.id });
+						conversationStore.setMessageStreaming(conversation!.id, assistantMessage.id, false);
+						isStreaming = false;
+						abortController = null;
+						return;
+					}
+
+					logger.error('api', 'Edit regenerate error', {
+						conversationId: conversation!.id,
+						error: error.message
+					});
+					toastStore.error(error.message);
+					conversationStore.updateMessageContent(
+						conversation!.id,
+						assistantMessage.id,
+						'Sorry, something went wrong. Please try again.'
+					);
+					conversationStore.setMessageStreaming(conversation!.id, assistantMessage.id, false);
+					isStreaming = false;
+					abortController = null;
+				}
+			}
+		);
+	}
+
 	// Handle Escape key to stop streaming or close settings
 	function handleKeydown(e: KeyboardEvent) {
 		if (e.key === 'Escape') {
@@ -242,6 +324,6 @@
 		<Settings class="h-5 w-5" />
 	</Button>
 </div>
-<MessageList {messages} canRegenerate={!isStreaming} onregenerate={handleRegenerate} onscroll={handleMessageScroll} />
+<MessageList {messages} canRegenerate={!isStreaming} onregenerate={handleRegenerate} onedit={handleEdit} onscroll={handleMessageScroll} />
 <ChatInput onsubmit={handleSubmit} onstop={handleStop} disabled={isStreaming} streaming={isStreaming} />
 <SettingsPanel open={settingsOpen} onclose={() => (settingsOpen = false)} />

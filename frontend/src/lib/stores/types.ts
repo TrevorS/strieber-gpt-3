@@ -90,6 +90,9 @@ export interface Message {
 
 	/** Whether this message is currently streaming */
 	isStreaming?: boolean;
+
+	/** Whether this message has been edited by the user */
+	isEdited?: boolean;
 }
 
 // =============================================================================

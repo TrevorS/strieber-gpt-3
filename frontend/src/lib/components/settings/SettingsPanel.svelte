@@ -9,11 +9,67 @@
 
 	let { open = false, onclose }: { open: boolean; onclose: () => void } = $props();
 
+	let panelRef: HTMLDivElement | undefined = $state();
+	let previousActiveElement: HTMLElement | null = $state(null);
+
+	// Focusable element selector
+	const FOCUSABLE_SELECTOR =
+		'button, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])';
+
+	function getFocusableElements(): HTMLElement[] {
+		if (!panelRef) return [];
+		return Array.from(panelRef.querySelectorAll<HTMLElement>(FOCUSABLE_SELECTOR));
+	}
+
 	function handleKeydown(event: KeyboardEvent) {
 		if (event.key === 'Escape') {
 			onclose();
+			return;
+		}
+
+		// Focus trap: handle Tab key
+		if (event.key === 'Tab' && open && panelRef) {
+			const focusable = getFocusableElements();
+			if (focusable.length === 0) return;
+
+			const first = focusable[0];
+			const last = focusable[focusable.length - 1];
+
+			if (event.shiftKey) {
+				// Shift+Tab: if on first element, go to last
+				if (document.activeElement === first) {
+					event.preventDefault();
+					last.focus();
+				}
+			} else {
+				// Tab: if on last element, go to first
+				if (document.activeElement === last) {
+					event.preventDefault();
+					first.focus();
+				}
+			}
 		}
 	}
+
+	// Focus first element when panel opens, restore focus on close
+	$effect(() => {
+		if (open) {
+			// Store the previously focused element
+			previousActiveElement = document.activeElement as HTMLElement;
+
+			// Focus the first focusable element after transition
+			setTimeout(() => {
+				const focusable = getFocusableElements();
+				if (focusable.length > 0) {
+					focusable[0].focus();
+				}
+			}, 50);
+		} else if (previousActiveElement) {
+			// Restore focus to the element that opened the panel
+			previousActiveElement.focus();
+			previousActiveElement = null;
+		}
+	});
 </script>
 
 <svelte:window onkeydown={handleKeydown} />
@@ -32,8 +88,10 @@
 
 	<!-- Panel -->
 	<div
+		bind:this={panelRef}
 		class="fixed right-0 top-0 h-full w-80 bg-background border-l shadow-lg z-50 flex flex-col"
 		role="dialog"
+		aria-modal="true"
 		aria-label="Settings"
 		transition:fly={{ x: 320, duration: 200 }}
 		data-testid="settings-panel"
