@@ -35,6 +35,7 @@ class ScrapeRequest(BaseModel):
     timeout: int = 30  # seconds
     force_playwright: bool = False  # Force Playwright even for simple pages
     capture_screenshot: bool = False  # Capture full-page screenshot
+    user_agent: Optional[str] = None  # Custom user agent for the request
 
 
 class ScrapeResponse(BaseModel):
@@ -45,6 +46,10 @@ class ScrapeResponse(BaseModel):
     success: bool
     error: Optional[str] = None
     screenshot: Optional[str] = None  # Base64-encoded screenshot (if requested)
+
+
+# Default user agent
+DEFAULT_USER_AGENT = "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
 
 
 async def requires_js_rendering(url: str, html: str = None) -> bool:
@@ -90,7 +95,7 @@ async def requires_js_rendering(url: str, html: str = None) -> bool:
     return False
 
 
-async def scrape_with_http(url: str, timeout: int = 30) -> tuple[str, bool]:
+async def scrape_with_http(url: str, timeout: int = 30, user_agent: Optional[str] = None) -> tuple[str, bool]:
     """
     Attempt simple HTTP fetch.
 
@@ -101,7 +106,7 @@ async def scrape_with_http(url: str, timeout: int = 30) -> tuple[str, bool]:
             response = await client.get(
                 url,
                 headers={
-                    "User-Agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36"
+                    "User-Agent": user_agent or DEFAULT_USER_AGENT
                 },
                 follow_redirects=True
             )
@@ -116,7 +121,8 @@ async def scrape_with_playwright(
     url: str,
     wait_for_selector: Optional[str] = None,
     timeout: int = 30,
-    capture_screenshot: bool = False
+    capture_screenshot: bool = False,
+    user_agent: Optional[str] = None
 ) -> tuple[str, bool, Optional[str]]:
     """
     Scrape with Playwright for JavaScript rendering.
@@ -136,7 +142,7 @@ async def scrape_with_playwright(
         browser = await playwright_instance.chromium.launch(headless=True)
         context = await browser.new_context(
             viewport={"width": 1920, "height": 1080},
-            user_agent="Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+            user_agent=user_agent or DEFAULT_USER_AGENT
         )
 
         page = await context.new_page()
@@ -233,7 +239,8 @@ async def scrape(request: ScrapeRequest) -> ScrapeResponse:
             request.url,
             request.wait_for_selector,
             request.timeout,
-            request.capture_screenshot
+            request.capture_screenshot,
+            request.user_agent
         )
         if success:
             return ScrapeResponse(
@@ -253,7 +260,7 @@ async def scrape(request: ScrapeRequest) -> ScrapeResponse:
             )
 
     # Try HTTP first
-    html, http_success = await scrape_with_http(request.url, request.timeout)
+    html, http_success = await scrape_with_http(request.url, request.timeout, request.user_agent)
 
     if http_success:
         # Check if we actually need JS rendering
@@ -275,7 +282,8 @@ async def scrape(request: ScrapeRequest) -> ScrapeResponse:
         request.url,
         request.wait_for_selector,
         request.timeout,
-        request.capture_screenshot
+        request.capture_screenshot,
+        request.user_agent
     )
 
     if pw_success:

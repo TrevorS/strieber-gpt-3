@@ -10,7 +10,6 @@ Features:
 - Links extraction: internal/external URLs
 - BM25 query filtering: extract only content relevant to a query
 - Multiple output formats: markdown, html, text
-- Charset detection: handles international encodings
 - Language filtering: discard non-matching content
 - Deduplication: remove duplicate segments
 - XPath pruning: remove boilerplate elements
@@ -21,7 +20,6 @@ import re
 from dataclasses import asdict, dataclass
 from typing import Optional
 
-import charset_normalizer
 import trafilatura
 from lxml import etree
 from markdownify import markdownify as md
@@ -110,58 +108,6 @@ class ExtractionOptions:
     include_links: bool = True
     include_images: bool = True
     include_tables: bool = True
-
-
-# =============================================================================
-# Charset Detection
-# =============================================================================
-
-
-def detect_and_decode(content: bytes) -> tuple[str, str, float]:
-    """Detect charset and decode bytes to string.
-
-    Args:
-        content: Raw bytes content
-
-    Returns:
-        Tuple of (decoded_string, detected_encoding, confidence)
-    """
-    if isinstance(content, str):
-        return content, "utf-8", 1.0
-
-    # Try charset-normalizer for robust detection
-    result = charset_normalizer.from_bytes(content)
-    best = result.best()
-
-    if best is not None:
-        return str(best), best.encoding, 1.0 - (best.chaos if hasattr(best, "chaos") else 0)
-
-    # Fallback: try common encodings
-    for encoding in ["utf-8", "latin-1", "cp1252", "iso-8859-1"]:
-        try:
-            return content.decode(encoding), encoding, 0.5
-        except (UnicodeDecodeError, LookupError):
-            continue
-
-    # Last resort: decode with replacement
-    return content.decode("utf-8", errors="replace"), "utf-8", 0.1
-
-
-def extract_declared_charset(html: str) -> Optional[str]:
-    """Extract charset from HTML meta tags."""
-    # Check meta charset
-    match = re.search(r'<meta[^>]+charset=["\']?([^"\'>\s]+)', html, re.IGNORECASE)
-    if match:
-        return match.group(1).strip()
-
-    # Check Content-Type meta
-    match = re.search(
-        r'<meta[^>]+content=["\'][^"\']*charset=([^"\';\s]+)', html, re.IGNORECASE
-    )
-    if match:
-        return match.group(1).strip()
-
-    return None
 
 
 # =============================================================================

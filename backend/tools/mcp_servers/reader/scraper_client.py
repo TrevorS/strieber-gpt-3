@@ -84,7 +84,6 @@ class ScrapeResult:
     success: bool
     screenshot: Optional[str] = None  # Base64-encoded screenshot
     retries: int = 0
-    user_agent: Optional[str] = None
 
 
 class ScraperClient:
@@ -109,12 +108,11 @@ class ScraperClient:
         self.rotate_user_agent = rotate_user_agent
         self.client = httpx.AsyncClient(timeout=120.0)  # Long timeout for slow pages
 
-    def _get_headers(self) -> dict:
-        """Get request headers with optional user-agent rotation."""
-        headers = {}
+    def _get_user_agent(self) -> Optional[str]:
+        """Get a user agent for the request (if rotation is enabled)."""
         if self.rotate_user_agent:
-            headers["X-Custom-User-Agent"] = get_random_user_agent()
-        return headers
+            return get_random_user_agent()
+        return None
 
     async def _execute_with_retry(
         self, url: str, payload: dict
@@ -129,15 +127,15 @@ class ScraperClient:
             Tuple of (response_data, retry_count, error_message)
         """
         last_error = None
-        user_agent = None
 
         for attempt in range(self.max_retries + 1):
             try:
-                headers = self._get_headers()
-                user_agent = headers.get("X-Custom-User-Agent")
+                # Add user agent to payload for each attempt (may rotate)
+                request_payload = payload.copy()
+                request_payload["user_agent"] = self._get_user_agent()
 
                 response = await self.client.post(
-                    url, json=payload, headers=headers
+                    url, json=request_payload
                 )
 
                 # Check if we should retry based on status code
@@ -279,7 +277,6 @@ class ScraperClient:
                 success=True,
                 screenshot=data.get("screenshot"),
                 retries=retries,
-                user_agent=self._get_headers().get("X-Custom-User-Agent"),
             )
         else:
             error_msg = data.get("error", "Unknown error")

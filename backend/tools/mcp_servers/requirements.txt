@@ -30,9 +30,6 @@ markdownify>=0.14.1
 # BM25 relevance filtering (for query-based content extraction)
 rank-bm25>=0.2.2
 
-# Charset detection for international content (avoids mojibake)
-charset-normalizer>=3.3.0
-
 # lxml for XPath pruning (may already be installed via trafilatura)
 lxml>=5.0.0
 
