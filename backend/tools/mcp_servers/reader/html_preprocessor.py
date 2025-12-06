@@ -534,12 +534,13 @@ def html_to_markdown_fast(html: str) -> tuple[str, bool, dict]:
     metadata = {"converter": "markdownify", "conversion_success": False}
 
     try:
+        # Note: markdownify doesn't allow both strip and convert, so we use convert only
+        # Scripts and styles should already be stripped by trafilatura/preprocessing
         markdown = md(
             html,
             heading_style="ATX",
             bullets="-",
             code_language="",
-            strip=["script", "style"],
             convert=[
                 "a",
                 "b",
