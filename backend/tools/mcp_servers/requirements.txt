@@ -17,8 +17,21 @@ openai>=1.0.0
 # Code interpreter sandbox
 docker>=7.0.0
 
-# HTML content extraction (pure Python mode, no Node.js needed)
-readabilipy>=0.2.0
+# HTML content extraction
+# Trafilatura: F1 0.958 (vs ReadabiliPy ~0.92) - used by HuggingFace, IBM, Microsoft
+trafilatura>=2.0.0
+
+# Readability-lxml: median F1 0.970 - ensemble fallback when Trafilatura insufficient
+readability-lxml>=0.8.1
+
+# Rule-based HTML to Markdown conversion (fast, no LLM needed)
+markdownify>=0.14.1
+
+# BM25 relevance filtering (for query-based content extraction)
+rank-bm25>=0.2.2
+
+# lxml for XPath pruning (may already be installed via trafilatura)
+lxml>=5.0.0
 
 # Image processing (for ComfyUI Qwen server)
 Pillow>=10.0.0
