@@ -7,7 +7,7 @@ test.describe('Delete Conversation', () => {
 		await page.goto('/');
 
 		// Create a conversation first
-		const textarea = page.locator('textarea[placeholder="Send a message..."]');
+		const textarea = page.locator('textarea[placeholder="Message Strieber GPT..."]');
 		const sendButton = page.locator('button[type="submit"], button:has(svg)').last();
 
 		await textarea.fill('Say "test" only.');
@@ -35,7 +35,7 @@ test.describe('Delete Conversation', () => {
 		await page.goto('/');
 
 		// Create a conversation
-		const textarea = page.locator('textarea[placeholder="Send a message..."]');
+		const textarea = page.locator('textarea[placeholder="Message Strieber GPT..."]');
 		const sendButton = page.locator('button[type="submit"], button:has(svg)').last();
 
 		await textarea.fill('Say "test" only.');
@@ -65,7 +65,7 @@ test.describe('Delete Conversation', () => {
 	test('deleting non-active conversation stays on current conversation', async ({ page }) => {
 		await page.goto('/');
 
-		const textarea = page.locator('textarea[placeholder="Send a message..."]');
+		const textarea = page.locator('textarea[placeholder="Message Strieber GPT..."]');
 		const sendButton = page.locator('button[type="submit"], button:has(svg)').last();
 
 		// Create first conversation
@@ -109,7 +109,7 @@ test.describe('Delete Conversation', () => {
 	test('deleting last active conversation navigates to home', async ({ page }) => {
 		await page.goto('/');
 
-		const textarea = page.locator('textarea[placeholder="Send a message..."]');
+		const textarea = page.locator('textarea[placeholder="Message Strieber GPT..."]');
 		const sendButton = page.getByTestId('send-button');
 
 		// Wait for page to be ready
@@ -164,7 +164,7 @@ test.describe('Delete Conversation', () => {
 		await page.setViewportSize({ width: 375, height: 667 });
 		await page.goto('/');
 
-		const textarea = page.locator('textarea[placeholder="Send a message..."]');
+		const textarea = page.locator('textarea[placeholder="Message Strieber GPT..."]');
 		const sendButton = page.getByTestId('send-button');
 
 		// Create a conversation

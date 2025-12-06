@@ -124,7 +124,7 @@ test.describe('Image Upload', () => {
 		await fileInput.setInputFiles(testImagePath);
 
 		// Type a message
-		const textarea = page.locator('textarea[placeholder="Send a message..."]');
+		const textarea = page.locator('textarea[placeholder="Message Strieber GPT..."]');
 		await textarea.fill('What is in this image?');
 
 		// Click send

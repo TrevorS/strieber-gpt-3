@@ -6,7 +6,7 @@ test.describe('Streaming Controls', () => {
 	test('stop button appears during streaming', async ({ page }) => {
 		await page.goto('/');
 
-		const textarea = page.locator('textarea[placeholder="Send a message..."]');
+		const textarea = page.locator('textarea[placeholder="Message Strieber GPT..."]');
 		const sendButton = page.getByTestId('send-button');
 
 		// Verify send button is initially visible (not stop button)
@@ -41,7 +41,7 @@ test.describe('Streaming Controls', () => {
 		test.slow(); // Double timeout for LLM-dependent test
 		await page.goto('/');
 
-		const textarea = page.locator('textarea[placeholder="Send a message..."]');
+		const textarea = page.locator('textarea[placeholder="Message Strieber GPT..."]');
 		const sendButton = page.getByTestId('send-button');
 
 		// Send a message - might generate a long response
@@ -94,7 +94,7 @@ test.describe('Streaming Controls', () => {
 		test.slow(); // Double timeout for LLM-dependent test
 		await page.goto('/');
 
-		const textarea = page.locator('textarea[placeholder="Send a message..."]');
+		const textarea = page.locator('textarea[placeholder="Message Strieber GPT..."]');
 		const sendButton = page.getByTestId('send-button');
 
 		// Send first message - something that should take time

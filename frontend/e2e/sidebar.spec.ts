@@ -11,7 +11,7 @@ test.describe('Sidebar Navigation', () => {
 		await page.goto('/');
 
 		// Send a message to create a conversation
-		const textarea = page.locator('textarea[placeholder="Send a message..."]');
+		const textarea = page.locator('textarea[placeholder="Message Strieber GPT..."]');
 		const sendButton = page.locator('button[type="submit"], button:has(svg)').last();
 
 		await textarea.fill('Say "test" only.');
@@ -73,7 +73,7 @@ test.describe('Sidebar Navigation', () => {
 	test('New Chat allows immediate new message', async ({ page }) => {
 		await page.goto('/');
 
-		const textarea = page.locator('textarea[placeholder="Send a message..."]');
+		const textarea = page.locator('textarea[placeholder="Message Strieber GPT..."]');
 		const sendButton = page.locator('button[type="submit"], button:has(svg)').last();
 
 		// Create first conversation
@@ -112,7 +112,7 @@ test.describe('Sidebar Navigation', () => {
 	test('conversation switching and New Chat works correctly', async ({ page }) => {
 		await page.goto('/');
 
-		const textarea = page.locator('textarea[placeholder="Send a message..."]');
+		const textarea = page.locator('textarea[placeholder="Message Strieber GPT..."]');
 		const sendButton = page.locator('button[type="submit"], button:has(svg)').last();
 		const newChatButton = page.getByRole('button', { name: 'New Chat' }).first();
 

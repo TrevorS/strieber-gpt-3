@@ -6,7 +6,7 @@ test.describe('Conversation Persistence', () => {
 	test('conversations persist across page reloads', async ({ page }) => {
 		await page.goto('/');
 
-		const textarea = page.locator('textarea[placeholder="Send a message..."]');
+		const textarea = page.locator('textarea[placeholder="Message Strieber GPT..."]');
 		const sendButton = page.locator('button[type="submit"], button:has(svg)').last();
 
 		// Create a conversation
@@ -36,7 +36,7 @@ test.describe('Conversation Persistence', () => {
 	test('clicking on persisted conversation shows its messages', async ({ page }) => {
 		await page.goto('/');
 
-		const textarea = page.locator('textarea[placeholder="Send a message..."]');
+		const textarea = page.locator('textarea[placeholder="Message Strieber GPT..."]');
 		const sendButton = page.getByTestId('send-button');
 
 		// Wait for page to be ready
@@ -81,7 +81,7 @@ test.describe('Conversation Persistence', () => {
 	test('multiple conversations are all preserved', async ({ page }) => {
 		await page.goto('/');
 
-		const textarea = page.locator('textarea[placeholder="Send a message..."]');
+		const textarea = page.locator('textarea[placeholder="Message Strieber GPT..."]');
 		const sendButton = page.locator('button[type="submit"], button:has(svg)').last();
 		const newChatButton = page.getByRole('button', { name: 'New Chat' }).first();
 
@@ -127,7 +127,7 @@ test.describe('Conversation Persistence', () => {
 		test.slow(); // Double timeout for LLM-dependent test
 		await page.goto('/');
 
-		const textarea = page.locator('textarea[placeholder="Send a message..."]');
+		const textarea = page.locator('textarea[placeholder="Message Strieber GPT..."]');
 		const sendButton = page.getByTestId('send-button');
 
 		// Wait for page to be ready
@@ -171,7 +171,7 @@ test.describe('Conversation Persistence', () => {
 	test('app starts on home page (new chat) after reload', async ({ page }) => {
 		await page.goto('/');
 
-		const textarea = page.locator('textarea[placeholder="Send a message..."]');
+		const textarea = page.locator('textarea[placeholder="Message Strieber GPT..."]');
 		const sendButton = page.locator('button[type="submit"], button:has(svg)').last();
 
 		// Create a conversation

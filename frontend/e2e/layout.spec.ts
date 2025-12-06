@@ -21,7 +21,7 @@ test.describe('Layout Shell', () => {
 		await expect(main).toBeVisible();
 
 		// Verify chat input area
-		const textarea = page.locator('textarea[placeholder="Send a message..."]');
+		const textarea = page.locator('textarea[placeholder="Message Strieber GPT..."]');
 		await expect(textarea).toBeVisible();
 		// Send button is next to textarea in the input area
 		const sendButton = page.getByTestId('send-button');
@@ -53,7 +53,7 @@ test.describe('Layout Shell', () => {
 		expect(box!.x + box!.width).toBeLessThanOrEqual(0);
 
 		// Chat input should still be visible on mobile
-		const textarea = page.locator('textarea[placeholder="Send a message..."]');
+		const textarea = page.locator('textarea[placeholder="Message Strieber GPT..."]');
 		await expect(textarea).toBeVisible();
 	});
 });

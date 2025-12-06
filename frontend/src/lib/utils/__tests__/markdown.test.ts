@@ -108,6 +108,17 @@ describe('renderMarkdown', () => {
 			const result = renderMarkdown(md);
 			expect(result).toContain('language-python');
 		});
+
+		it('should wrap code blocks with header bar', () => {
+			const md = '```javascript\nconst x = 1;\n```';
+			const result = renderMarkdown(md);
+			// Debug: log the actual output
+			console.log('CODE BLOCK OUTPUT:', result);
+			expect(result).toContain('code-block-wrapper');
+			expect(result).toContain('code-block-header');
+			expect(result).toContain('code-block-lang');
+			expect(result).toContain('code-header-copy-btn');
+		});
 	});
 
 	// ============================================================================

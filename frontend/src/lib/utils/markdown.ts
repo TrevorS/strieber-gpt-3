@@ -6,38 +6,52 @@
  */
 
 import hljs from 'highlight.js';
-import { Marked } from 'marked';
-import { markedHighlight } from 'marked-highlight';
+import { Marked, type Tokens } from 'marked';
+
+// SVG icons for copy button
+const COPY_ICON = `<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect width="14" height="14" x="8" y="8" rx="2" ry="2"/><path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2"/></svg>`;
 
 /**
- * Create a configured marked instance with syntax highlighting
+ * Custom renderer that wraps code blocks with header bar containing language label and copy button
  */
-const marked = new Marked(
-	markedHighlight({
-		emptyLangClass: 'hljs',
-		langPrefix: 'hljs language-',
-		highlight(code: string, lang: string): string {
-			if (lang && hljs.getLanguage(lang)) {
-				try {
-					return hljs.highlight(code, { language: lang }).value;
-				} catch {
-					// Fall through to auto-detect
-				}
-			}
-			// Auto-detect language
+const customRenderer = {
+	code(token: Tokens.Code): string {
+		const lang = token.lang || 'text';
+		const code = token.text;
+
+		// Highlight the code
+		let highlighted: string;
+		if (lang && lang !== 'text' && hljs.getLanguage(lang)) {
 			try {
-				return hljs.highlightAuto(code).value;
+				highlighted = hljs.highlight(code, { language: lang }).value;
 			} catch {
-				return code;
+				highlighted = hljs.highlightAuto(code).value;
+			}
+		} else {
+			try {
+				highlighted = hljs.highlightAuto(code).value;
+			} catch {
+				highlighted = code;
 			}
 		}
-	})
-);
 
-// Configure marked options
-marked.setOptions({
+		// Generate unique ID for copy button functionality
+		const codeId = `code-${Math.random().toString(36).substring(2, 9)}`;
+
+		// Return wrapped code block with header
+		return `<div class="code-block-wrapper"><div class="code-block-header"><span class="code-block-lang">${lang}</span><button class="code-header-copy-btn" data-code-id="${codeId}" title="Copy code">${COPY_ICON}</button></div><pre><code id="${codeId}" class="hljs language-${lang}">${highlighted}</code></pre></div>`;
+	}
+};
+
+/**
+ * Create a configured marked instance with custom code block rendering
+ * Note: We handle highlighting ourselves in customRenderer instead of using markedHighlight
+ * because markedHighlight's internal renderer overrides custom renderers
+ */
+const marked = new Marked({
 	gfm: true, // GitHub Flavored Markdown
-	breaks: true // Convert \n to <br>
+	breaks: true, // Convert \n to <br>
+	renderer: customRenderer
 });
 
 /**

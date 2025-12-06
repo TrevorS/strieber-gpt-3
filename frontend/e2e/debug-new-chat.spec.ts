@@ -13,7 +13,7 @@ test.describe('Debug: New Chat Flow', () => {
 		await page.goto('/');
 
 		// Create a conversation
-		const textarea = page.locator('textarea[placeholder="Send a message..."]');
+		const textarea = page.locator('textarea[placeholder="Message Strieber GPT..."]');
 		const sendButton = page.getByTestId('send-button');
 
 		await textarea.fill('Say "test" only.');
@@ -85,7 +85,7 @@ test.describe('Debug: New Chat Flow', () => {
 		await page.goto('/');
 
 		// Create a conversation first
-		const textarea = page.locator('textarea[placeholder="Send a message..."]');
+		const textarea = page.locator('textarea[placeholder="Message Strieber GPT..."]');
 		const sendButton = page.getByTestId('send-button');
 
 		await textarea.fill('Say "test" only.');
@@ -169,7 +169,7 @@ test.describe('Debug: New Chat Flow', () => {
 		await page.goto('/');
 
 		// Create a conversation
-		const textarea = page.locator('textarea[placeholder="Send a message..."]');
+		const textarea = page.locator('textarea[placeholder="Message Strieber GPT..."]');
 		const sendButton = page.getByTestId('send-button');
 
 		await textarea.fill('Say "test" only.');

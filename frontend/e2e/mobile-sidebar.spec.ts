@@ -136,7 +136,7 @@ test.describe('Mobile Sidebar', () => {
 	test('New Chat clears conversation and allows new message on mobile', async ({ page }) => {
 		await page.goto('/');
 
-		const textarea = page.locator('textarea[placeholder="Send a message..."]');
+		const textarea = page.locator('textarea[placeholder="Message Strieber GPT..."]');
 		const sendButton = page.getByTestId('send-button');
 		const sidebar = page.getByTestId('sidebar');
 
@@ -185,7 +185,7 @@ test.describe('Mobile Sidebar', () => {
 		await page.goto('/');
 
 		// First create a conversation
-		const textarea = page.locator('textarea[placeholder="Send a message..."]');
+		const textarea = page.locator('textarea[placeholder="Message Strieber GPT..."]');
 		const sendButton = page.getByTestId('send-button');
 
 		await textarea.fill('Say "test" only.');
