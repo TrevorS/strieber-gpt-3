@@ -42,7 +42,9 @@ class MCPServerBase:
             server_name: Name of the MCP server (e.g., "weather", "web_search")
         """
         self.server_name = server_name
-        self.mcp = FastMCP(server_name)
+        # Set host="0.0.0.0" to prevent MCP SDK from auto-enabling DNS rebinding protection
+        # (which only allows localhost connections and breaks Docker inter-container networking)
+        self.mcp = FastMCP(server_name, host="0.0.0.0")
         self.logger = setup_logging(__name__)
 
     def get_logger(self) -> logging.Logger:
