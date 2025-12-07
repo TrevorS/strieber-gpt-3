@@ -47,9 +47,12 @@
 		isStreaming = true;
 		abortController = new AbortController();
 
-		// Navigate to the conversation URL
+		// Navigate to the conversation URL immediately so user sees the URL change
+		// The streaming callbacks will update the conversation store, which is shared
 		logger.nav.navigate('/', `/c/${conv.id}`, { conversationId: conv.id });
-		goto(`/c/${conv.id}`);
+
+		// Store conversation id for navigation after streaming
+		const conversationId = conv.id;
 
 		// Stream the response
 		logger.api.request('POST', '/responses', { previousResponseId: conv.lastResponseId });
@@ -63,7 +66,8 @@
 					{ type: 'web_search' },
 					{ type: 'code_interpreter' },
 					{ type: 'weather' },
-					{ type: 'reader' }
+					{ type: 'reader' },
+					{ type: 'zimage_turbo' }
 				]),
 				attachments,
 				signal: abortController.signal,
@@ -82,6 +86,8 @@
 					conversationStore.setMessageStreaming(conv!.id, assistantMessage.id, false);
 					isStreaming = false;
 					abortController = null;
+					// Navigate after streaming completes to ensure all callbacks have run
+					goto(`/c/${conversationId}`);
 				},
 				onError: (error) => {
 					// Don't show error toast for user-initiated cancellation
@@ -90,6 +96,8 @@
 						conversationStore.setMessageStreaming(conv!.id, assistantMessage.id, false);
 						isStreaming = false;
 						abortController = null;
+						// Navigate after cancellation
+						goto(`/c/${conversationId}`);
 						return;
 					}
 
@@ -103,6 +111,8 @@
 					conversationStore.setMessageStreaming(conv!.id, assistantMessage.id, false);
 					isStreaming = false;
 					abortController = null;
+					// Navigate after error
+					goto(`/c/${conversationId}`);
 				}
 			}
 		);

@@ -205,6 +205,12 @@ export async function sendMessageStreaming(
 		let chunkCount = 0;
 
 		for await (const event of parseSSEStream(response)) {
+			// Log ALL events for debugging
+			logger.debug('streaming', 'SSE event received', {
+				requestId,
+				eventType: event.type
+			});
+
 			// Handle text delta events
 			if (isTextDeltaEvent(event)) {
 				fullText += event.delta;
@@ -256,10 +262,67 @@ export async function sendMessageStreaming(
 
 			// Handle completion
 			if (isCompletedEvent(event)) {
+				// IMMEDIATE DEBUG LOG - this should appear first
+				console.log('[DEBUG] isCompletedEvent block entered', { requestId });
+
 				// Extract response ID from completed event if not already set
 				if (!responseId && event.response?.id) {
 					responseId = event.response.id;
 				}
+
+				// Debug log the entire event structure
+				const resp = event.response as { output?: Array<{ type: string }>; id?: string };
+				logger.info('streaming', 'response.completed event received', {
+					requestId,
+					responseId: resp?.id,
+					hasResponse: !!event.response,
+					hasOutput: !!resp?.output,
+					outputLength: resp?.output?.length ?? 0,
+					outputTypes: resp?.output?.map((i) => i.type) ?? [],
+					responseKeys: event.response ? Object.keys(event.response) : [],
+					hasOnOutputItem: !!onOutputItem,
+					rawEventKeys: Object.keys(event)
+				});
+
+				// Process final output items with annotations (for images, etc.)
+				// These contain container_file_citation annotations that aren't sent
+				// via individual output_item events during streaming
+				if (event.response?.output && onOutputItem) {
+					const output = event.response.output as Array<{ type: string }>;
+					logger.info('streaming', 'Processing response.completed output items', {
+						requestId,
+						outputCount: output.length,
+						outputTypes: output.map((i) => i.type)
+					});
+					for (const item of event.response.output) {
+						if (item.type === 'message') {
+							// Log the message content structure for debugging
+							const msg = item as {
+								id?: string;
+								content?: Array<{ type: string; annotations?: unknown[] }>;
+							};
+							const annotationCounts = msg.content?.map((c) => ({
+								type: c.type,
+								annotationCount: c.annotations?.length ?? 0,
+								annotations: c.annotations
+							}));
+							logger.info(
+								'streaming',
+								'Processing message item with annotations from response.completed',
+								{
+									requestId,
+									messageId: msg.id,
+									contentCount: msg.content?.length ?? 0,
+									annotationCounts,
+									hasAnnotations:
+										msg.content?.some((c) => (c.annotations?.length ?? 0) > 0) ?? false
+								}
+							);
+							onOutputItem(item as ResponseOutputItem, 'done');
+						}
+					}
+				}
+
 				logger.info('streaming', 'Stream completed', {
 					requestId,
 					responseId,

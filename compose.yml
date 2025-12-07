@@ -634,6 +634,31 @@ services:
       - strieber-net
 
   # ==========================================================================
+  # mcp-comfy-zimage: Fast text-to-image with z-image turbo model
+  # ABOUTME: MCP server for z-image turbo generation via ComfyUI
+  # Uses: z_image_turbo_bf16 model with res_multistep sampler, 9 steps default
+  # ==========================================================================
+  mcp-comfy-zimage:
+    build:
+      context: ./backend/tools/mcp_servers
+      dockerfile: Dockerfile.mcp-server
+      args:
+        SERVER_MODULE: comfy_zimage
+    image: strieber-mcp-comfy-zimage:latest
+    container_name: strieber-mcp-comfy-zimage
+    restart: unless-stopped
+    ports:
+      - "9141:8000"
+    environment:
+      - PORT=8000
+      - COMFY_URL=http://comfyui:8188
+    depends_on:
+      comfyui:
+        condition: service_healthy
+    networks:
+      - strieber-net
+
+  # ==========================================================================
   # responses-api: OpenAI Responses API adapter
   # ABOUTME: Translates Responses API requests to Chat Completions format
   # Includes server-side tool calling via MCP servers
@@ -653,7 +678,7 @@ services:
       # Models: JSON format {"models":[{"id":"...","url":"...","api_key":"...","owned_by":"..."}]}
       - MODELS_CONFIG={"models":[{"id":"gpt-oss-120b","url":"http://llama-server:8000"},{"id":"qwen3-vl-2b","url":"http://llama-server-qwen-vl:8000","supports_vision":true,"supported_tools":[]}]}
       # MCP servers: JSON format {"servers":[{"name":"...","url":"..."}]}
-      - MCP_CONFIG={"servers":[{"name":"weather","url":"http://mcp-weather:8000/mcp","builtin_type":"weather"},{"name":"web_search","url":"http://mcp-web-search:8000/mcp","builtin_type":"web_search"},{"name":"code_interpreter","url":"http://mcp-code-interpreter:8000/mcp","builtin_type":"code_interpreter"},{"name":"reader","url":"http://mcp-reader:8000/mcp","builtin_type":"reader"}]}
+      - MCP_CONFIG={"servers":[{"name":"weather","url":"http://mcp-weather:8000/mcp","builtin_type":"weather"},{"name":"web_search","url":"http://mcp-web-search:8000/mcp","builtin_type":"web_search"},{"name":"code_interpreter","url":"http://mcp-code-interpreter:8000/mcp","builtin_type":"code_interpreter"},{"name":"reader","url":"http://mcp-reader:8000/mcp","builtin_type":"reader"},{"name":"zimage","url":"http://mcp-comfy-zimage:8000/mcp","builtin_type":"zimage_turbo"}]}
       - MAX_TOOL_ITERATIONS=10
       - TIMEOUT_SECS=300
       - RESPONSE_TTL_SECS=3600
@@ -670,6 +695,8 @@ services:
       mcp-code-interpreter:
         condition: service_started
       mcp-reader:
+        condition: service_started
+      mcp-comfy-zimage:
         condition: service_started
     healthcheck:
       test: ["CMD", "curl", "-sf", "http://localhost:8000/health"]

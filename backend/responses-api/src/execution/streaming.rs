@@ -9,13 +9,14 @@ use tokio::sync::mpsc;
 
 use rmcp::model::RawContent;
 
+use crate::containers::ContainerStore;
 use crate::mcp::{CallToolResult, McpClient};
 use crate::models::{
-    ChatCompletionChunk, ChatFunctionCall, ChatMessage, ChatRole, ChatToolCall, ChatToolType,
-    CreateResponseRequest, FinishReason, FunctionCallOutput, FunctionToolWrapper, MessageOutput,
-    OutputContent, OutputItem, OutputRole, OutputStatus, ReasoningContent, ReasoningOutput,
-    Response, ResponseStatus, SseEvent, Tool, Usage, WebSearchAction, WebSearchCallOutput,
-    WebSearchSource,
+    Annotation, ChatCompletionChunk, ChatFunctionCall, ChatMessage, ChatRole, ChatToolCall,
+    ChatToolType, CreateResponseRequest, FinishReason, FunctionCallOutput, FunctionToolWrapper,
+    MessageOutput, OutputContent, OutputItem, OutputRole, OutputStatus, ReasoningContent,
+    ReasoningOutput, Response, ResponseStatus, SseEvent, Tool, Usage, WebSearchAction,
+    WebSearchCallOutput, WebSearchSource,
 };
 use crate::state::{InMemoryStore, ResponseStore};
 use crate::translation::{
@@ -23,7 +24,7 @@ use crate::translation::{
     response_id, to_chat_completion, tool_result_message,
 };
 
-use super::{ExecutionError, ExecutorConfig};
+use super::{ExecutionError, ExecutorConfig, GeneratedFile};
 
 /// State accumulated during streaming.
 #[derive(Default)]
@@ -55,18 +56,28 @@ struct AccumulatedToolCall {
 /// * `req` - The request to execute
 /// * `previous_messages` - Messages from resolved previous_response_id chain
 /// * `store` - Optional store for persisting the response (if req.store is true)
+/// * `containers` - Container store for persisting generated files (images, etc.)
 pub fn execute_streaming(
     config: ExecutorConfig,
     mcp: McpClient,
     req: CreateResponseRequest,
     previous_messages: Vec<ChatMessage>,
     store: Option<InMemoryStore>,
+    containers: ContainerStore,
 ) -> Pin<Box<dyn Stream<Item = Result<SseEvent, ExecutionError>> + Send>> {
     let (tx, rx) = mpsc::channel(32);
 
     tokio::spawn(async move {
-        if let Err(e) =
-            run_streaming_loop(config, mcp, req, previous_messages, store, tx.clone()).await
+        if let Err(e) = run_streaming_loop(
+            config,
+            mcp,
+            req,
+            previous_messages,
+            store,
+            containers,
+            tx.clone(),
+        )
+        .await
         {
             let _ = tx.send(Err(e)).await;
         }
@@ -81,6 +92,7 @@ async fn run_streaming_loop(
     req: CreateResponseRequest,
     previous_messages: Vec<ChatMessage>,
     store: Option<InMemoryStore>,
+    containers: ContainerStore,
     tx: mpsc::Sender<Result<SseEvent, ExecutionError>>,
 ) -> Result<(), ExecutionError> {
     // Look up model configuration
@@ -153,12 +165,51 @@ async fn run_streaming_loop(
     // in the final message after all tool calls complete.
     let mut persistent_web_search_sources: Vec<WebSearchSource> = Vec::new();
 
+    // Generated files (images, etc.) must persist across tool call cycles for annotations
+    let mut persistent_generated_files: Vec<GeneratedFile> = Vec::new();
+    // Create a container for storing generated files (images, etc.)
+    let container_id = containers.create();
+    tracing::debug!(container_id = %container_id, "Created container for response");
+
     loop {
         iteration += 1;
         if iteration > config.max_tool_iterations {
-            return Err(ExecutionError::MaxIterationsExceeded(
-                config.max_tool_iterations,
-            ));
+            tracing::warn!(
+                max_iterations = config.max_tool_iterations,
+                generated_files = persistent_generated_files.len(),
+                "Max tool iterations exceeded, sending response with accumulated data"
+            );
+
+            // Build final output with accumulated files (even without accumulated text)
+            // This ensures generated images are delivered even when model loops
+            let final_output = build_final_output_graceful(
+                &persistent_web_search_sources,
+                &persistent_generated_files,
+            );
+            let final_response = build_response(
+                &resp_id,
+                &req,
+                final_output,
+                total_input_tokens,
+                total_output_tokens,
+            );
+
+            // Store the response if requested
+            if req.store
+                && let Some(ref store) = store
+            {
+                store.store(final_response.clone(), req.clone());
+                tracing::info!(
+                    response_id = %resp_id,
+                    output_items = final_response.output.len(),
+                    "Stored streaming response (max iterations)"
+                );
+            }
+
+            send(&tx, SseEvent::response_completed(final_response.clone())).await?;
+            send(&tx, SseEvent::response_done(final_response)).await?;
+
+            return Ok(());
         }
 
         let mut chat_req = to_chat_completion(&req, Some(conversation.clone()));
@@ -583,8 +634,23 @@ async fn run_streaming_loop(
                 let arguments: Value = serde_json::from_str(&tc.arguments).unwrap_or(Value::Null);
                 let result_text = match mcp.call_tool(&tc.name, arguments.clone()).await {
                     Ok(tool_result) => {
-                        // Extract text for conversation
-                        let text = extract_text_from_result(&tool_result);
+                        // Extract text and images from result
+                        let (text, generated_files) = extract_content_from_result(
+                            &tool_result,
+                            &container_id,
+                            &containers,
+                            persistent_generated_files.len(),
+                        );
+
+                        // Track generated files for annotations
+                        if !generated_files.is_empty() {
+                            tracing::info!(
+                                tool = %tc.name,
+                                file_count = generated_files.len(),
+                                "Generated files from tool execution"
+                            );
+                            persistent_generated_files.extend(generated_files);
+                        }
 
                         // If web_search tool, extract sources for citation annotations
                         if tc.name.contains("web_search") || tc.name.contains("news_search") {
@@ -649,7 +715,11 @@ async fn run_streaming_loop(
         }
 
         // No tool calls - we're done
-        let final_output = build_final_output(&state, &persistent_web_search_sources);
+        let final_output = build_final_output(
+            &state,
+            &persistent_web_search_sources,
+            &persistent_generated_files,
+        );
         let final_response = build_response(
             &resp_id,
             &req,
@@ -684,6 +754,7 @@ async fn run_streaming_loop(
 fn build_final_output(
     state: &StreamState,
     web_search_sources: &[WebSearchSource],
+    generated_files: &[GeneratedFile],
 ) -> Vec<OutputItem> {
     let mut output = Vec::new();
 
@@ -704,18 +775,28 @@ fn build_final_output(
 
         // Then emit message with clean text (without <think> tags)
         if !clean_text.is_empty() {
-            // Build URL citation annotations from accumulated web search sources
-            let annotations = if !web_search_sources.is_empty() {
+            // Build annotations from web search sources and generated files
+            let mut annotations = if !web_search_sources.is_empty() {
                 build_url_citations(&clean_text, web_search_sources)
             } else {
                 vec![]
             };
 
+            // Add file citation annotations for generated images
+            for file in generated_files {
+                annotations.push(Annotation::ContainerFileCitation {
+                    container_id: file.container_id.clone(),
+                    file_id: file.file_id.clone(),
+                    filename: file.filename.clone(),
+                });
+            }
+
             if !annotations.is_empty() {
                 tracing::debug!(
                     annotation_count = annotations.len(),
                     source_count = web_search_sources.len(),
-                    "Built URL citation annotations for message"
+                    file_count = generated_files.len(),
+                    "Built annotations for message"
                 );
             }
 
@@ -751,6 +832,64 @@ fn build_final_output(
                 status: OutputStatus::Completed,
             }));
         }
+    }
+
+    output
+}
+
+/// Build final output when max iterations is exceeded.
+/// Creates a message with file citations even if there's no accumulated text.
+fn build_final_output_graceful(
+    web_search_sources: &[WebSearchSource],
+    generated_files: &[GeneratedFile],
+) -> Vec<OutputItem> {
+    let mut output = Vec::new();
+
+    // If we have generated files, create a message with just the file citations
+    // This ensures images are delivered to the frontend even when model loops
+    if !generated_files.is_empty() {
+        let mut annotations: Vec<Annotation> = Vec::new();
+
+        // Add file citation annotations for generated images
+        for file in generated_files {
+            annotations.push(Annotation::ContainerFileCitation {
+                container_id: file.container_id.clone(),
+                file_id: file.file_id.clone(),
+                filename: file.filename.clone(),
+            });
+        }
+
+        // Add web search citations if any
+        if !web_search_sources.is_empty() {
+            // For graceful fallback, we don't have text to match citations to
+            // Just add sources as-is (they'll appear as references)
+            for source in web_search_sources {
+                annotations.push(Annotation::UrlCitation {
+                    start_index: 0,
+                    end_index: 0,
+                    url: source.url.clone(),
+                    title: Some(source.title.clone()),
+                });
+            }
+        }
+
+        tracing::info!(
+            annotation_count = annotations.len(),
+            file_count = generated_files.len(),
+            "Built graceful fallback message with file citations"
+        );
+
+        // Create a message with empty text but with annotations
+        // The frontend will extract file citations and display the images
+        output.push(OutputItem::Message(MessageOutput {
+            id: message_id(),
+            status: OutputStatus::Completed,
+            role: OutputRole::Assistant,
+            content: vec![OutputContent::OutputText {
+                text: String::new(), // Empty text, but annotations carry the images
+                annotations,
+            }],
+        }));
     }
 
     output
@@ -812,27 +951,78 @@ async fn send(
         .map_err(|_| ExecutionError::Llm("Stream receiver dropped".to_string()))
 }
 
-/// Extract text content from an MCP CallToolResult.
-fn extract_text_from_result(result: &CallToolResult) -> String {
-    let text_parts: Vec<&str> = result
-        .content
-        .iter()
-        .filter_map(|c| {
-            if let RawContent::Text(tc) = &c.raw {
-                Some(tc.text.as_str())
-            } else {
-                None
+/// Extract text and images from an MCP CallToolResult.
+///
+/// Returns the text content and any generated files (images stored in container).
+fn extract_content_from_result(
+    result: &CallToolResult,
+    container_id: &str,
+    containers: &ContainerStore,
+    file_index_offset: usize,
+) -> (String, Vec<GeneratedFile>) {
+    use base64::Engine;
+
+    let mut text_parts = Vec::new();
+    let mut generated_files = Vec::new();
+
+    for content in &result.content {
+        match &content.raw {
+            RawContent::Text(tc) => {
+                text_parts.push(tc.text.as_str());
             }
-        })
-        .collect();
+            RawContent::Image(img) => {
+                // Decode base64 image data
+                if let Ok(data) = base64::engine::general_purpose::STANDARD.decode(&img.data) {
+                    // Determine file extension from MIME type
+                    let ext = match img.mime_type.as_str() {
+                        "image/png" => "png",
+                        "image/jpeg" => "jpg",
+                        "image/gif" => "gif",
+                        "image/webp" => "webp",
+                        _ => "png",
+                    };
+
+                    let index = file_index_offset + generated_files.len();
+                    let filename = format!("output_{}.{}", index, ext);
+
+                    // Store in container
+                    if let Some(file_id) =
+                        containers.add_file(container_id, filename.clone(), data, &img.mime_type)
+                    {
+                        tracing::info!(
+                            file_id = %file_id,
+                            filename = %filename,
+                            container_id = %container_id,
+                            "Stored image from tool execution"
+                        );
+                        generated_files.push(GeneratedFile {
+                            file_id,
+                            filename,
+                            container_id: container_id.to_string(),
+                        });
+                    } else {
+                        tracing::error!(
+                            container_id = %container_id,
+                            filename = %filename,
+                            "Failed to store image in container"
+                        );
+                    }
+                } else {
+                    tracing::warn!("Failed to decode base64 image data");
+                }
+            }
+            _ => {}
+        }
+    }
 
     let text = text_parts.join("\n");
-
-    if result.is_error.unwrap_or(false) {
+    let text = if result.is_error.unwrap_or(false) {
         format!("Error: {}", text)
     } else {
         text
-    }
+    };
+
+    (text, generated_files)
 }
 
 /// Extract WebSearchSource entries from MCP tool result metadata.

@@ -40,6 +40,9 @@ def run_server(server_module: str, host: str = "0.0.0.0", port: int = 8000) -> N
         elif server_module == "comfy_qwen":
             from comfy_qwen import server as comfy_qwen_server
             mcp_instance = comfy_qwen_server.get_mcp()
+        elif server_module == "comfy_zimage":
+            from comfy_zimage import server as comfy_zimage_server
+            mcp_instance = comfy_zimage_server.get_mcp()
         else:
             raise ValueError(f"Unknown MCP server module: {server_module}")
     except ImportError as e:

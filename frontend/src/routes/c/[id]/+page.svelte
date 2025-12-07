@@ -83,7 +83,8 @@
 					{ type: 'web_search' },
 					{ type: 'code_interpreter' },
 					{ type: 'weather' },
-					{ type: 'reader' }
+					{ type: 'reader' },
+					{ type: 'zimage_turbo' }
 				]),
 				attachments,
 				signal: abortController.signal,
@@ -170,7 +171,8 @@
 					{ type: 'web_search' },
 					{ type: 'code_interpreter' },
 					{ type: 'weather' },
-					{ type: 'reader' }
+					{ type: 'reader' },
+					{ type: 'zimage_turbo' }
 				]),
 				signal: abortController.signal,
 				instructions: settingsStore.systemPrompt || undefined
@@ -252,7 +254,8 @@
 					{ type: 'web_search' },
 					{ type: 'code_interpreter' },
 					{ type: 'weather' },
-					{ type: 'reader' }
+					{ type: 'reader' },
+					{ type: 'zimage_turbo' }
 				]),
 				signal: abortController.signal,
 				instructions: settingsStore.systemPrompt || undefined

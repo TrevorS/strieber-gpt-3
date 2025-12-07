@@ -29,7 +29,8 @@ const defaultSettings: SettingsData = {
 		web_search: true,
 		code_interpreter: true,
 		weather: true,
-		reader: true
+		reader: true,
+		zimage_turbo: true
 	},
 	sidebarCollapsed: false
 };
@@ -88,7 +89,8 @@ class SettingsStore {
 		web_search: true,
 		code_interpreter: true,
 		weather: true,
-		reader: true
+		reader: true,
+		zimage_turbo: true
 	});
 
 	/** Whether sidebar is collapsed (desktop only) */

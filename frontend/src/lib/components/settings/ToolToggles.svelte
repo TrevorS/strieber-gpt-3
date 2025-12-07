@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { Globe, Code, Cloud, BookOpen } from 'lucide-svelte';
+	import { Globe, Code, Cloud, BookOpen, Image } from 'lucide-svelte';
 	import { Button } from '$lib/components/ui/button';
 	import { settingsStore } from '$lib/stores/settings.svelte';
 
@@ -7,7 +7,8 @@
 		{ id: 'web_search', name: 'Web Search', description: 'Search the internet', icon: Globe },
 		{ id: 'code_interpreter', name: 'Code Interpreter', description: 'Execute Python code', icon: Code },
 		{ id: 'weather', name: 'Weather', description: 'Get weather forecasts', icon: Cloud },
-		{ id: 'reader', name: 'Reader', description: 'Read web pages', icon: BookOpen }
+		{ id: 'reader', name: 'Reader', description: 'Read web pages', icon: BookOpen },
+		{ id: 'zimage_turbo', name: 'Image Generation', description: 'Generate images from text', icon: Image }
 	];
 
 	function isSupported(toolId: string): boolean {

@@ -163,7 +163,15 @@ async fn create_streaming_response(
     };
 
     let mcp = state.mcp.clone();
-    let stream = execute_streaming(executor_config, mcp, req, previous_messages, store);
+    let containers = state.containers.clone();
+    let stream = execute_streaming(
+        executor_config,
+        mcp,
+        req,
+        previous_messages,
+        store,
+        containers,
+    );
 
     let sse_stream = stream.map(|result| -> Result<Event, Infallible> {
         match result {

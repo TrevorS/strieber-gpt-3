@@ -6,6 +6,7 @@
  */
 
 import type { ResponseOutputItem, ResponseOutputMessage } from '$lib/stores/types';
+import { getApiBaseUrl } from '$lib/api';
 
 /**
  * A URL citation from the API response.
@@ -21,6 +22,20 @@ export interface Citation {
 	startIndex: number;
 	/** End character position of the citation marker in the text */
 	endIndex: number;
+}
+
+/**
+ * A container file citation (for generated images, etc.)
+ */
+export interface FileCitation {
+	/** Container ID */
+	containerId: string;
+	/** File ID */
+	fileId: string;
+	/** Filename */
+	filename: string;
+	/** Full URL to fetch the file */
+	url: string;
 }
 
 /**
@@ -75,6 +90,55 @@ export function extractCitations(rawOutput: ResponseOutputItem[]): Citation[] {
 	});
 
 	return citations;
+}
+
+/**
+ * Extract container file citations from raw output items.
+ *
+ * Looks through message items for output_text content that contains
+ * annotations of type 'container_file_citation'.
+ */
+export function extractFileCitations(rawOutput: ResponseOutputItem[]): FileCitation[] {
+	const fileCitations: FileCitation[] = [];
+	const baseUrl = getApiBaseUrl();
+
+	for (const item of rawOutput) {
+		if (item.type !== 'message') continue;
+
+		const message = item as ResponseOutputMessage;
+		for (const content of message.content) {
+			if (content.type !== 'output_text') continue;
+
+			// Type assertion for annotations which may not be perfectly typed
+			const annotations = (content as { annotations?: unknown[] }).annotations;
+			if (!annotations) continue;
+
+			for (const annotation of annotations) {
+				const ann = annotation as {
+					type?: string;
+					container_id?: string;
+					file_id?: string;
+					filename?: string;
+				};
+
+				if (
+					ann.type === 'container_file_citation' &&
+					ann.container_id &&
+					ann.file_id &&
+					ann.filename
+				) {
+					fileCitations.push({
+						containerId: ann.container_id,
+						fileId: ann.file_id,
+						filename: ann.filename,
+						url: `${baseUrl}/containers/${ann.container_id}/files/${ann.file_id}/content`
+					});
+				}
+			}
+		}
+	}
+
+	return fileCitations;
 }
 
 /**

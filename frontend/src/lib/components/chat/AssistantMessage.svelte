@@ -6,7 +6,7 @@
 	import MarkdownContent from './MarkdownContent.svelte';
 	import CitationList from './CitationList.svelte';
 	import { OutputItemRenderer } from './tools';
-	import { extractCitations, getUniqueCitations } from '$lib/utils/citations';
+	import { extractCitations, extractFileCitations, getUniqueCitations } from '$lib/utils/citations';
 
 	let {
 		message,
@@ -28,6 +28,12 @@
 		!message.isStreaming && message.rawOutput ? extractCitations(message.rawOutput) : []
 	);
 	let uniqueCitations = $derived(getUniqueCitations(citations));
+
+	// Extract file citations (generated images, etc.)
+	let fileCitations = $derived(
+		!message.isStreaming && message.rawOutput ? extractFileCitations(message.rawOutput) : []
+	);
+
 
 	let hasContent = $derived(message.content.trim().length > 0);
 	let hasToolItems = $derived(toolItems.length > 0);
@@ -54,6 +60,27 @@
 		<div class="w-full space-y-3">
 			{#each toolItems as item ('id' in item ? item.id : Math.random())}
 				<OutputItemRenderer {item} isStreaming={message.isStreaming} />
+			{/each}
+		</div>
+	{/if}
+
+	<!-- Render generated images from file citations -->
+	{#if fileCitations.length > 0}
+		<div class="flex flex-wrap gap-3">
+			{#each fileCitations as file (file.fileId)}
+				<a
+					href={file.url}
+					target="_blank"
+					rel="noopener noreferrer"
+					class="block rounded-lg overflow-hidden border border-border hover:border-primary transition-colors"
+				>
+					<img
+						src={file.url}
+						alt={file.filename}
+						class="max-w-md max-h-96 object-contain"
+						loading="lazy"
+					/>
+				</a>
 			{/each}
 		</div>
 	{/if}
