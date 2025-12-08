@@ -5,6 +5,7 @@
 //! that can be downloaded via the API.
 
 use std::collections::HashMap;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
@@ -76,10 +77,12 @@ impl ContainerState {
     }
 }
 
-/// Container store using DashMap for concurrent access.
+/// Container store using DashMap for concurrent access with optional disk persistence.
 #[derive(Clone)]
 pub struct ContainerStore {
     containers: Arc<DashMap<String, ContainerState>>,
+    /// Optional path for disk persistence. If set, files are persisted to disk.
+    storage_path: Option<PathBuf>,
 }
 
 impl Default for ContainerStore {
@@ -89,10 +92,25 @@ impl Default for ContainerStore {
 }
 
 impl ContainerStore {
-    /// Create a new container store.
+    /// Create a new in-memory container store (no persistence).
     pub fn new() -> Self {
         Self {
             containers: Arc::new(DashMap::new()),
+            storage_path: None,
+        }
+    }
+
+    /// Create a new container store with disk persistence.
+    pub fn with_persistence(storage_path: PathBuf) -> Self {
+        // Create the storage directory if it doesn't exist
+        if let Err(e) = std::fs::create_dir_all(&storage_path) {
+            tracing::warn!("Failed to create container storage directory: {}", e);
+        } else {
+            tracing::info!("Container storage path: {}", storage_path.display());
+        }
+        Self {
+            containers: Arc::new(DashMap::new()),
+            storage_path: Some(storage_path),
         }
     }
 
@@ -139,6 +157,13 @@ impl ContainerStore {
             created_at: unix_timestamp(),
         };
 
+        // Persist to disk if storage path is set
+        if let Some(ref storage_path) = self.storage_path
+            && let Err(e) = self.persist_file(storage_path, container_id, &file_id, &file)
+        {
+            tracing::warn!("Failed to persist file {} to disk: {}", file_id, e);
+        }
+
         tracing::debug!(
             "Added file {} ({}) to container {}",
             file_id,
@@ -149,37 +174,192 @@ impl ContainerStore {
         Some(file_id)
     }
 
+    /// Persist a file to disk storage.
+    fn persist_file(
+        &self,
+        base: &Path,
+        container_id: &str,
+        file_id: &str,
+        file: &ContainerFile,
+    ) -> std::io::Result<()> {
+        let dir = base.join(container_id);
+        std::fs::create_dir_all(&dir)?;
+
+        // Write file content
+        let content_path = dir.join(format!("{}.bin", file_id));
+        std::fs::write(&content_path, &file.content)?;
+
+        // Write metadata as JSON
+        let meta = serde_json::json!({
+            "filename": file.filename,
+            "mime_type": file.mime_type,
+            "created_at": file.created_at
+        });
+        let meta_path = dir.join(format!("{}.meta", file_id));
+        std::fs::write(&meta_path, meta.to_string())?;
+
+        tracing::debug!(
+            "Persisted file {} to disk: {}",
+            file_id,
+            content_path.display()
+        );
+        Ok(())
+    }
+
     /// Get a file's content and MIME type.
+    /// Checks in-memory cache first, then falls back to disk storage.
     pub fn get_file_content(&self, container_id: &str, file_id: &str) -> Option<(Vec<u8>, String)> {
-        let entry = self.containers.get(container_id)?;
-        let file = entry.files.get(file_id)?;
-        Some((file.content.clone(), file.mime_type.clone()))
+        // Try memory first
+        if let Some(entry) = self.containers.get(container_id)
+            && let Some(file) = entry.files.get(file_id)
+        {
+            return Some((file.content.clone(), file.mime_type.clone()));
+        }
+
+        // Fall back to disk if storage path is set
+        if let Some(ref storage_path) = self.storage_path {
+            return self.load_file_from_disk(storage_path, container_id, file_id);
+        }
+
+        None
+    }
+
+    /// Load a file from disk storage.
+    fn load_file_from_disk(
+        &self,
+        base: &Path,
+        container_id: &str,
+        file_id: &str,
+    ) -> Option<(Vec<u8>, String)> {
+        let dir = base.join(container_id);
+
+        // Read file content
+        let content_path = dir.join(format!("{}.bin", file_id));
+        let content = std::fs::read(&content_path).ok()?;
+
+        // Read metadata
+        let meta_path = dir.join(format!("{}.meta", file_id));
+        let meta_str = std::fs::read_to_string(&meta_path).ok()?;
+        let meta: serde_json::Value = serde_json::from_str(&meta_str).ok()?;
+        let mime_type = meta.get("mime_type")?.as_str()?.to_string();
+
+        tracing::debug!(
+            "Loaded file {} from disk: {}",
+            file_id,
+            content_path.display()
+        );
+
+        Some((content, mime_type))
     }
 
     /// Get file metadata without content.
+    /// Checks in-memory cache first, then falls back to disk storage.
     pub fn get_file_metadata(
         &self,
         container_id: &str,
         file_id: &str,
     ) -> Option<(String, String, usize)> {
-        let entry = self.containers.get(container_id)?;
-        let file = entry.files.get(file_id)?;
-        Some((
-            file.filename.clone(),
-            file.mime_type.clone(),
-            file.content.len(),
-        ))
+        // Try memory first
+        if let Some(entry) = self.containers.get(container_id)
+            && let Some(file) = entry.files.get(file_id)
+        {
+            return Some((
+                file.filename.clone(),
+                file.mime_type.clone(),
+                file.content.len(),
+            ));
+        }
+
+        // Fall back to disk
+        if let Some(ref storage_path) = self.storage_path {
+            return self.load_file_metadata_from_disk(storage_path, container_id, file_id);
+        }
+
+        None
+    }
+
+    /// Load file metadata from disk storage.
+    fn load_file_metadata_from_disk(
+        &self,
+        base: &Path,
+        container_id: &str,
+        file_id: &str,
+    ) -> Option<(String, String, usize)> {
+        let dir = base.join(container_id);
+
+        // Read content to get size
+        let content_path = dir.join(format!("{}.bin", file_id));
+        let content_len = std::fs::metadata(&content_path).ok()?.len() as usize;
+
+        // Read metadata
+        let meta_path = dir.join(format!("{}.meta", file_id));
+        let meta_str = std::fs::read_to_string(&meta_path).ok()?;
+        let meta: serde_json::Value = serde_json::from_str(&meta_str).ok()?;
+
+        let filename = meta.get("filename")?.as_str()?.to_string();
+        let mime_type = meta.get("mime_type")?.as_str()?.to_string();
+
+        Some((filename, mime_type, content_len))
     }
 
     /// List all file IDs in a container.
+    /// Checks in-memory cache first, then falls back to disk storage.
     pub fn list_files(&self, container_id: &str) -> Option<Vec<String>> {
-        let entry = self.containers.get(container_id)?;
-        Some(entry.files.keys().cloned().collect())
+        // Try memory first
+        if let Some(entry) = self.containers.get(container_id) {
+            return Some(entry.files.keys().cloned().collect());
+        }
+
+        // Fall back to disk
+        if let Some(ref storage_path) = self.storage_path {
+            return self.list_files_from_disk(storage_path, container_id);
+        }
+
+        None
     }
 
-    /// Check if a container exists.
+    /// List files from disk storage.
+    fn list_files_from_disk(&self, base: &Path, container_id: &str) -> Option<Vec<String>> {
+        let dir = base.join(container_id);
+        if !dir.exists() {
+            return None;
+        }
+
+        let mut file_ids = Vec::new();
+        if let Ok(entries) = std::fs::read_dir(&dir) {
+            for entry in entries.flatten() {
+                let path = entry.path();
+                if let Some(name) = path.file_name().and_then(|n| n.to_str()) {
+                    // Look for .bin files and extract the file ID
+                    if name.ends_with(".bin") {
+                        let file_id = name.trim_end_matches(".bin").to_string();
+                        file_ids.push(file_id);
+                    }
+                }
+            }
+        }
+
+        if file_ids.is_empty() {
+            None
+        } else {
+            Some(file_ids)
+        }
+    }
+
+    /// Check if a container exists (in memory or on disk).
     pub fn exists(&self, container_id: &str) -> bool {
-        self.containers.contains_key(container_id)
+        // Check memory
+        if self.containers.contains_key(container_id) {
+            return true;
+        }
+
+        // Check disk
+        if let Some(ref storage_path) = self.storage_path {
+            let dir = storage_path.join(container_id);
+            return dir.exists();
+        }
+
+        false
     }
 
     /// Clean up expired containers.

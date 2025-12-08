@@ -277,6 +277,9 @@ pub struct FunctionCallOutput {
     pub arguments: String,
     /// Status of this output item
     pub status: OutputStatus,
+    /// Tool execution result (populated after tool completes)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub output: Option<String>,
 }
 
 // ============================================================================

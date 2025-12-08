@@ -1,3 +1,22 @@
+## Project Validation Tools
+
+Run validation in order: Format → Lint → Type Check → Test
+
+### Rust Backend (backend/responses-api/)
+- **Format**: `docker compose run --rm backend-dev cargo fmt`
+- **Lint**: `docker compose run --rm backend-dev cargo clippy -- -D warnings`
+- **Test**: `docker compose run --rm backend-dev cargo test`
+
+### Frontend (frontend/)
+- **Format**: `docker compose run --rm frontend-dev npm run format`
+- **Lint**: `docker compose run --rm frontend-dev npm run lint`
+- **Type Check**: `docker compose run --rm frontend-dev npm run check`
+
+### Project Permissions
+- **Project Type**: personal
+- **Direct Commits Allowed**: yes
+- **Last Checked**: 2025-12-07
+
 ## Docker Development
 
 Tools and commands should run inside Docker containers, not on the host system.

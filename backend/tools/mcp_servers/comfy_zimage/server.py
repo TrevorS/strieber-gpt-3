@@ -8,6 +8,7 @@ import base64
 import json
 import logging
 import random
+import uuid
 from pathlib import Path
 from typing import Dict, List, Literal, Optional, Tuple
 
@@ -40,6 +41,7 @@ def _load_workflow(filename: str) -> Dict:
 
 
 ZIMAGE_WORKFLOW = _load_workflow("zimage_api.json")
+ZIMAGE_CONTROLNET_WORKFLOW = _load_workflow("zimage_controlnet_api.json")
 
 
 # ============================================================================
@@ -81,6 +83,35 @@ ZIMAGE_NODES = {
     "save_image": "10",       # SaveImage
 }
 
+# Node ID mappings for z-image ControlNet workflow
+ZIMAGE_CONTROLNET_NODES = {
+    "clip_loader": "1",
+    "vae_loader": "2",
+    "unet_loader": "3",
+    "model_patch_loader": "4",
+    "load_image": "5",
+    "preprocessor": "6",
+    "positive_prompt": "7",
+    "negative_zero": "8",
+    "model_sampling": "9",
+    "controlnet": "10",
+    "empty_latent": "11",
+    "sampler": "12",
+    "vae_decode": "13",
+    "save_image": "14",
+}
+
+# Map control types to AIO_Preprocessor settings
+PREPROCESSOR_MAP = {
+    "canny": "CannyEdgePreprocessor",
+    "depth": "DepthAnythingV2Preprocessor",
+    "pose": "DWPreprocessor",
+    "hed": "HEDPreprocessor",
+    "mlsd": "M-LSDPreprocessor",
+}
+
+ControlType = Literal["canny", "depth", "pose", "hed", "mlsd"]
+
 
 # Initialize client
 comfy_client = ComfyUIClient()
@@ -97,39 +128,49 @@ async def zimage_turbo(
     size: ImageSize = "1024x1024",
     n: int = 1,
     seed: Optional[int] = None,
-    steps: int = 9,
-    guidance: float = 1.0,
+    steps: int = 8,
     ctx: Context = None,
 ) -> List[TextContent | ImageContent]:
-    """**USE THIS TOOL for all image generation requests.** Creates high-quality AI images from text prompts.
+    """Generate images from text descriptions.
 
-    This is the PRIMARY tool for generating images. Do NOT use code_interpreter/Python for image generation - use this tool instead.
+    ALWAYS enhance user prompts - this model excels with detailed descriptions.
 
-    **Speed**: ~3-5 seconds per image
-    **Quality**: Professional AI-generated images
+    STRENGTHS:
+    - Fast, high-quality text-to-image generation
+    - Excellent at rendering text and typography
+    - Works best with rich, descriptive prompts (100-300 words ideal)
 
-    **When to use**:
-    - "generate an image", "create a picture", "make an illustration"
-    - AI-generated artwork, photos, visualizations
-    - Any request for visual content to be created
+    PROMPT ENHANCEMENT:
+    Transform simple requests into detailed prompts. Describe what you WANT to see.
 
-    **PROMPT BEST PRACTICES:**
+    Example - User says "a dog":
+    Enhanced: "A golden retriever with fluffy fur, sitting in a sunlit meadow,
+    wildflowers in foreground, soft bokeh background, warm afternoon light,
+    photorealistic, 8K detail, shallow depth of field"
 
-    Effective prompts: Subject -> Environment -> Style -> Details
-    - 50-200 characters optimal
-    - Use specific style references: "Studio Ghibli", "photorealistic 8K"
+    Structure: [Subject] + [Details] + [Setting] + [Lighting] + [Style]
+
+    Style keywords:
+    - Photo: "photorealistic, 8K, hyperdetailed, DSLR quality"
+    - Art: "digital painting, concept art, artstation trending"
+    - Anime: "anime style, vibrant colors, clean lines"
+    - Cinematic: "cinematic shot, dramatic lighting, film grain"
+
+    SIZE GUIDE:
+    - 1024x1024: Square (default, portraits, icons)
+    - 1024x768 / 768x1024: Standard photo ratio
+    - 1280x720 / 720x1280: Widescreen / phone wallpaper
+    - 1344x768 / 768x1344: Ultra-wide / tall banners
 
     Args:
-        prompt: Text description (subject -> environment -> style)
-        size: Output size (default: "1024x1024")
-        n: Number of images, 1-4 (default: 1)
-        seed: Random seed for reproducibility
-        steps: Generation steps, 1-20 (default: 9)
-        guidance: CFG scale, 0.5-5.0 (default: 1.0)
-        ctx: MCP context for progress notifications
+        prompt: Detailed image description. ALWAYS expand simple requests.
+        size: Image dimensions. Default "1024x1024".
+        n: Number of images (1-4). Default 1.
+        seed: Random seed for reproducibility.
+        steps: Denoising steps (1-20). Default 9.
 
     Returns:
-        TextContent summary + ImageContent base64 PNG images
+        Generated image(s) as base64 PNG.
     """
     logger.info(
         f"zimage_turbo called: prompt='{prompt[:50]}...', size={size}, n={n}"
@@ -138,7 +179,6 @@ async def zimage_turbo(
     # Clamp parameters
     n = max(1, min(4, n))
     steps = max(1, min(20, steps))
-    guidance = max(0.5, min(5.0, guidance))
 
     try:
         # Parse size
@@ -158,7 +198,7 @@ async def zimage_turbo(
         workflow[ZIMAGE_NODES["empty_latent"]]["inputs"]["batch_size"] = n
         workflow[ZIMAGE_NODES["sampler"]]["inputs"]["seed"] = seed
         workflow[ZIMAGE_NODES["sampler"]]["inputs"]["steps"] = steps
-        workflow[ZIMAGE_NODES["sampler"]]["inputs"]["cfg"] = guidance
+        workflow[ZIMAGE_NODES["sampler"]]["inputs"]["cfg"] = 1.0
 
         # Queue workflow
         prompt_id = await comfy_client.queue_prompt(workflow)
@@ -176,13 +216,16 @@ async def zimage_turbo(
         # Build response content blocks
         content_blocks: List[TextContent | ImageContent] = []
 
-        # 1. Text summary
+        # 1. Text summary with all parameters
         summary_parts = [
-            f"Generated {len(output_files)} image(s) using z-image turbo.",
-            f"Size: {width}x{height}",
-            f"Steps: {steps}, CFG: {guidance}",
-            f"Seed: {seed}",
-            f"Prompt: {prompt}",
+            f"Generated {len(output_files)} image(s).",
+            f"Parameters:",
+            f"  prompt: {prompt[:100]}{'...' if len(prompt) > 100 else ''}",
+            f"  size: {size} ({width}x{height})",
+            f"  n: {n}",
+            f"  steps: {steps}",
+            f"  seed: {seed}",
+            f"  cfg: 1.0",
         ]
 
         summary_text = "\n".join(summary_parts)
@@ -213,6 +256,146 @@ async def zimage_turbo(
             f"- Check that qwen_3_4b.safetensors is in ComfyUI/models/text_encoders/\n"
             f"- Check that ae.safetensors is in ComfyUI/models/vae/\n"
             f"- Verify workflow node IDs in server.py match your ComfyUI setup"
+        )
+        return [TextContent(type="text", text=error_msg)]
+
+
+@mcp.tool()
+async def zimage_controlnet(
+    prompt: str,
+    image_data: str,
+    control_type: ControlType = "canny",
+    control_strength: float = 0.75,
+    size: ImageSize = "1024x1024",
+    seed: Optional[int] = None,
+    steps: int = 8,
+    ctx: Context = None,
+) -> List[TextContent | ImageContent]:
+    """Transform images while preserving structure.
+
+    Use when user wants to restyle, redraw, or transform an existing image.
+
+    CONTROL TYPES - Choose based on what to preserve:
+    - canny: Edges/outlines (faces, objects, drawings)
+    - depth: Spatial layout (foreground/background arrangement)
+    - pose: Human body position (generate different person, same pose)
+    - hed: Soft boundaries (artistic, painterly edges)
+    - mlsd: Straight lines (architecture, interiors)
+
+    WHEN TO USE:
+    - "Redraw this as anime" → canny
+    - "Same pose, different person" → pose
+    - "Same scene, different style" → depth
+
+    IMAGE INPUT:
+    When the user has attached an image to their message, use "attached" or "image_0"
+    as the image_data value. The system will automatically inject the attached image.
+    For multiple attached images, use "image_0", "image_1", etc.
+
+    Args:
+        prompt: Describe the OUTPUT style/content you want.
+        image_data: Use "attached" or "image_0" for user's attached image. System injects actual data.
+        control_type: What structure to preserve. Default "canny".
+        control_strength: 0.65 (loose) to 0.80 (strict). Default 0.75.
+        size: Output dimensions. Default "1024x1024".
+        seed: Random seed for reproducibility.
+        steps: Denoising steps (1-20). Default 9.
+
+    Returns:
+        Generated image(s) as base64 PNG.
+    """
+    logger.info(
+        f"zimage_controlnet called: control_type={control_type}, "
+        f"strength={control_strength}, size={size}"
+    )
+
+    # Clamp parameters
+    steps = max(1, min(20, steps))
+    control_strength = max(0.5, min(1.0, control_strength))
+
+    try:
+        # Parse size
+        width, height = SIZE_PRESETS[size]
+
+        # Generate random seed if not provided
+        if seed is None:
+            seed = random.randint(0, 2**32 - 1)
+
+        # Upload input image to ComfyUI via API
+        img_bytes = base64.b64decode(image_data)
+        input_filename = await comfy_client.upload_image(
+            img_bytes,
+            f"controlnet_input_{uuid.uuid4().hex[:8]}.png"
+        )
+
+        # Prepare workflow
+        workflow = json.loads(json.dumps(ZIMAGE_CONTROLNET_WORKFLOW))  # Deep copy
+
+        # Update workflow nodes with parameters
+        workflow[ZIMAGE_CONTROLNET_NODES["load_image"]]["inputs"]["image"] = input_filename
+        workflow[ZIMAGE_CONTROLNET_NODES["preprocessor"]]["inputs"]["preprocessor"] = PREPROCESSOR_MAP[control_type]
+        workflow[ZIMAGE_CONTROLNET_NODES["positive_prompt"]]["inputs"]["text"] = prompt
+        workflow[ZIMAGE_CONTROLNET_NODES["controlnet"]]["inputs"]["strength"] = control_strength
+        workflow[ZIMAGE_CONTROLNET_NODES["empty_latent"]]["inputs"]["width"] = width
+        workflow[ZIMAGE_CONTROLNET_NODES["empty_latent"]]["inputs"]["height"] = height
+        workflow[ZIMAGE_CONTROLNET_NODES["sampler"]]["inputs"]["seed"] = seed
+        workflow[ZIMAGE_CONTROLNET_NODES["sampler"]]["inputs"]["steps"] = steps
+
+        # Queue workflow
+        prompt_id = await comfy_client.queue_prompt(workflow)
+
+        # Track progress
+        if ctx:
+            async for progress in comfy_client.progress(prompt_id):
+                await ctx.report_progress(
+                    progress, 100, f"Generating with {control_type} control... {progress}%"
+                )
+
+        # Collect outputs
+        output_files = await comfy_client.collect_output_files(prompt_id)
+
+        # Build response content blocks
+        content_blocks: List[TextContent | ImageContent] = []
+
+        # 1. Text summary with all parameters
+        summary_parts = [
+            f"Generated {len(output_files)} image(s) with {control_type} ControlNet.",
+            f"Parameters:",
+            f"  prompt: {prompt[:100]}{'...' if len(prompt) > 100 else ''}",
+            f"  control_type: {control_type}",
+            f"  control_strength: {control_strength}",
+            f"  size: {size} ({width}x{height})",
+            f"  steps: {steps}",
+            f"  seed: {seed}",
+        ]
+
+        summary_text = "\n".join(summary_parts)
+        content_blocks.append(TextContent(type="text", text=summary_text))
+
+        # 2. Add images as ImageContent blocks (base64)
+        for idx, (filename, img_bytes) in enumerate(output_files):
+            img_base64 = base64.b64encode(img_bytes).decode("utf-8")
+            content_blocks.append(
+                ImageContent(
+                    type="image",
+                    data=img_base64,
+                    mimeType="image/png",
+                )
+            )
+            logger.info(f"Added image {idx + 1}: {filename} ({len(img_bytes)} bytes)")
+
+        logger.info(f"zimage_controlnet completed: {len(output_files)} image(s)")
+        return content_blocks
+
+    except Exception as e:
+        logger.error(f"zimage_controlnet error: {e}", exc_info=True)
+        error_msg = (
+            f"Failed to generate image with ControlNet: {str(e)}\n\n"
+            f"Troubleshooting:\n"
+            f"- Ensure ComfyUI is running at {comfy_client.base_url}\n"
+            f"- Check that Z-Image-Turbo-Fun-Controlnet-Union.safetensors is in ComfyUI/models/model_patches/\n"
+            f"- Check that comfyui_controlnet_aux custom node is installed\n"
+            f"- Verify the input image is valid base64 PNG/JPEG"
         )
         return [TextContent(type="text", text=error_msg)]
 

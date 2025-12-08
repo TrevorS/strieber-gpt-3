@@ -1,5 +1,6 @@
 //! OpenAI Responses API server.
 
+use std::path::PathBuf;
 use std::sync::Arc;
 
 use responses_api::{
@@ -57,7 +58,8 @@ async fn main() -> anyhow::Result<()> {
     }
 
     // Create container store for code interpreter file outputs
-    let containers = ContainerStore::new();
+    // Use /data/containers for persistence across restarts (Docker volume mounted)
+    let containers = ContainerStore::with_persistence(PathBuf::from("/data/containers"));
 
     // Create executor (uses a clone of mcp_client and containers)
     let executor_config = ExecutorConfig {

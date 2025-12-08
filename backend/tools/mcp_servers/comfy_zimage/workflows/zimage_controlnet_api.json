@@ -1,0 +1,215 @@
+{
+  "_comment": "z-image turbo ControlNet workflow (API format)",
+  "_instructions": "Image-to-image with structure preservation using Z-Image-Turbo-Fun-Controlnet-Union",
+  "_node_mapping": {
+    "clip_loader": "Node ID 1 - CLIPLoader for text encoder (qwen_3_4b, lumina2 type)",
+    "vae_loader": "Node ID 2 - VAELoader for VAE decoder (ae.safetensors)",
+    "unet_loader": "Node ID 3 - UNETLoader for diffusion model (z_image_turbo_bf16)",
+    "model_patch_loader": "Node ID 4 - ModelPatchLoader for ControlNet patch",
+    "load_image": "Node ID 5 - LoadImage for reference image",
+    "preprocessor": "Node ID 6 - AIO_Preprocessor for edge/depth/pose extraction",
+    "positive_prompt": "Node ID 7 - CLIPTextEncode for positive prompt",
+    "negative_zero": "Node ID 8 - ConditioningZeroOut for negative conditioning",
+    "model_sampling": "Node ID 9 - ModelSamplingAuraFlow (shift=3)",
+    "controlnet": "Node ID 10 - QwenImageDiffsynthControlnet",
+    "empty_latent": "Node ID 11 - EmptySD3LatentImage",
+    "sampler": "Node ID 12 - KSampler",
+    "vae_decode": "Node ID 13 - VAEDecode",
+    "save_image": "Node ID 14 - SaveImage"
+  },
+  "1": {
+    "inputs": {
+      "clip_name": "qwen_3_4b.safetensors",
+      "type": "lumina2",
+      "device": "default"
+    },
+    "class_type": "CLIPLoader",
+    "_meta": {
+      "title": "Load CLIP (qwen_3_4b lumina2)"
+    }
+  },
+  "2": {
+    "inputs": {
+      "vae_name": "ae.safetensors"
+    },
+    "class_type": "VAELoader",
+    "_meta": {
+      "title": "Load VAE"
+    }
+  },
+  "3": {
+    "inputs": {
+      "unet_name": "z_image_turbo_bf16.safetensors",
+      "weight_dtype": "default"
+    },
+    "class_type": "UNETLoader",
+    "_meta": {
+      "title": "Load Diffusion Model (z-image turbo)"
+    }
+  },
+  "4": {
+    "inputs": {
+      "model_patch_name": "Z-Image-Turbo-Fun-Controlnet-Union.safetensors"
+    },
+    "class_type": "ModelPatchLoader",
+    "_meta": {
+      "title": "Load ControlNet Patch"
+    }
+  },
+  "5": {
+    "inputs": {
+      "image": "PLACEHOLDER_INPUT_IMAGE"
+    },
+    "class_type": "LoadImage",
+    "_meta": {
+      "title": "Load Reference Image"
+    }
+  },
+  "6": {
+    "inputs": {
+      "preprocessor": "CannyEdgePreprocessor",
+      "resolution": 512,
+      "image": [
+        "5",
+        0
+      ]
+    },
+    "class_type": "AIO_Preprocessor",
+    "_meta": {
+      "title": "AIO Preprocessor (Canny/Depth/Pose)"
+    }
+  },
+  "7": {
+    "inputs": {
+      "text": "PLACEHOLDER_POSITIVE_PROMPT",
+      "clip": [
+        "1",
+        0
+      ]
+    },
+    "class_type": "CLIPTextEncode",
+    "_meta": {
+      "title": "CLIP Text Encode (Positive)"
+    }
+  },
+  "8": {
+    "inputs": {
+      "conditioning": [
+        "7",
+        0
+      ]
+    },
+    "class_type": "ConditioningZeroOut",
+    "_meta": {
+      "title": "Conditioning Zero Out (Negative)"
+    }
+  },
+  "9": {
+    "inputs": {
+      "model": [
+        "3",
+        0
+      ],
+      "shift": 3.0
+    },
+    "class_type": "ModelSamplingAuraFlow",
+    "_meta": {
+      "title": "Model Sampling AuraFlow (shift=3)"
+    }
+  },
+  "10": {
+    "inputs": {
+      "strength": 0.75,
+      "model": [
+        "9",
+        0
+      ],
+      "model_patch": [
+        "4",
+        0
+      ],
+      "vae": [
+        "2",
+        0
+      ],
+      "image": [
+        "6",
+        0
+      ]
+    },
+    "class_type": "QwenImageDiffsynthControlnet",
+    "_meta": {
+      "title": "Z-Image ControlNet"
+    }
+  },
+  "11": {
+    "inputs": {
+      "width": 1024,
+      "height": 1024,
+      "batch_size": 1
+    },
+    "class_type": "EmptySD3LatentImage",
+    "_meta": {
+      "title": "Empty SD3 Latent Image"
+    }
+  },
+  "12": {
+    "inputs": {
+      "seed": 0,
+      "steps": 9,
+      "cfg": 1.0,
+      "sampler_name": "res_multistep",
+      "scheduler": "simple",
+      "denoise": 1.0,
+      "model": [
+        "10",
+        0
+      ],
+      "positive": [
+        "7",
+        0
+      ],
+      "negative": [
+        "8",
+        0
+      ],
+      "latent_image": [
+        "11",
+        0
+      ]
+    },
+    "class_type": "KSampler",
+    "_meta": {
+      "title": "KSampler (res_multistep)"
+    }
+  },
+  "13": {
+    "inputs": {
+      "samples": [
+        "12",
+        0
+      ],
+      "vae": [
+        "2",
+        0
+      ]
+    },
+    "class_type": "VAEDecode",
+    "_meta": {
+      "title": "VAE Decode"
+    }
+  },
+  "14": {
+    "inputs": {
+      "filename_prefix": "zimage_controlnet",
+      "images": [
+        "13",
+        0
+      ]
+    },
+    "class_type": "SaveImage",
+    "_meta": {
+      "title": "Save Image"
+    }
+  }
+}

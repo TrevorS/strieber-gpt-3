@@ -26,12 +26,14 @@ pub fn to_chat_completion(
     }
 
     // 2. Add previous conversation context if available
+    // When previous_messages is provided, the user input is already included
+    // (added by streaming.rs to ensure correct message ordering in tool loops)
     if let Some(prev) = previous_messages {
         messages.extend(prev);
+    } else {
+        // Fresh request with no conversation history - add input
+        messages.extend(input_to_messages(&req.input));
     }
-
-    // 3. Convert input to messages
-    messages.extend(input_to_messages(&req.input));
 
     // 4. Convert tools
     let tools = if req.tools.is_empty() {
@@ -65,7 +67,7 @@ pub fn to_chat_completion(
 }
 
 /// Convert Responses API input to Chat Completions messages.
-fn input_to_messages(input: &Input) -> Vec<ChatMessage> {
+pub fn input_to_messages(input: &Input) -> Vec<ChatMessage> {
     match input {
         Input::Empty => vec![],
         Input::Text(text) => vec![ChatMessage {
@@ -251,6 +253,111 @@ fn tool_choice_to_chat(choice: &ToolChoice) -> ChatToolChoice {
                 name: specific.name.clone(),
             },
         },
+    }
+}
+
+// ============================================================================
+// Image Extraction (for tool injection)
+// ============================================================================
+
+/// Strip data URI prefix from base64 image data.
+///
+/// Converts "data:image/png;base64,abc123" to "abc123".
+/// Returns the original string if no base64 data URI prefix is found.
+pub fn strip_data_uri_prefix(data: &str) -> &str {
+    if let Some(comma_idx) = data.find(',')
+        && data[..comma_idx].contains("base64")
+    {
+        return &data[comma_idx + 1..];
+    }
+    data
+}
+
+/// Attached image with ID and base64 data.
+#[derive(Debug, Clone)]
+pub struct AttachedImage {
+    /// Image identifier (e.g., "image_0")
+    pub id: String,
+    /// Raw base64 data (data URI prefix stripped)
+    pub data: String,
+}
+
+/// Extract attached images from request input.
+///
+/// Returns a list of images found in the input, each with an ID for reference.
+/// The ID format is "image_0", "image_1", etc.
+pub fn extract_attached_images(input: &Input) -> Vec<AttachedImage> {
+    let mut images = Vec::new();
+    let mut index = 0;
+
+    match input {
+        Input::Empty | Input::Text(_) => {}
+        Input::Items(items) => {
+            for item in items {
+                if let InputItem::Message(msg) = item
+                    && let MessageContent::Parts(parts) = &msg.content
+                {
+                    for part in parts {
+                        if let ContentPart::InputImage { image_url } = part {
+                            images.push(AttachedImage {
+                                id: format!("image_{}", index),
+                                data: strip_data_uri_prefix(&image_url.url).to_string(),
+                            });
+                            index += 1;
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    images
+}
+
+/// Replace images in input with text placeholders for non-vision models.
+///
+/// Returns a modified Input where images are replaced with descriptive text,
+/// allowing the LLM to know images are attached without seeing the data.
+pub fn replace_images_with_placeholders(input: &Input) -> Input {
+    match input {
+        Input::Empty => Input::Empty,
+        Input::Text(t) => Input::Text(t.clone()),
+        Input::Items(items) => {
+            let mut index = 0;
+            let modified_items: Vec<InputItem> = items
+                .iter()
+                .map(|item| match item {
+                    InputItem::Message(msg) => {
+                        let new_content = match &msg.content {
+                            MessageContent::Text(t) => MessageContent::Text(t.clone()),
+                            MessageContent::Parts(parts) => {
+                                let new_parts: Vec<ContentPart> = parts
+                                    .iter()
+                                    .map(|part| match part {
+                                        ContentPart::InputImage { .. } => {
+                                            let placeholder = format!(
+                                                "[Attached image: image_{}. Use image_data: \"image_{}\" in tool calls to reference this image.]",
+                                                index, index
+                                            );
+                                            index += 1;
+                                            ContentPart::InputText { text: placeholder }
+                                        }
+                                        other => other.clone(),
+                                    })
+                                    .collect();
+                                MessageContent::Parts(new_parts)
+                            }
+                        };
+                        InputItem::Message(MessageInput {
+                            role: msg.role,
+                            content: new_content,
+                        })
+                    }
+                    other => other.clone(),
+                })
+                .collect();
+            Input::Items(modified_items)
+        }
     }
 }
 
@@ -509,7 +616,10 @@ mod tests {
     }
 
     #[test]
-    fn previous_messages_are_prepended() {
+    fn previous_messages_are_used_directly() {
+        // When previous_messages is provided, streaming.rs has already added the
+        // current user input to the conversation. So to_chat_completion should NOT
+        // add the input again - it just uses the previous_messages as-is.
         let req = CreateResponseRequest {
             model: "gpt-4".to_string(),
             input: Input::Text("Follow up question".to_string()),
@@ -530,6 +640,7 @@ mod tests {
             metadata: None,
         };
 
+        // Simulate what streaming.rs would provide - previous messages WITH current input
         let previous = vec![
             ChatMessage {
                 role: ChatRole::User,
@@ -545,10 +656,18 @@ mod tests {
                 tool_calls: None,
                 tool_call_id: None,
             },
+            ChatMessage {
+                role: ChatRole::User,
+                content: Some(ChatContent::Text("Follow up question".to_string())),
+                reasoning_content: None,
+                tool_calls: None,
+                tool_call_id: None,
+            },
         ];
 
         let chat_req = to_chat_completion(&req, Some(previous));
 
+        // Should have all 3 messages from previous_messages
         assert_eq!(chat_req.messages.len(), 3);
         assert_eq!(
             chat_req.messages[0].content,
@@ -1035,5 +1154,165 @@ mod tests {
         // Should still have the user input
         assert_eq!(messages.len(), 1);
         assert_eq!(messages[0].role, ChatRole::User);
+    }
+
+    // ========================================================================
+    // Image Extraction Tests
+    // ========================================================================
+
+    use crate::models::ImageUrl;
+
+    #[test]
+    fn strip_data_uri_prefix_removes_base64_prefix() {
+        assert_eq!(
+            strip_data_uri_prefix("data:image/png;base64,abc123"),
+            "abc123"
+        );
+        assert_eq!(
+            strip_data_uri_prefix("data:image/jpeg;base64,xyz789"),
+            "xyz789"
+        );
+    }
+
+    #[test]
+    fn strip_data_uri_prefix_preserves_raw_base64() {
+        assert_eq!(strip_data_uri_prefix("abc123"), "abc123");
+        assert_eq!(
+            strip_data_uri_prefix("iVBORw0KGgoAAAANSUhEUg"),
+            "iVBORw0KGgoAAAANSUhEUg"
+        );
+    }
+
+    #[test]
+    fn strip_data_uri_prefix_preserves_non_base64_data_uri() {
+        // Only strip if it's base64 encoded
+        assert_eq!(
+            strip_data_uri_prefix("data:text/plain,hello"),
+            "data:text/plain,hello"
+        );
+    }
+
+    #[test]
+    fn extract_attached_images_finds_images_in_parts() {
+        let input = Input::Items(vec![InputItem::Message(MessageInput {
+            role: Role::User,
+            content: MessageContent::Parts(vec![
+                ContentPart::InputText {
+                    text: "Transform this".to_string(),
+                },
+                ContentPart::InputImage {
+                    image_url: ImageUrl {
+                        url: "data:image/png;base64,abc123".to_string(),
+                        detail: None,
+                    },
+                },
+            ]),
+        })]);
+
+        let images = extract_attached_images(&input);
+        assert_eq!(images.len(), 1);
+        assert_eq!(images[0].id, "image_0");
+        assert_eq!(images[0].data, "abc123"); // Data URI prefix stripped
+    }
+
+    #[test]
+    fn extract_attached_images_handles_multiple_images() {
+        let input = Input::Items(vec![InputItem::Message(MessageInput {
+            role: Role::User,
+            content: MessageContent::Parts(vec![
+                ContentPart::InputImage {
+                    image_url: ImageUrl {
+                        url: "data:image/png;base64,first".to_string(),
+                        detail: None,
+                    },
+                },
+                ContentPart::InputImage {
+                    image_url: ImageUrl {
+                        url: "data:image/jpeg;base64,second".to_string(),
+                        detail: None,
+                    },
+                },
+            ]),
+        })]);
+
+        let images = extract_attached_images(&input);
+        assert_eq!(images.len(), 2);
+        assert_eq!(images[0].id, "image_0");
+        assert_eq!(images[0].data, "first");
+        assert_eq!(images[1].id, "image_1");
+        assert_eq!(images[1].data, "second");
+    }
+
+    #[test]
+    fn extract_attached_images_empty_for_text_only() {
+        let input = Input::Text("Hello".to_string());
+        let images = extract_attached_images(&input);
+        assert!(images.is_empty());
+    }
+
+    #[test]
+    fn extract_attached_images_empty_for_empty_input() {
+        let input = Input::Empty;
+        let images = extract_attached_images(&input);
+        assert!(images.is_empty());
+    }
+
+    #[test]
+    fn replace_images_with_placeholders_preserves_text() {
+        let input = Input::Items(vec![InputItem::Message(MessageInput {
+            role: Role::User,
+            content: MessageContent::Parts(vec![
+                ContentPart::InputText {
+                    text: "Transform this".to_string(),
+                },
+                ContentPart::InputImage {
+                    image_url: ImageUrl {
+                        url: "base64data".to_string(),
+                        detail: None,
+                    },
+                },
+            ]),
+        })]);
+
+        let result = replace_images_with_placeholders(&input);
+
+        if let Input::Items(items) = result {
+            if let InputItem::Message(msg) = &items[0] {
+                if let MessageContent::Parts(parts) = &msg.content {
+                    assert_eq!(parts.len(), 2);
+                    // First part should be text unchanged
+                    if let ContentPart::InputText { text } = &parts[0] {
+                        assert_eq!(text, "Transform this");
+                    } else {
+                        panic!("Expected InputText for first part");
+                    }
+                    // Second part should be placeholder
+                    if let ContentPart::InputText { text } = &parts[1] {
+                        assert!(text.contains("image_0"));
+                        assert!(text.contains("Attached image"));
+                    } else {
+                        panic!("Expected InputText placeholder for second part");
+                    }
+                } else {
+                    panic!("Expected Parts content");
+                }
+            } else {
+                panic!("Expected Message item");
+            }
+        } else {
+            panic!("Expected Items input");
+        }
+    }
+
+    #[test]
+    fn replace_images_with_placeholders_text_input_unchanged() {
+        let input = Input::Text("Hello world".to_string());
+        let result = replace_images_with_placeholders(&input);
+
+        if let Input::Text(text) = result {
+            assert_eq!(text, "Hello world");
+        } else {
+            panic!("Expected Text input");
+        }
     }
 }

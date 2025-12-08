@@ -53,8 +53,10 @@ RUN apt-get update && apt-get install -y \
 # Copy the binary from builder
 COPY --from=builder /app/target/release/responses-api /app/responses-api
 
-# Create non-root user
-RUN useradd -r -s /bin/false appuser
+# Create non-root user and data directory for persistent storage
+RUN useradd -r -s /bin/false appuser && \
+    mkdir -p /data/containers && \
+    chown -R appuser:appuser /data
 USER appuser
 
 # Default environment variables

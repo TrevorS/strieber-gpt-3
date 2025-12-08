@@ -52,6 +52,11 @@ RUN python -m pip install --upgrade pip && \
     grep -v -E '^(torch|torchvision|torchaudio)($|[^a-z])' requirements.txt > /tmp/requirements_filtered.txt && \
     python -m pip install -r /tmp/requirements_filtered.txt
 
+# Install ControlNet Auxiliary Preprocessors dependencies
+# The custom node itself is mounted from host (./comfyui-data/custom_nodes)
+# This installs Python deps needed by comfyui_controlnet_aux
+RUN pip install opencv-python-headless scikit-image einops timm addict yapf
+
 # Create well-known directories for bind mounts
 # These will be mounted from the host to persist data
 RUN mkdir -p \
@@ -61,6 +66,7 @@ RUN mkdir -p \
       /opt/ComfyUI/models/loras \
       /opt/ComfyUI/models/controlnet \
       /opt/ComfyUI/models/upscale_models \
+      /opt/ComfyUI/models/model_patches \
       /opt/ComfyUI/input \
       /opt/ComfyUI/output \
       /opt/ComfyUI/custom_nodes

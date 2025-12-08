@@ -175,6 +175,7 @@ fn extract_output_items(
                     name: tc.function.name.clone(),
                     arguments: tc.function.arguments.clone(),
                     status: OutputStatus::Completed,
+                    output: None,
                 }));
             }
         }
@@ -899,6 +900,7 @@ mod tests {
             name: "get_weather".to_string(),
             arguments: r#"{"location":"Paris"}"#.to_string(),
             status: OutputStatus::Completed,
+            output: None,
         });
 
         let input = output_item_to_input_item(&output).expect("should convert");

@@ -676,13 +676,16 @@ services:
       - PORT=8000
       - HOST=0.0.0.0
       # Models: JSON format {"models":[{"id":"...","url":"...","api_key":"...","owned_by":"..."}]}
-      - MODELS_CONFIG={"models":[{"id":"gpt-oss-120b","url":"http://llama-server:8000"},{"id":"qwen3-vl-2b","url":"http://llama-server-qwen-vl:8000","supports_vision":true,"supported_tools":[]}]}
+      - MODELS_CONFIG={"models":[{"id":"gpt-oss-120b","url":"http://llama-server:8000","reasoning":{"effort":"high"}},{"id":"qwen3-vl-2b","url":"http://llama-server-qwen-vl:8000","supports_vision":true,"supported_tools":[]}]}
       # MCP servers: JSON format {"servers":[{"name":"...","url":"..."}]}
       - MCP_CONFIG={"servers":[{"name":"weather","url":"http://mcp-weather:8000/mcp","builtin_type":"weather"},{"name":"web_search","url":"http://mcp-web-search:8000/mcp","builtin_type":"web_search"},{"name":"code_interpreter","url":"http://mcp-code-interpreter:8000/mcp","builtin_type":"code_interpreter"},{"name":"reader","url":"http://mcp-reader:8000/mcp","builtin_type":"reader"},{"name":"zimage","url":"http://mcp-comfy-zimage:8000/mcp","builtin_type":"zimage_turbo"}]}
       - MAX_TOOL_ITERATIONS=10
       - TIMEOUT_SECS=300
       - RESPONSE_TTL_SECS=3600
       - RUST_LOG=responses_api=info,tower_http=info
+    volumes:
+      # Persistent storage for generated files (code interpreter images, etc.)
+      - responses-data:/data
     depends_on:
       llama-server:
         condition: service_healthy
@@ -719,7 +722,7 @@ services:
       target: test
     environment:
       - RESPONSES_API_URL=http://responses-api:8000
-      - MODELS_CONFIG={"models":[{"id":"gpt-oss-120b","url":"http://llama-server:8000"},{"id":"qwen3-vl-2b","url":"http://llama-server-qwen-vl:8000","supports_vision":true,"supported_tools":[]}]}
+      - MODELS_CONFIG={"models":[{"id":"gpt-oss-120b","url":"http://llama-server:8000","reasoning":{"effort":"high"}},{"id":"qwen3-vl-2b","url":"http://llama-server-qwen-vl:8000","supports_vision":true,"supported_tools":[]}]}
       - RUST_BACKTRACE=1
     depends_on:
       responses-api:
@@ -852,3 +855,4 @@ networks:
 
 volumes:
   backend-cargo-cache:
+  responses-data:

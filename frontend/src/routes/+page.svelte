@@ -80,6 +80,9 @@
 				onOutputItem: (item) => {
 					conversationStore.setOutputItem(conv!.id, assistantMessage.id, item);
 				},
+				onFunctionCallArgumentsDelta: (itemId, delta) => {
+					conversationStore.updateFunctionCallArguments(conv!.id, assistantMessage.id, itemId, delta);
+				},
 				onComplete: (responseId) => {
 					logger.api.streamComplete(conv!.id, conversationStore.get(conv!.id)?.messages.find(m => m.id === assistantMessage.id)?.content.length ?? 0);
 					conversationStore.updateLastResponseId(conv!.id, responseId);

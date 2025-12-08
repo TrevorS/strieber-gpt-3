@@ -52,6 +52,8 @@ export interface StreamingCallbacks {
 	onOutputItem?: (item: ResponseOutputItem, status: 'added' | 'done') => void;
 	/** Called when reasoning text is received (cumulative) - for DeepSeek R1 / o-series models */
 	onReasoning?: (text: string) => void;
+	/** Called when function call arguments delta is received (for streaming tool inputs) */
+	onFunctionCallArgumentsDelta?: (itemId: string, argumentsDelta: string) => void;
 }
 
 /**
@@ -143,7 +145,8 @@ export async function sendMessageStreaming(
 		attachments = [],
 		instructions
 	} = options;
-	const { onDelta, onComplete, onError, onOutputItem, onReasoning } = callbacks;
+	const { onDelta, onComplete, onError, onOutputItem, onReasoning, onFunctionCallArgumentsDelta } =
+		callbacks;
 
 	const baseUrl = getApiBaseUrl();
 	const url = `${baseUrl}/responses`;
@@ -246,6 +249,12 @@ export async function sendMessageStreaming(
 					outputIndex: doneEvent.output_index
 				});
 				onOutputItem(doneEvent.item as ResponseOutputItem, 'done');
+			}
+
+			// Handle function call arguments delta events (streaming tool inputs)
+			if (event.type === 'response.function_call_arguments.delta' && onFunctionCallArgumentsDelta) {
+				const deltaEvent = event as { item_id: string; delta: string };
+				onFunctionCallArgumentsDelta(deltaEvent.item_id, deltaEvent.delta);
 			}
 
 			// Track response ID from created event

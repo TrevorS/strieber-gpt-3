@@ -9,6 +9,7 @@ use std::env;
 use std::time::Duration;
 
 use crate::mcp::McpServerConfig;
+use crate::models::ReasoningConfig;
 
 /// Configuration for a model backend.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -30,6 +31,9 @@ pub struct ModelConfig {
     /// None = all tools, Some([]) = no tools, Some(["web_search"]) = specific tools
     #[serde(default)]
     pub supported_tools: Option<Vec<String>>,
+    /// Default reasoning configuration for this model
+    #[serde(default)]
+    pub reasoning: Option<ReasoningConfig>,
 }
 
 fn default_owned_by() -> String {
@@ -46,6 +50,7 @@ impl ModelConfig {
             owned_by: "local".to_string(),
             supports_vision: false,
             supported_tools: None,
+            reasoning: None,
         }
     }
 

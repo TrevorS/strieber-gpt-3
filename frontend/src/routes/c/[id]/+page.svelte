@@ -97,6 +97,14 @@
 				onOutputItem: (item) => {
 					conversationStore.setOutputItem(conversation!.id, assistantMessage.id, item);
 				},
+				onFunctionCallArgumentsDelta: (itemId, delta) => {
+					conversationStore.updateFunctionCallArguments(
+						conversation!.id,
+						assistantMessage.id,
+						itemId,
+						delta
+					);
+				},
 				onComplete: (responseId) => {
 					logger.api.streamComplete(
 						conversation!.id,
@@ -184,6 +192,14 @@
 				onOutputItem: (item) => {
 					conversationStore.setOutputItem(conversation!.id, assistantMessage.id, item);
 				},
+				onFunctionCallArgumentsDelta: (itemId, delta) => {
+					conversationStore.updateFunctionCallArguments(
+						conversation!.id,
+						assistantMessage.id,
+						itemId,
+						delta
+					);
+				},
 				onComplete: (responseId) => {
 					logger.api.streamComplete(
 						conversation!.id,
@@ -266,6 +282,14 @@
 				},
 				onOutputItem: (item) => {
 					conversationStore.setOutputItem(conversation!.id, assistantMessage.id, item);
+				},
+				onFunctionCallArgumentsDelta: (itemId, delta) => {
+					conversationStore.updateFunctionCallArguments(
+						conversation!.id,
+						assistantMessage.id,
+						itemId,
+						delta
+					);
 				},
 				onComplete: (responseId) => {
 					logger.api.streamComplete(

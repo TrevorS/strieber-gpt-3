@@ -286,6 +286,39 @@ class ConversationStore {
 	}
 
 	/**
+	 * Update function call arguments during streaming.
+	 * Finds the function_call item by item_id (the item's id field) and appends to its arguments.
+	 */
+	updateFunctionCallArguments(
+		conversationId: string,
+		messageId: string,
+		itemId: string,
+		argumentsDelta: string
+	): void {
+		const conv = this.conversations.find((c) => c.id === conversationId);
+		if (!conv) return;
+
+		const message = conv.messages.find((m) => m.id === messageId);
+		if (!message?.rawOutput) return;
+
+		// Find the function_call item by its id (item_id in delta events)
+		const item = message.rawOutput.find(
+			(i) => i.type === 'function_call' && 'id' in i && i.id === itemId
+		);
+
+		if (item && 'arguments' in item) {
+			// Append delta to existing arguments
+			(item as { arguments: string }).arguments += argumentsDelta;
+			logger.debug('store', 'Function call arguments updated', {
+				conversationId,
+				messageId,
+				itemId,
+				deltaLength: argumentsDelta.length
+			});
+		}
+	}
+
+	/**
 	 * Remove the last assistant message and return the preceding user message text.
 	 * Used for regenerating a response.
 	 */

@@ -114,8 +114,48 @@ async fn run_streaming_loop(
     let mut req = req;
     req.tools = expanded_tools;
 
+    // Apply model's default reasoning config if request doesn't specify one
+    if req.reasoning.is_none()
+        && let Some(ref default_reasoning) = model_config.reasoning
+    {
+        tracing::info!(
+            model = %req.model,
+            effort = ?default_reasoning.effort,
+            "Applying default reasoning config from model"
+        );
+        req.reasoning = Some(default_reasoning.clone());
+    }
+
+    // Extract attached images from input for tool injection
+    use crate::translation::{
+        AttachedImage, extract_attached_images, replace_images_with_placeholders,
+    };
+    let attached_images: Vec<AttachedImage> = extract_attached_images(&req.input);
+    if !attached_images.is_empty() {
+        tracing::info!(
+            image_count = attached_images.len(),
+            model_supports_vision = model_config.supports_vision,
+            "Found attached images in request"
+        );
+    }
+
+    // For non-vision models, replace images with text placeholders
+    // so the LLM knows images are attached but doesn't receive the raw data
+    let effective_input = if !attached_images.is_empty() && !model_config.supports_vision {
+        tracing::info!("Replacing images with placeholders for non-vision model");
+        replace_images_with_placeholders(&req.input)
+    } else {
+        req.input.clone()
+    };
+
     // Initialize conversation with previous messages from chain
     let mut conversation: Vec<ChatMessage> = previous_messages;
+
+    // Add the current request's user input to the conversation
+    // This ensures it appears BEFORE any tool calls/results in subsequent iterations
+    use crate::translation::input_to_messages;
+    conversation.extend(input_to_messages(&effective_input));
+
     let mut iteration = 0;
     let total_input_tokens = 0u32;
     let total_output_tokens = 0u32;
@@ -409,6 +449,7 @@ async fn run_streaming_loop(
                                         name: tc.name.clone(),
                                         arguments: String::new(),
                                         status: OutputStatus::InProgress,
+                                        output: None,
                                     })
                                 };
                                 send(
@@ -579,26 +620,8 @@ async fn run_streaming_loop(
                 )
                 .await?;
 
-                // For non-web_search tools, send output_item_done now
-                // web_search will be sent after execution with sources
-                if tc.name != "web_search" {
-                    let item = OutputItem::FunctionCall(FunctionCallOutput {
-                        id: tc.output_id.clone(),
-                        call_id: tc.id.clone(),
-                        name: tc.name.clone(),
-                        arguments: tc.arguments.clone(),
-                        status: OutputStatus::Completed,
-                    });
-                    send(
-                        &tx,
-                        SseEvent::output_item_done(
-                            resp_id.clone(),
-                            state.output_index + i as u32 + 1,
-                            item,
-                        ),
-                    )
-                    .await?;
-                }
+                // Note: output_item_done is sent AFTER tool execution completes
+                // so the UI shows the checkmark only when the tool finishes
             }
 
             // Build assistant message with tool calls for conversation
@@ -631,7 +654,47 @@ async fn run_streaming_loop(
 
             // Execute tool calls
             for (i, tc) in state.accumulated_tool_calls.iter().enumerate() {
-                let arguments: Value = serde_json::from_str(&tc.arguments).unwrap_or(Value::Null);
+                let mut arguments: Value =
+                    serde_json::from_str(&tc.arguments).unwrap_or(Value::Null);
+
+                // Inject attached images into tool arguments
+                // If the tool has an "image_data" parameter with value like "image_0" or "attached",
+                // replace it with the actual base64 image data
+                if let Some(obj) = arguments.as_object_mut()
+                    && let Some(image_param) = obj.get("image_data").cloned()
+                    && let Some(image_ref) = image_param.as_str()
+                {
+                    // Handle "attached" (use first image) or "image_N" format
+                    let image_index = if image_ref == "attached" {
+                        Some(0)
+                    } else if image_ref.starts_with("image_") {
+                        image_ref
+                            .strip_prefix("image_")
+                            .and_then(|n| n.parse::<usize>().ok())
+                    } else {
+                        None
+                    };
+
+                    if let Some(idx) = image_index {
+                        if let Some(img) = attached_images.get(idx) {
+                            tracing::info!(
+                                tool = %tc.name,
+                                image_id = %img.id,
+                                data_len = img.data.len(),
+                                "Injecting attached image into tool call"
+                            );
+                            obj.insert("image_data".to_string(), Value::String(img.data.clone()));
+                        } else {
+                            tracing::warn!(
+                                tool = %tc.name,
+                                requested_index = idx,
+                                available_images = attached_images.len(),
+                                "Requested image index not found"
+                            );
+                        }
+                    }
+                }
+
                 let result_text = match mcp.call_tool(&tc.name, arguments.clone()).await {
                     Ok(tool_result) => {
                         // Extract text and images from result
@@ -705,6 +768,28 @@ async fn run_streaming_loop(
                         format!("Error: {}", e)
                     }
                 };
+
+                // Send output_item_done for non-web_search tools AFTER execution completes
+                // (web_search tools send their own output_item_done above with sources)
+                if !tc.name.contains("web_search") && !tc.name.contains("news_search") {
+                    let item = OutputItem::FunctionCall(FunctionCallOutput {
+                        id: tc.output_id.clone(),
+                        call_id: tc.id.clone(),
+                        name: tc.name.clone(),
+                        arguments: tc.arguments.clone(),
+                        status: OutputStatus::Completed,
+                        output: Some(result_text.clone()),
+                    });
+                    send(
+                        &tx,
+                        SseEvent::output_item_done(
+                            resp_id.clone(),
+                            state.output_index + i as u32 + 1,
+                            item,
+                        ),
+                    )
+                    .await?;
+                }
 
                 // Add tool result to conversation
                 conversation.push(tool_result_message(tc.id.clone(), result_text));
@@ -812,6 +897,34 @@ fn build_final_output(
         }
     }
 
+    // Fallback: If we have generated files but no message was created, create one with just annotations
+    // This handles the case where the model only outputs reasoning (no user-visible text) but generates images
+    if !generated_files.is_empty() && !output.iter().any(|o| matches!(o, OutputItem::Message(_))) {
+        let annotations: Vec<Annotation> = generated_files
+            .iter()
+            .map(|file| Annotation::ContainerFileCitation {
+                container_id: file.container_id.clone(),
+                file_id: file.file_id.clone(),
+                filename: file.filename.clone(),
+            })
+            .collect();
+
+        tracing::info!(
+            file_count = generated_files.len(),
+            "Creating message with file citations (no text output)"
+        );
+
+        output.push(OutputItem::Message(MessageOutput {
+            id: message_id(),
+            status: OutputStatus::Completed,
+            role: OutputRole::Assistant,
+            content: vec![OutputContent::OutputText {
+                text: String::new(), // Empty text, annotations carry the images
+                annotations,
+            }],
+        }));
+    }
+
     for tc in &state.accumulated_tool_calls {
         if tc.name.contains("web_search") || tc.name.contains("news_search") {
             // Emit WebSearchCall for web_search tools
@@ -830,6 +943,7 @@ fn build_final_output(
                 name: tc.name.clone(),
                 arguments: tc.arguments.clone(),
                 status: OutputStatus::Completed,
+                output: None, // Output was sent in streaming event
             }));
         }
     }
@@ -1018,6 +1132,17 @@ fn extract_content_from_result(
     let text = text_parts.join("\n");
     let text = if result.is_error.unwrap_or(false) {
         format!("Error: {}", text)
+    } else {
+        text
+    };
+
+    // Append completion confirmation so the model knows the task is done
+    // Explicitly prohibit markdown links (they don't resolve) and extra generations
+    let text = if !generated_files.is_empty() {
+        format!(
+            "{}\n\n[IMAGE GENERATION COMPLETE: The image is now displayed to the user. Do not include markdown image links or references - they will not work. Simply acknowledge the image was created.]",
+            text
+        )
     } else {
         text
     };

@@ -111,11 +111,8 @@
 				continue;
 			}
 
-			// Check vision capability for images
-			if (type === 'image' && !settingsStore.supportsVision()) {
-				toastStore.warning(`Current model doesn't support images. Select a vision-capable model.`);
-				continue;
-			}
+			// Note: Images are always allowed - tools like zimage_controlnet can handle them
+			// even when the main model doesn't support vision
 
 			// Create attachment
 			const attachment = await createAttachment(file);
@@ -155,12 +152,7 @@
 		const imageItems = Array.from(items).filter(item => item.type.startsWith('image/'));
 		if (imageItems.length === 0) return;
 
-		// Check vision capability
-		if (!settingsStore.supportsVision()) {
-			toastStore.warning(`Current model doesn't support images. Select a vision-capable model.`);
-			return;
-		}
-
+		// Images always allowed - tools can handle them even without vision model
 		e.preventDefault();
 		const files = imageItems
 			.map(item => item.getAsFile())
@@ -197,18 +189,16 @@
 		}
 	}
 
-	// Build accept string based on model capabilities
+	// Build accept string - always include images (tools can handle them)
 	let acceptTypes = $derived.by(() => {
 		const types = [
-			// Text types - always allowed
+			// Text types
 			'.txt,.md,.json,.js,.ts,.jsx,.tsx,.py,.rs,.go,.java,.c,.cpp,.h,.hpp',
 			'.css,.html,.xml,.yaml,.yml,.csv,.toml,.sh,.bash,.zsh,.sql',
-			'.svelte,.vue,.rb,.php,.swift,.kt,.scala,.r,.lua,.pl,.pm'
+			'.svelte,.vue,.rb,.php,.swift,.kt,.scala,.r,.lua,.pl,.pm',
+			// Image types - always allowed for tool use (zimage_controlnet, etc.)
+			'image/jpeg,image/png,image/gif,image/webp'
 		];
-
-		if (settingsStore.supportsVision()) {
-			types.push('image/jpeg,image/png,image/gif');
-		}
 
 		return types.join(',');
 	});
