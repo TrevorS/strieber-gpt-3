@@ -124,6 +124,15 @@ fn input_item_to_message(item: &InputItem) -> Option<ChatMessage> {
             tracing::warn!("Computer call outputs are not supported; skipping");
             None
         }
+        // Item references must be resolved at a higher level where the full item list is available.
+        // This function only handles individual items, so references cannot be resolved here.
+        InputItem::ItemReference(reference) => {
+            tracing::debug!(
+                referenced_id = %reference.id,
+                "Item reference must be resolved before conversion; skipping"
+            );
+            None
+        }
     }
 }
 

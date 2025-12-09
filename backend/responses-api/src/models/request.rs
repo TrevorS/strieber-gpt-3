@@ -129,6 +129,21 @@ pub enum InputItem {
 
     /// Computer call output (screenshot result, etc.)
     ComputerCallOutput(ComputerCallOutputInput),
+
+    /// Reference to an existing item in the conversation.
+    /// Used to reference items by ID without duplicating content.
+    ItemReference(ItemReferenceInput),
+}
+
+// ============================================================================
+// Item Reference
+// ============================================================================
+
+/// Reference to an existing conversation item by ID.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ItemReferenceInput {
+    /// The ID of the referenced item (e.g., "msg_123", "fc_456")
+    pub id: String,
 }
 
 // ============================================================================

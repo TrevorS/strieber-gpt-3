@@ -12,8 +12,9 @@ use serde_json::json;
 use validator::Validate;
 
 use crate::models::{
-    Conversation, ConversationDeleted, ConversationItem, CreateConversationRequest,
-    CreateItemsRequest, ListResponse, PaginationQuery, UpdateConversationRequest,
+    Conversation, ConversationDeleted, ConversationItem, ConversationWithItems,
+    CreateConversationRequest, CreateItemsRequest, GetConversationQuery, ListResponse,
+    PaginationQuery, SortOrder, UpdateConversationRequest,
 };
 use crate::state::ConversationStore;
 
@@ -46,16 +47,35 @@ pub async fn create_conversation(
 }
 
 /// GET /v1/conversations/{conversation_id} - Get a conversation.
+///
+/// Supports `include` query parameter to request additional data:
+/// - `include=conversation.items` - Include items in the response
 pub async fn get_conversation(
     State(state): State<Arc<AppState>>,
     Path(conversation_id): Path<String>,
-) -> Result<Json<Conversation>, ApiError> {
+    Query(query): Query<GetConversationQuery>,
+) -> Result<Json<ConversationWithItems>, ApiError> {
     let conversation = state
         .conversations
         .get(&conversation_id)
         .ok_or_else(|| not_found_error("Conversation", &conversation_id))?;
 
-    Ok(Json(conversation))
+    // Optionally include items if requested
+    let items = if query.include_items() {
+        let pagination = PaginationQuery {
+            after: None,
+            limit: 100, // Use a high limit for include
+            order: SortOrder::Asc,
+        };
+        state
+            .conversations
+            .list_items(&conversation_id, &pagination)
+            .map(|list| list.data)
+    } else {
+        None
+    };
+
+    Ok(Json(ConversationWithItems::new(conversation, items)))
 }
 
 /// POST /v1/conversations/{conversation_id} - Update a conversation.

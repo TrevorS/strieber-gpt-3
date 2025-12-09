@@ -221,6 +221,66 @@ async fn test_get_conversation() {
     assert_eq!(conv.id, create_resp.id);
 }
 
+/// Test getting a conversation with include=conversation.items
+#[tokio::test]
+async fn test_get_conversation_with_include_items() {
+    skip_if_no_integration!();
+
+    let (client, url) = setup_responses_test().expect("test setup failed");
+
+    // Create a conversation with items
+    let conv: Conversation = client
+        .post(format!("{}/v1/conversations", url))
+        .json(&CreateConversationRequest {
+            metadata: None,
+            items: Some(vec![
+                ConversationInputItem::Message(ConversationMessage {
+                    role: "user".to_string(),
+                    content: "First message".to_string(),
+                }),
+                ConversationInputItem::Message(ConversationMessage {
+                    role: "user".to_string(),
+                    content: "Second message".to_string(),
+                }),
+            ]),
+        })
+        .send()
+        .await
+        .expect("failed to create")
+        .json()
+        .await
+        .expect("failed to parse");
+
+    // Get without include - should not have items
+    let resp_without: serde_json::Value = client
+        .get(format!("{}/v1/conversations/{}", url, conv.id))
+        .send()
+        .await
+        .expect("failed to get")
+        .json()
+        .await
+        .expect("failed to parse");
+
+    assert!(resp_without.get("items").is_none() || resp_without.get("items").unwrap().is_null());
+
+    // Get with include=conversation.items - should have items
+    let resp_with: serde_json::Value = client
+        .get(format!(
+            "{}/v1/conversations/{}?include[]=conversation.items",
+            url, conv.id
+        ))
+        .send()
+        .await
+        .expect("failed to get with include")
+        .json()
+        .await
+        .expect("failed to parse");
+
+    let items = resp_with.get("items").expect("items should be present");
+    assert!(items.is_array());
+    assert_eq!(items.as_array().unwrap().len(), 2);
+}
+
 /// Test getting a non-existent conversation returns 404.
 #[tokio::test]
 async fn test_get_nonexistent_conversation() {

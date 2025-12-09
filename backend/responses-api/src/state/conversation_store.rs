@@ -270,6 +270,7 @@ fn input_to_conversation_item(item: InputItem) -> ConversationItem {
         InputItem::FunctionCallOutput(_) => item_id(),
         InputItem::CustomToolCallOutput(_) => item_id(),
         InputItem::ComputerCallOutput(_) => item_id(),
+        InputItem::ItemReference(r) => r.id.clone(), // Use the referenced ID
     };
 
     ConversationItem {

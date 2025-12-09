@@ -143,8 +143,52 @@ impl CreateItemsRequest {
 }
 
 // ============================================================================
+// Query Parameters
+// ============================================================================
+
+/// Query parameters for GET /v1/conversations/{id}
+#[derive(Debug, Clone, Default, Deserialize)]
+pub struct GetConversationQuery {
+    /// Additional data to include in the response.
+    /// Valid values: "conversation.items"
+    #[serde(default)]
+    pub include: Option<Vec<String>>,
+}
+
+impl GetConversationQuery {
+    /// Check if items should be included in the response.
+    pub fn include_items(&self) -> bool {
+        self.include
+            .as_ref()
+            .map(|v| v.iter().any(|s| s == "conversation.items"))
+            .unwrap_or(false)
+    }
+}
+
+// ============================================================================
 // Response Types
 // ============================================================================
+
+/// Extended conversation response with optional items.
+/// Used when include=["conversation.items"] is specified.
+#[derive(Debug, Clone, Serialize)]
+pub struct ConversationWithItems {
+    /// The conversation object fields
+    #[serde(flatten)]
+    pub conversation: Conversation,
+    /// Items in the conversation (only present when requested)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub items: Option<Vec<ConversationItem>>,
+}
+
+impl ConversationWithItems {
+    pub fn new(conversation: Conversation, items: Option<Vec<ConversationItem>>) -> Self {
+        Self {
+            conversation,
+            items,
+        }
+    }
+}
 
 /// Response for DELETE /v1/conversations/{id}
 #[derive(Debug, Clone, Serialize)]

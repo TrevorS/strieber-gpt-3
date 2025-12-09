@@ -256,9 +256,9 @@ async fn run_streaming_loop(
                 );
             }
 
-            // Append output to conversation if using conversation API
+            // Append input and output to conversation if using conversation API
             if let (Some(conv_store), Some(conv_id)) = (&conversation_store, &conversation_id) {
-                append_output_to_conversation(conv_store, conv_id, &final_response.output);
+                append_to_conversation(conv_store, conv_id, &req, &final_response.output);
             }
 
             send(&tx, SseEvent::response_completed(final_response.clone())).await?;
@@ -844,9 +844,9 @@ async fn run_streaming_loop(
             tracing::debug!(response_id = %resp_id, "Response not stored (store=false)");
         }
 
-        // Append output to conversation if using conversation API
+        // Append input and output to conversation if using conversation API
         if let (Some(conv_store), Some(conv_id)) = (&conversation_store, &conversation_id) {
-            append_output_to_conversation(conv_store, conv_id, &final_response.output);
+            append_to_conversation(conv_store, conv_id, &req, &final_response.output);
         }
 
         send(&tx, SseEvent::response_completed(final_response.clone())).await?;
@@ -1263,42 +1263,78 @@ fn mcp_tool_to_function_tool(mcp_tool: rmcp::model::Tool) -> Tool {
     })
 }
 
-/// Append response output items to a conversation.
+/// Append request input and response output items to a conversation.
 ///
-/// Converts each `OutputItem` to a `ConversationItem` and appends to the store.
-fn append_output_to_conversation(
+/// Converts the request input and each `OutputItem` to `ConversationItem` and appends to the store.
+fn append_to_conversation(
     store: &InMemoryConversationStore,
     conversation_id: &str,
+    req: &CreateResponseRequest,
     output: &[OutputItem],
 ) {
-    use crate::translation::item_id;
+    use crate::models::{Input, InputItem, MessageContent, MessageInput, Role};
+    use crate::translation::{function_call_id, item_id, message_id, reasoning_id};
 
-    let items: Vec<ConversationItem> = output
-        .iter()
-        .map(|output_item| {
-            let id = match output_item {
-                OutputItem::Message(m) => m.id.clone(),
-                OutputItem::FunctionCall(f) => f.id.clone(),
-                OutputItem::Reasoning(r) => r.id.clone(),
-                OutputItem::WebSearchCall(w) => w.id.clone(),
-                _ => item_id(),
-            };
-            ConversationItem {
-                id,
-                status: OutputStatus::Completed,
-                content: ConversationItemContent::Output(
-                    serde_json::to_value(output_item).unwrap_or_default(),
-                ),
-            }
-        })
-        .collect();
+    let mut all_items: Vec<ConversationItem> = Vec::new();
 
-    if !items.is_empty() {
-        store.append_output_items(conversation_id, items.clone());
+    // First, append input items from the request
+    let input_items: Vec<InputItem> = match &req.input {
+        Input::Empty => vec![],
+        Input::Text(text) => {
+            // Convert simple text to a user message
+            vec![InputItem::Message(MessageInput {
+                role: Role::User,
+                content: MessageContent::Text(text.clone()),
+            })]
+        }
+        Input::Items(items) => items.clone(),
+    };
+
+    for input_item in input_items {
+        let id = match &input_item {
+            InputItem::Message(_) => message_id(),
+            InputItem::Reasoning(_) => reasoning_id(),
+            InputItem::FunctionCall(_) => function_call_id(),
+            _ => item_id(),
+        };
+        all_items.push(ConversationItem {
+            id,
+            status: OutputStatus::Completed,
+            content: ConversationItemContent::Input(input_item),
+        });
+    }
+
+    // Then, append output items from the response
+    for output_item in output {
+        let id = match output_item {
+            OutputItem::Message(m) => m.id.clone(),
+            OutputItem::FunctionCall(f) => f.id.clone(),
+            OutputItem::Reasoning(r) => r.id.clone(),
+            OutputItem::WebSearchCall(w) => w.id.clone(),
+            _ => item_id(),
+        };
+        all_items.push(ConversationItem {
+            id,
+            status: OutputStatus::Completed,
+            content: ConversationItemContent::Output(
+                serde_json::to_value(output_item).unwrap_or_default(),
+            ),
+        });
+    }
+
+    if !all_items.is_empty() {
+        let input_count = all_items
+            .iter()
+            .filter(|i| matches!(i.content, ConversationItemContent::Input(_)))
+            .count();
+        let output_count = all_items.len() - input_count;
+
+        store.append_output_items(conversation_id, all_items);
         tracing::debug!(
             conversation_id = %conversation_id,
-            items_appended = items.len(),
-            "Appended streaming response output to conversation"
+            input_items_appended = input_count,
+            output_items_appended = output_count,
+            "Appended streaming request and response to conversation"
         );
     }
 }
