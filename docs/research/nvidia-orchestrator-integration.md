@@ -51,6 +51,142 @@ When GPT-5 acts as its own router, it overwhelmingly prefers to call GPT-5-mini.
 
 ---
 
+## Part 1.5: Why Not Just Use Qwen3-8B for Routing?
+
+This is a critical question: **If Qwen3-8B has the best tool-calling accuracy (F1: 0.933) among 8B models, why did NVIDIA spend the effort to train a dedicated Orchestrator-8B?**
+
+The answer reveals a fundamental difference between **tool calling** and **orchestration**.
+
+### Tool Calling ≠ Orchestration
+
+| Capability | Tool Calling | Orchestration |
+|------------|--------------|---------------|
+| **Task** | Execute a specific function correctly | Decide *which* resource to use |
+| **Optimization** | Accuracy only | Accuracy + Cost + Latency + User Preference |
+| **Decision Space** | "Call weather API with these args" | "Should I call weather API, use small model, or escalate to large model?" |
+| **Training Signal** | Did the function call succeed? | Did the system solve the problem efficiently? |
+
+Qwen3-8B excels at the first row. But orchestration requires optimizing across **multiple competing objectives simultaneously**.
+
+### The Self-Enhancement Bias Problem
+
+When you prompt an LLM to "choose the best tool for this task," you get systematic biases:
+
+```
+┌─────────────────────────────────────────────────────────────────────┐
+│              SELF-ENHANCEMENT BIAS IN ROUTING                       │
+├─────────────────────────────────────────────────────────────────────┤
+│                                                                     │
+│  When GPT-5 is the router:                                         │
+│  ├─► Overwhelmingly prefers GPT-5-mini                             │
+│  ├─► "Family loyalty" - trusts its own model family                │
+│  └─► Rarely delegates to specialized models even when optimal      │
+│                                                                     │
+│  When Qwen3-8B is the router:                                      │
+│  ├─► Defaults to GPT-5 for everything                              │
+│  ├─► Lacks confidence in its own abilities                         │
+│  └─► Over-delegates, wasting expensive model calls                 │
+│                                                                     │
+│  When Orchestrator-8B (RL-trained) is the router:                  │
+│  ├─► Balanced distribution across all tools                        │
+│  ├─► Routes simple tasks to cheap models                           │
+│  ├─► Reserves expensive models for genuinely complex tasks         │
+│  └─► Respects user cost/speed preferences                          │
+│                                                                     │
+└─────────────────────────────────────────────────────────────────────┘
+```
+
+### Why Prompting Cannot Solve This
+
+**Prompt-based routing example:**
+```
+You are a router. Choose the best tool for the user's query:
+- small_model: for simple queries
+- large_model: for complex reasoning
+- math_model: for calculations
+
+User query: "What is 2+2?"
+```
+
+**Problems with this approach:**
+
+1. **No cost awareness**: The model doesn't know (or care) that `large_model` costs 10x more
+2. **No latency feedback**: The model doesn't learn that `small_model` responds in 2s vs 15s
+3. **No outcome optimization**: The model isn't penalized if the routed model fails
+4. **No preference tuning**: Can't learn "when user says 'fast', really prefer cheap models"
+5. **Instruction following ≠ optimization**: Following instructions doesn't mean making optimal trade-offs
+
+### The RL Training Difference
+
+NVIDIA's key insight: **Make the orchestrator learn from experience with explicit reward signals.**
+
+```
+┌─────────────────────────────────────────────────────────────────────┐
+│                    THREE-PART REWARD FUNCTION                       │
+├─────────────────────────────────────────────────────────────────────┤
+│                                                                     │
+│  1. OUTCOME REWARD (Binary)                                        │
+│     └─► Did the system solve the problem? +1 or 0                  │
+│                                                                     │
+│  2. EFFICIENCY REWARD (Continuous)                                 │
+│     └─► Cost penalty: -α × dollars_spent                           │
+│     └─► Latency penalty: -β × seconds_elapsed                      │
+│     └─► Encourages cheap/fast solutions when they work             │
+│                                                                     │
+│  3. PREFERENCE REWARD (Conditional)                                │
+│     └─► If user said "fast": extra reward for low latency          │
+│     └─► If user said "accurate": extra reward for high accuracy    │
+│     └─► If user said "cheap": extra reward for low cost            │
+│                                                                     │
+│  Total Reward = Outcome + λ₁(Efficiency) + λ₂(Preference)          │
+│                                                                     │
+└─────────────────────────────────────────────────────────────────────┘
+```
+
+This reward structure **fundamentally changes the model's behavior**:
+
+- If `small_model` can solve "2+2" correctly, the orchestrator learns to use it (high outcome + high efficiency)
+- If `small_model` fails on a calculus problem, the orchestrator learns to escalate (outcome > efficiency)
+- If user wants "fast", the orchestrator shifts toward lower-latency options
+
+### Why GRPO Instead of Standard RL?
+
+NVIDIA used **Group Relative Policy Optimization (GRPO)** instead of PPO because:
+
+1. **No critic network needed** → 40% less memory/compute
+2. **Comparative assessment** → Evaluates choices relative to alternatives, not absolute
+3. **More stable training** → Less sensitive to hyperparameters
+4. **Works with sparse rewards** → Outcome reward is often binary
+
+### Empirical Evidence: Balanced Tool Distribution
+
+From the paper, Orchestrator-8B distributes calls more evenly:
+
+| Router | % to Cheap Models | % to Expensive Models | % Direct Tools |
+|--------|-------------------|----------------------|----------------|
+| GPT-5 (prompted) | 15% | 75% | 10% |
+| Qwen3-8B (prompted) | 5% | 85% | 10% |
+| **Orchestrator-8B** | **45%** | **35%** | **20%** |
+
+The RL-trained orchestrator routes nearly half of queries to cheap models and aggressively uses direct tool calls—achieving 70% cost reduction.
+
+### Bottom Line
+
+**Qwen3-8B is excellent at tool calling** (when told to call a tool, it does so accurately).
+
+**Orchestrator-8B is excellent at deciding whether and which tool to call** (meta-level decision making with cost awareness).
+
+They solve different problems:
+- Qwen3-8B: "Execute `get_weather('NYC')` correctly"
+- Orchestrator-8B: "Should I call `get_weather`, use `small_model`, or escalate to `large_model`?"
+
+For a local stack, you could:
+1. **Use Orchestrator-8B** for routing decisions (purpose-built)
+2. **Use Qwen3-8B** as your small general model (best tool calling accuracy)
+3. This gives you the best of both worlds
+
+---
+
 ## Part 2: Current strieber-gpt-3 Architecture
 
 ### System Overview
