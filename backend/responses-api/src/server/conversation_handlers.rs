@@ -9,6 +9,8 @@ use axum::{
 };
 use serde_json::json;
 
+use validator::Validate;
+
 use crate::models::{
     Conversation, ConversationDeleted, ConversationItem, CreateConversationRequest,
     CreateItemsRequest, ListResponse, PaginationQuery, UpdateConversationRequest,
@@ -107,6 +109,11 @@ pub async fn list_items(
     Path(conversation_id): Path<String>,
     Query(query): Query<PaginationQuery>,
 ) -> Result<Json<ListResponse<ConversationItem>>, ApiError> {
+    // Validate pagination parameters
+    query
+        .validate()
+        .map_err(|e| validation_error(&e.to_string()))?;
+
     let list = state
         .conversations
         .list_items(&conversation_id, &query)

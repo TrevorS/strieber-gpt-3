@@ -220,10 +220,8 @@ impl ConversationStore for InMemoryConversationStore {
     fn add_items(&self, id: &str, items: Vec<InputItem>) -> Option<ListResponse<ConversationItem>> {
         let mut stored = self.conversations.get_mut(id)?;
 
-        let new_items: Vec<ConversationItem> = items
-            .into_iter()
-            .map(input_to_conversation_item)
-            .collect();
+        let new_items: Vec<ConversationItem> =
+            items.into_iter().map(input_to_conversation_item).collect();
 
         let first_id = new_items.first().map(|i| i.id.clone());
         let last_id = new_items.last().map(|i| i.id.clone());

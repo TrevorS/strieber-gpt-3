@@ -402,7 +402,75 @@ fn conversation_items_to_chat_messages(items: &[ConversationItem]) -> Vec<ChatMe
                         _ => None, // Skip other input types for now
                     }
                 }
-                ConversationItemContent::Output(_) => None, // TODO: handle output items
+                ConversationItemContent::Output(output_json) => {
+                    // Parse output JSON and extract message content
+                    // Output items have a "type" field to identify them
+                    let type_field = output_json.get("type").and_then(|t| t.as_str());
+
+                    match type_field {
+                        Some("message") => {
+                            // Extract text content from message output
+                            let content_array =
+                                output_json.get("content").and_then(|c| c.as_array());
+                            let text = content_array.and_then(|arr| {
+                                arr.iter().find_map(|part| {
+                                    if part.get("type").and_then(|t| t.as_str())
+                                        == Some("output_text")
+                                    {
+                                        part.get("text")
+                                            .and_then(|t| t.as_str())
+                                            .map(|s| s.to_string())
+                                    } else {
+                                        None
+                                    }
+                                })
+                            });
+
+                            text.map(|t| ChatMessage {
+                                role: ChatRole::Assistant,
+                                content: Some(ChatContent::Text(t)),
+                                reasoning_content: None,
+                                tool_calls: None,
+                                tool_call_id: None,
+                            })
+                        }
+                        Some("reasoning") => {
+                            // Extract reasoning content and wrap in think tags
+                            let content_array =
+                                output_json.get("content").and_then(|c| c.as_array());
+                            let text = content_array.and_then(|arr| {
+                                let texts: Vec<String> = arr
+                                    .iter()
+                                    .filter_map(|part| {
+                                        if part.get("type").and_then(|t| t.as_str())
+                                            == Some("reasoning_text")
+                                        {
+                                            part.get("text")
+                                                .and_then(|t| t.as_str())
+                                                .map(|s| s.to_string())
+                                        } else {
+                                            None
+                                        }
+                                    })
+                                    .collect();
+                                if texts.is_empty() {
+                                    None
+                                } else {
+                                    Some(texts.join(""))
+                                }
+                            });
+
+                            text.map(|t| ChatMessage {
+                                role: ChatRole::Assistant,
+                                content: None,
+                                reasoning_content: Some(t),
+                                tool_calls: None,
+                                tool_call_id: None,
+                            })
+                        }
+                        _ => None, // Skip function calls and other types
+                    }
+                }
             }
         })
         .collect()
@@ -412,39 +480,71 @@ fn conversation_items_to_chat_messages(items: &[ConversationItem]) -> Vec<ChatMe
 fn append_response_to_conversation(
     store: &InMemoryConversationStore,
     conversation_id: &str,
-    _req: &CreateResponseRequest,
+    req: &CreateResponseRequest,
     response: &crate::models::Response,
 ) {
-    use crate::models::{ConversationItemContent, OutputStatus};
+    use crate::models::{ConversationItemContent, Input, InputItem, OutputStatus};
     use crate::translation::{function_call_id, item_id, message_id, reasoning_id};
 
-    // Convert output items to conversation items
-    let output_items: Vec<ConversationItem> = response
-        .output
-        .iter()
-        .map(|output| {
-            let id = match output {
-                crate::models::OutputItem::Message(_) => message_id(),
-                crate::models::OutputItem::FunctionCall(_) => function_call_id(),
-                crate::models::OutputItem::Reasoning(_) => reasoning_id(),
-                _ => item_id(),
-            };
-            ConversationItem {
-                id,
-                status: OutputStatus::Completed,
-                content: ConversationItemContent::Output(
-                    serde_json::to_value(output).unwrap_or_default(),
-                ),
-            }
-        })
-        .collect();
+    let mut all_items: Vec<ConversationItem> = Vec::new();
 
-    if !output_items.is_empty() {
-        store.append_output_items(conversation_id, output_items);
+    // First, append input items from the request
+    let input_items: Vec<InputItem> = match &req.input {
+        Input::Empty => vec![],
+        Input::Text(text) => {
+            // Convert simple text to a user message
+            vec![InputItem::Message(crate::models::MessageInput {
+                role: crate::models::Role::User,
+                content: crate::models::MessageContent::Text(text.clone()),
+            })]
+        }
+        Input::Items(items) => items.clone(),
+    };
+
+    for input_item in input_items {
+        let id = match &input_item {
+            InputItem::Message(_) => message_id(),
+            InputItem::Reasoning(_) => reasoning_id(),
+            InputItem::FunctionCall(_) => function_call_id(),
+            _ => item_id(),
+        };
+        all_items.push(ConversationItem {
+            id,
+            status: OutputStatus::Completed,
+            content: ConversationItemContent::Input(input_item),
+        });
+    }
+
+    // Then, append output items from the response
+    for output in &response.output {
+        let id = match output {
+            crate::models::OutputItem::Message(_) => message_id(),
+            crate::models::OutputItem::FunctionCall(_) => function_call_id(),
+            crate::models::OutputItem::Reasoning(_) => reasoning_id(),
+            _ => item_id(),
+        };
+        all_items.push(ConversationItem {
+            id,
+            status: OutputStatus::Completed,
+            content: ConversationItemContent::Output(
+                serde_json::to_value(output).unwrap_or_default(),
+            ),
+        });
+    }
+
+    if !all_items.is_empty() {
+        let input_count = all_items
+            .iter()
+            .filter(|i| matches!(i.content, ConversationItemContent::Input(_)))
+            .count();
+        let output_count = all_items.len() - input_count;
+
+        store.append_output_items(conversation_id, all_items);
         tracing::debug!(
             conversation_id = %conversation_id,
-            items_appended = response.output.len(),
-            "Appended response to conversation"
+            input_items_appended = input_count,
+            output_items_appended = output_count,
+            "Appended request and response to conversation"
         );
     }
 }
