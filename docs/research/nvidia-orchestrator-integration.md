@@ -4075,3 +4075,346 @@ curl -X POST http://localhost:9150/v1/responses \
   -d '{"model": "gpt-oss-120b", "input": "Hello!"}'
 # Expected: Normal flow, no orchestration
 ```
+
+---
+
+## Part 19: System Integration Architecture
+
+This section documents how the orchestrator fits into the existing strieber-gpt-3 system architecture, following established patterns.
+
+### Current System Architecture
+
+```
+┌─────────────────────────────────────────────────────────────────────────────────┐
+│                        STRIEBER-GPT-3 SYSTEM ARCHITECTURE                       │
+├─────────────────────────────────────────────────────────────────────────────────┤
+│                                                                                 │
+│  ┌─────────────────┐                                                            │
+│  │   chat-ui       │  Frontend (Svelte 5)                                       │
+│  │   :9300         │  - ModelSelector fetches /v1/models                        │
+│  └────────┬────────┘  - Sends requests with user-selected model                 │
+│           │                                                                     │
+│           │ POST /v1/responses {model: "gpt-oss-120b", input: "..."}            │
+│           ▼                                                                     │
+│  ┌─────────────────┐                                                            │
+│  │ responses-api   │  Backend (Rust + Axum)                                     │
+│  │   :9150         │  - Config::from_env() loads MODELS_CONFIG, MCP_CONFIG      │
+│  │                 │  - McpClient connects to MCP servers                       │
+│  │                 │  - Executor handles requests, tool loops                   │
+│  └────────┬────────┘                                                            │
+│           │                                                                     │
+│           │ POST /v1/chat/completions                                           │
+│           ▼                                                                     │
+│  ┌─────────────────┐  ┌─────────────────┐                                       │
+│  │ llama-server    │  │ llama-server    │  LLM Backends (llama.cpp)             │
+│  │ (gpt-oss-120b)  │  │ (qwen3-vl-2b)   │  - Each model has own service         │
+│  │   :9010         │  │   :9020         │  - Registered in MODELS_CONFIG        │
+│  └─────────────────┘  └─────────────────┘                                       │
+│                                                                                 │
+│           │ MCP tool calls                                                      │
+│           ▼                                                                     │
+│  ┌───────────┬───────────┬───────────┬───────────┐                              │
+│  │mcp-weather│mcp-search │mcp-code   │mcp-reader │  MCP Tool Servers            │
+│  │  :9100    │  :9110    │  :9120    │  :9130    │  - Each registered with      │
+│  └───────────┴───────────┴───────────┴───────────┘    builtin_type in MCP_CONFIG│
+│                                                                                 │
+└─────────────────────────────────────────────────────────────────────────────────┘
+```
+
+### Configuration Pattern Analysis
+
+**Environment Variables (compose.yml):**
+```yaml
+environment:
+  # Models: Parsed by Config::from_env() → config.models
+  - MODELS_CONFIG={"models":[
+      {"id":"gpt-oss-120b","url":"http://llama-server:8000",...},
+      {"id":"qwen3-vl-2b","url":"http://llama-server-qwen-vl:8000",...}
+    ]}
+
+  # MCP: Parsed by Config::from_env() → config.mcp_servers
+  - MCP_CONFIG={"servers":[
+      {"name":"weather","url":"http://mcp-weather:8000/mcp","builtin_type":"weather"},
+      ...
+    ]}
+```
+
+**Rust Config Loading (src/config/mod.rs):**
+```rust
+pub fn from_env() -> Self {
+    if let Ok(json) = env::var("MODELS_CONFIG") {
+        config.models = serde_json::from_str(&json)?;
+    }
+    if let Ok(json) = env::var("MCP_CONFIG") {
+        config.mcp_servers = serde_json::from_str(&json)?;
+    }
+}
+```
+
+**Frontend Model Discovery:**
+```typescript
+// ModelSelector.svelte fetches /v1/models
+const response = await fetch(`${getApiBaseUrl()}/models`);
+// Returns: {data: [{id: "gpt-oss-120b", ...}, {id: "qwen3-vl-2b", ...}]}
+```
+
+### Orchestrator Integration: The Three-Layer Approach
+
+```
+┌─────────────────────────────────────────────────────────────────────────────────┐
+│                     ORCHESTRATED SYSTEM ARCHITECTURE                            │
+├─────────────────────────────────────────────────────────────────────────────────┤
+│                                                                                 │
+│  ┌─────────────────┐                                                            │
+│  │   chat-ui       │  - Shows "auto" in ModelSelector (intelligent routing)     │
+│  │   :9300         │  - User can select specific model to bypass orchestrator   │
+│  └────────┬────────┘                                                            │
+│           │                                                                     │
+│           │ POST /v1/responses {model: "auto", input: "Hello!"}                 │
+│           ▼                                                                     │
+│  ┌─────────────────────────────────────────────────────────────────────────┐    │
+│  │                        responses-api :9150                              │    │
+│  │  ┌──────────────────────────────────────────────────────────────────┐   │    │
+│  │  │ OrchestratorRouter (NEW)                                         │   │    │
+│  │  │ - Intercepts model="auto" requests                               │   │    │
+│  │  │ - Calls orchestrator model for routing decision                  │   │    │
+│  │  │ - Resolves "small"→"qwen3-vl-8b-instruct"                       │   │    │
+│  │  └──────────────────────────────────────────────────────────────────┘   │    │
+│  └────────┬───────────────────────────────┬────────────────────────────────┘    │
+│           │                               │                                     │
+│           │ Routing (~300ms)              │ Request with resolved model         │
+│           ▼                               ▼                                     │
+│  ┌─────────────────┐             ┌─────────────────┐  ┌─────────────────┐       │
+│  │ llama-server    │             │ llama-server    │  │ llama-server    │       │
+│  │ orchestrator    │◄────────────│ qwen-vl-8b      │  │ gpt-oss-120b    │       │
+│  │ :9060           │  decides    │ :9020 (small)   │  │ :9010 (large)   │       │
+│  └─────────────────┘             └─────────────────┘  └─────────────────┘       │
+│                                                                                 │
+└─────────────────────────────────────────────────────────────────────────────────┘
+```
+
+### Configuration Design
+
+**1. MODELS_CONFIG - Add "auto" virtual model:**
+
+```json
+{
+  "models": [
+    {
+      "id": "auto",
+      "url": "",
+      "owned_by": "system",
+      "description": "Intelligent routing - automatically selects the best model",
+      "is_virtual": true
+    },
+    {
+      "id": "orchestrator",
+      "url": "http://llama-server-orchestrator:8000",
+      "owned_by": "nvidia",
+      "hidden": true
+    },
+    {
+      "id": "qwen3-vl-8b-instruct",
+      "url": "http://llama-server-qwen-vl:8000",
+      "supports_vision": true
+    },
+    {
+      "id": "gpt-oss-120b",
+      "url": "http://llama-server:8000",
+      "reasoning": {"effort": "high"}
+    }
+  ]
+}
+```
+
+**2. ORCHESTRATOR_CONFIG - New environment variable (follows MCP_CONFIG pattern):**
+
+```json
+{
+  "enabled": true,
+  "model_id": "orchestrator",
+  "auto_model_id": "auto",
+  "default_preference": "balanced",
+  "role_mapping": {
+    "small": "qwen3-vl-8b-instruct",
+    "large": "gpt-oss-120b",
+    "vision": "qwen3-vl-8b-instruct"
+  },
+  "fallback_model": "gpt-oss-120b",
+  "max_tokens": 256,
+  "temperature": 0.1,
+  "timeout_secs": 30
+}
+```
+
+### Module Structure (Following MCP Pattern)
+
+```
+src/orchestration/           # Similar to src/mcp/
+├── mod.rs                   # pub use statements
+├── config.rs                # OrchestratorConfig (like McpServerConfig)
+├── router.rs                # OrchestratorRouter (like McpClient)
+├── prompt.rs                # System prompt builder
+└── types.rs                 # RoutingAction, RoutingDecision
+
+vs
+
+src/mcp/
+├── mod.rs                   # pub use statements
+└── client.rs                # McpClient, McpServerConfig
+```
+
+### Integration Points
+
+**1. src/config/mod.rs - Add orchestrator config:**
+
+```rust
+use crate::orchestration::OrchestratorConfig;
+
+pub struct Config {
+    pub models: Vec<ModelConfig>,
+    pub mcp_servers: Vec<McpServerConfig>,
+    pub orchestrator: OrchestratorConfig,  // NEW
+    // ...
+}
+
+impl Config {
+    pub fn from_env() -> Self {
+        // ... existing code ...
+
+        // NEW: Parse ORCHESTRATOR_CONFIG
+        if let Ok(json) = env::var("ORCHESTRATOR_CONFIG") {
+            match serde_json::from_str::<OrchestratorConfig>(&json) {
+                Ok(orch) => config.orchestrator = orch,
+                Err(e) => tracing::warn!("Failed to parse ORCHESTRATOR_CONFIG: {}", e),
+            }
+        }
+
+        config
+    }
+}
+```
+
+**2. src/main.rs - Create and wire OrchestratorRouter:**
+
+```rust
+use responses_api::orchestration::OrchestratorRouter;
+
+async fn main() {
+    let config = Config::from_env();
+
+    // Existing
+    let mcp_client = McpClient::new(config.mcp_servers.clone());
+    mcp_client.connect_all().await?;
+
+    // NEW
+    let orchestrator = OrchestratorRouter::new(config.orchestrator.clone());
+
+    let state = Arc::new(AppState {
+        executor,
+        store: InMemoryStore::new(),
+        config: config.clone(),
+        mcp: mcp_client,
+        containers,
+        orchestrator,  // NEW
+    });
+}
+```
+
+**3. src/server/handlers.rs - Add orchestration to request flow:**
+
+```rust
+pub struct AppState {
+    pub executor: Executor,
+    pub store: InMemoryStore,
+    pub config: Config,
+    pub mcp: McpClient,
+    pub containers: ContainerStore,
+    pub orchestrator: OrchestratorRouter,  // NEW
+}
+
+pub async fn create_response(...) -> Result<impl IntoResponse, ApiError> {
+    // ... chain resolution ...
+
+    // NEW: Apply orchestration if model is "auto"
+    let effective_req = apply_orchestration(&state, req.clone()).await?;
+
+    // Existing: Execute with (potentially modified) request
+    let response = state.executor.execute(&effective_req, previous_messages).await?;
+
+    // ...
+}
+
+async fn apply_orchestration(
+    state: &AppState,
+    mut req: CreateResponseRequest,
+) -> Result<CreateResponseRequest, ApiError> {
+    if !state.orchestrator.is_enabled() || req.model != "auto" {
+        return Ok(req);
+    }
+
+    let orch_model = state.config.get_model(&state.config.orchestrator.model_id)?;
+    let tools = state.mcp.available_tools().await;
+
+    match state.orchestrator.route(&req, orch_model, tools).await {
+        Ok(decision) => {
+            let actual_model = state.orchestrator.resolve_model(&decision.model());
+            req.model = actual_model;
+            Ok(req)
+        }
+        Err(e) => {
+            tracing::warn!(error = %e, "Orchestration failed, using fallback");
+            req.model = state.orchestrator.fallback_model().to_string();
+            Ok(req)
+        }
+    }
+}
+```
+
+### Docker Compose Integration
+
+```yaml
+services:
+  llama-server-orchestrator:
+    # ... (from Part 16)
+
+  responses-api:
+    environment:
+      - MODELS_CONFIG={"models":[{"id":"auto","url":"","owned_by":"system","is_virtual":true},{"id":"orchestrator","url":"http://llama-server-orchestrator:8000","owned_by":"nvidia","hidden":true},{"id":"qwen3-vl-8b-instruct","url":"http://llama-server-qwen-vl:8000","supports_vision":true},{"id":"gpt-oss-120b","url":"http://llama-server:8000","reasoning":{"effort":"high"}}]}
+      - MCP_CONFIG={"servers":[...]}
+      - ORCHESTRATOR_CONFIG={"enabled":true,"model_id":"orchestrator","auto_model_id":"auto","default_preference":"balanced","role_mapping":{"small":"qwen3-vl-8b-instruct","large":"gpt-oss-120b","vision":"qwen3-vl-8b-instruct"},"fallback_model":"gpt-oss-120b","max_tokens":256,"temperature":0.1}
+    depends_on:
+      llama-server-orchestrator:  # NEW
+        condition: service_healthy
+```
+
+### Graceful Degradation
+
+The system never fails due to orchestrator issues:
+
+```rust
+match state.orchestrator.route(&req, ...).await {
+    Ok(decision) => { /* use routing */ }
+    Err(e) => {
+        tracing::warn!("Orchestration failed: {}, using fallback", e);
+        req.model = state.orchestrator.fallback_model().to_string();
+        Ok(req)  // Continue with fallback - never fail the request
+    }
+}
+```
+
+### Summary: Files to Change
+
+| File | Change | Lines |
+|------|--------|-------|
+| `src/lib.rs` | Add `pub mod orchestration;` | +1 |
+| `src/orchestration/mod.rs` | NEW module exports | ~10 |
+| `src/orchestration/config.rs` | NEW config types | ~80 |
+| `src/orchestration/types.rs` | NEW routing types | ~40 |
+| `src/orchestration/router.rs` | NEW router logic | ~150 |
+| `src/orchestration/prompt.rs` | NEW prompt builder | ~60 |
+| `src/config/mod.rs` | Add orchestrator field + parsing | ~15 |
+| `src/server/handlers.rs` | Add AppState field + apply_orchestration | ~50 |
+| `src/main.rs` | Create router + add to state | ~10 |
+| `compose.yml` | Update env vars, depends_on | ~10 |
+| **Total** | | **~425** |
