@@ -9,6 +9,10 @@ use axum::{
 use tower_http::cors::{Any, CorsLayer};
 use tower_http::trace::TraceLayer;
 
+use super::conversation_handlers::{
+    create_conversation, create_items, delete_conversation, delete_item, get_conversation,
+    get_item, list_items, update_conversation,
+};
 use super::handlers::{self, AppState};
 use crate::containers;
 
@@ -27,6 +31,22 @@ pub fn create_router(state: Arc<AppState>) -> Router {
         .route(
             "/v1/responses/{response_id}",
             delete(handlers::delete_response),
+        )
+        // Conversations API
+        .route("/v1/conversations", post(create_conversation))
+        .route(
+            "/v1/conversations/:conversation_id",
+            get(get_conversation)
+                .post(update_conversation)
+                .delete(delete_conversation),
+        )
+        .route(
+            "/v1/conversations/:conversation_id/items",
+            get(list_items).post(create_items),
+        )
+        .route(
+            "/v1/conversations/:conversation_id/items/:item_id",
+            get(get_item).delete(delete_item),
         )
         // Container file endpoints
         .route(

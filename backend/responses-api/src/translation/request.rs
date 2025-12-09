@@ -469,6 +469,7 @@ mod tests {
             text: None,
             truncation: Default::default(),
             metadata: None,
+            conversation: None,
         };
 
         let chat_req = to_chat_completion(&req, None);
@@ -501,6 +502,7 @@ mod tests {
             text: None,
             truncation: Default::default(),
             metadata: None,
+            conversation: None,
         };
 
         let chat_req = to_chat_completion(&req, None);
@@ -547,6 +549,7 @@ mod tests {
             text: None,
             truncation: Default::default(),
             metadata: None,
+            conversation: None,
         };
 
         let chat_req = to_chat_completion(&req, None);
@@ -594,6 +597,7 @@ mod tests {
             text: None,
             truncation: Default::default(),
             metadata: None,
+            conversation: None,
         };
 
         let chat_req = to_chat_completion(&req, None);
@@ -638,6 +642,7 @@ mod tests {
             text: None,
             truncation: Default::default(),
             metadata: None,
+            conversation: None,
         };
 
         // Simulate what streaming.rs would provide - previous messages WITH current input
@@ -711,6 +716,7 @@ mod tests {
             text: None,
             truncation: Default::default(),
             metadata: None,
+            conversation: None,
         };
 
         let chat_req = to_chat_completion(&req, None);
@@ -765,6 +771,7 @@ mod tests {
             text: None,
             truncation: Default::default(),
             metadata: None,
+            conversation: None,
         };
 
         let chat_req = to_chat_completion(&req, None);
@@ -810,6 +817,7 @@ mod tests {
             text: None,
             truncation: Default::default(),
             metadata: None,
+            conversation: None,
         };
 
         let chat_req = to_chat_completion(&req, None);
@@ -853,6 +861,7 @@ mod tests {
             text: None,
             truncation: Default::default(),
             metadata: None,
+            conversation: None,
         };
 
         let chat_req = to_chat_completion(&req, None);
@@ -924,6 +933,7 @@ mod tests {
                 text: None,
                 truncation: Default::default(),
                 metadata: None,
+                conversation: None,
             },
             created_at: Instant::now(),
             ttl: Duration::from_secs(3600),
@@ -949,6 +959,7 @@ mod tests {
             text: None,
             truncation: Default::default(),
             metadata: None,
+            conversation: None,
         }
     }
 

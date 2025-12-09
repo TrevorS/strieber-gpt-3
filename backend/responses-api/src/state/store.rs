@@ -164,6 +164,7 @@ mod tests {
             text: None,
             truncation: Truncation::default(),
             metadata: None,
+            conversation: None,
         }
     }
 

@@ -5,12 +5,16 @@
 //! the Chat Completions format used by any compatible inference engine.
 
 mod chat;
+mod common;
+mod conversation;
 mod events;
 mod request;
 mod response;
 mod tools;
 
 pub use chat::*;
+pub use common::*;
+pub use conversation::*;
 pub use events::*;
 pub use request::*;
 pub use response::*;

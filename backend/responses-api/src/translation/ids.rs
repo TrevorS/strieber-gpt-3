@@ -21,6 +21,16 @@ pub fn reasoning_id() -> String {
     format!("rs_{}", short_id())
 }
 
+/// Generate a conversation ID (conv_<uuid>)
+pub fn conversation_id() -> String {
+    format!("conv_{}", short_id())
+}
+
+/// Generate a generic item ID for conversation items (item_<uuid>)
+pub fn item_id() -> String {
+    format!("item_{}", short_id())
+}
+
 fn short_id() -> String {
     Uuid::new_v4().simple().to_string()
 }
@@ -53,5 +63,19 @@ mod tests {
         let id1 = response_id();
         let id2 = response_id();
         assert_ne!(id1, id2);
+    }
+
+    #[test]
+    fn conversation_id_has_correct_prefix() {
+        let id = conversation_id();
+        assert!(id.starts_with("conv_"), "got: {id}");
+        assert_eq!(id.len(), 5 + 32); // prefix + uuid
+    }
+
+    #[test]
+    fn item_id_has_correct_prefix() {
+        let id = item_id();
+        assert!(id.starts_with("item_"), "got: {id}");
+        assert_eq!(id.len(), 5 + 32); // prefix + uuid
     }
 }

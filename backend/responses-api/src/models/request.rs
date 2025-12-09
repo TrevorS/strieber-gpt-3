@@ -35,6 +35,11 @@ pub struct CreateResponseRequest {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub previous_response_id: Option<String>,
 
+    /// Conversation to use for context (mutually exclusive with previous_response_id).
+    /// Items from this conversation are prepended to input.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub conversation: Option<ConversationParam>,
+
     /// Maximum tokens to generate
     #[serde(skip_serializing_if = "Option::is_none")]
     pub max_output_tokens: Option<u32>,
@@ -282,4 +287,15 @@ pub struct ComputerCallOutputInput {
 pub enum ComputerOutput {
     Screenshot { image_url: String },
     Error { error: String },
+}
+
+// ============================================================================
+// Conversation Parameter
+// ============================================================================
+
+/// Reference to a conversation for context.
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct ConversationParam {
+    /// The conversation ID
+    pub id: String,
 }

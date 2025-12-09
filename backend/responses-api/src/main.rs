@@ -9,7 +9,7 @@ use responses_api::{
     execution::{Executor, ExecutorConfig},
     mcp::McpClient,
     server::{self, AppState},
-    state::InMemoryStore,
+    state::{InMemoryConversationStore, InMemoryStore},
 };
 use tokio::net::TcpListener;
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
@@ -73,6 +73,7 @@ async fn main() -> anyhow::Result<()> {
     let state = Arc::new(AppState {
         executor,
         store: InMemoryStore::new(),
+        conversations: InMemoryConversationStore::new(),
         config: config.clone(),
         mcp: mcp_client,
         containers,
