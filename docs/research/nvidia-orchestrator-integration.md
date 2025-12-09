@@ -4421,426 +4421,331 @@ match state.orchestrator.route(&req, ...).await {
 
 ---
 
-## Part 20: Tool Calling Architecture for Phase 2
+## Part 20: Orchestrator Decision Design (Simplified)
 
-### The Question: Who Calls Tools?
+### Key Principle: Inference Only, No Training
 
-In the current strieber-gpt-3 system, **any model** can do tool calling. The executor loop in `executor.rs` handles tool calls for any model via the MCP client. But for Phase 2 orchestration, we need to decide the architecture.
+**We are NOT training a model.** We use NVIDIA's pre-trained Orchestrator-8B weights as-is via llama.cpp. The orchestrator makes routing decisions based on:
 
-### Option A: Orchestrator-Centric Tool Calling (Recommended)
+1. **System prompt** - We describe available roles and tools
+2. **User query** - The incoming request
+3. **Trajectory** - Context gathered so far (tool results, previous steps)
 
-The orchestrator and small model gather **all context** via tools. The large model receives a complete context package and generates the final response.
+The orchestrator outputs a structured decision. Our code parses it and executes.
 
 ```
 ┌─────────────────────────────────────────────────────────────────────────────┐
-│                    OPTION A: ORCHESTRATOR-CENTRIC                           │
+│                         NO TRAINING - JUST INFERENCE                        │
 ├─────────────────────────────────────────────────────────────────────────────┤
 │                                                                             │
-│  User Query                                                                 │
-│       │                                                                     │
-│       ▼                                                                     │
-│  ┌──────────────┐                                                           │
-│  │ Orchestrator │ ──► CallTool(weather) ──► MCP ──► Result                 │
-│  │    (8B)      │ ◄───────────────────────────────────────                 │
-│  └──────────────┘                                                           │
-│       │                                                                     │
-│       ▼                                                                     │
-│  ┌──────────────┐                                                           │
-│  │ Small Model  │ ──► CallTool(search) ──► MCP ──► Result                  │
-│  │   (8B VL)    │ ◄───────────────────────────────────────                 │
-│  └──────────────┘                                                           │
-│       │                                                                     │
-│       │  All context gathered: weather data, search results                 │
-│       ▼                                                                     │
-│  ┌──────────────┐                                                           │
-│  │ Large Model  │ ──► Generates final response (NO tool calls)             │
-│  │   (120B)     │     Context already complete                             │
-│  └──────────────┘                                                           │
-│       │                                                                     │
-│       ▼                                                                     │
-│  Final Response                                                             │
+│   ┌─────────────────────────────────────────────────────────────────────┐   │
+│   │                     NVIDIA Orchestrator-8B                          │   │
+│   │                   (pre-trained weights, frozen)                     │   │
+│   └─────────────────────────────────────────────────────────────────────┘   │
+│                                    │                                        │
+│                                    ▼                                        │
+│   ┌─────────────────────────────────────────────────────────────────────┐   │
+│   │  System Prompt (we provide):                                        │   │
+│   │  - Role descriptions (small, large, vision, code)                   │   │
+│   │  - Available tools (web_search, read_file, etc.)                    │   │
+│   │  - User preferences (speed vs accuracy)                             │   │
+│   └─────────────────────────────────────────────────────────────────────┘   │
+│                                    │                                        │
+│                                    ▼                                        │
+│   ┌─────────────────────────────────────────────────────────────────────┐   │
+│   │  Orchestrator reasons and outputs JSON decision                     │   │
+│   │  Our code parses decision and executes it                           │   │
+│   └─────────────────────────────────────────────────────────────────────┘   │
 │                                                                             │
 └─────────────────────────────────────────────────────────────────────────────┘
 ```
 
-**Pros:**
-- Large model gets complete context in one shot (no back-and-forth)
-- Don't pay 12s latency multiple times for tool iterations
-- Cleaner separation: fast models gather, large model synthesizes
+---
 
-### Option B: Layered Tool Calling
-
-Orchestrator routes, then the destination model does its own tool calling.
-
-```
-┌─────────────────────────────────────────────────────────────────────────────┐
-│                    OPTION B: LAYERED TOOL CALLING                           │
-├─────────────────────────────────────────────────────────────────────────────┤
-│                                                                             │
-│  User Query                                                                 │
-│       │                                                                     │
-│       ▼                                                                     │
-│  ┌──────────────┐                                                           │
-│  │ Orchestrator │ ──► Routes to Large Model                                 │
-│  │    (8B)      │                                                           │
-│  └──────────────┘                                                           │
-│       │                                                                     │
-│       ▼                                                                     │
-│  ┌──────────────┐                                                           │
-│  │ Large Model  │ ──► CallTool(weather) ──► MCP ──► Result ──► 12s         │
-│  │   (120B)     │ ──► CallTool(search) ──► MCP ──► Result ──► 12s          │
-│  └──────────────┘ ──► Generate response ────────────────────► 12s          │
-│       │                                                                     │
-│       │  Total: 36s+ (3 large model calls)                                 │
-│       ▼                                                                     │
-│  Final Response                                                             │
-│                                                                             │
-└─────────────────────────────────────────────────────────────────────────────┘
-```
-
-**Pros:**
-- Large model can do complex multi-step reasoning with tools
-- Better for tasks that need the large model's intelligence for tool selection
-
-**Cons:**
-- Much higher latency (each tool call iteration costs 12s)
-- Expensive - pays full cost for each iteration
-
-### Recommendation: Hybrid with Fallback
-
-For Phase 2, **Option A is the default**, but with a fallback to Option B when needed:
+### The Decision Type: Three Actions Only
 
 ```rust
-/// How a model handles tools when it's the final responder
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
-#[serde(rename_all = "snake_case")]
-pub enum ModelToolCapability {
-    /// Model receives pre-gathered context, generates response only (default)
-    #[default]
-    ResponseOnly,
-    /// Model can also make tool calls if trajectory is incomplete
-    ToolCallingFallback,
-    /// Model always does its own tool calling (bypasses orchestrator gathering)
-    ToolCallingPrimary,
-}
-
+/// Orchestrator's decision - simple and clear
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct RoleConfig {
-    pub model_id: String,
-    /// How this model handles tools
-    #[serde(default)]
-    pub tool_capability: ModelToolCapability,
-    /// Max context tokens to include in handoff
-    #[serde(default = "default_max_context")]
-    pub max_context_tokens: usize,
-}
+#[serde(tag = "action", rename_all = "snake_case")]
+pub enum OrchestratorDecision {
+    /// Call a tool directly to gather context
+    CallTool {
+        tool: String,
+        args: Value,
+    },
 
-fn default_max_context() -> usize { 8000 }
+    /// Delegate to a model by capability tag, optionally with tools
+    Delegate {
+        role: String,                     // "small", "large", "vision", "code"
+        prompt: String,                   // What to send to the model
+        tools: Option<Vec<String>>,       // None = no tools, Some(vec) = specific tools
+    },
+
+    /// Respond directly (orchestrator can answer simple queries)
+    Respond {
+        answer: String,
+    },
+}
 ```
 
-### Phase 2 Trajectory Building with Tool Capability
+**That's it.** Three actions, no complex capability enums.
+
+---
+
+### How Tool Access Works
+
+The `tools` field in `Delegate` controls what the downstream model can do:
+
+| `tools` value | Model behavior |
+|---------------|----------------|
+| `None` or `null` | No tool calling - just generate response from prompt |
+| `Some([])` or `[]` | Same as None - no tools |
+| `Some(["a", "b"])` | Model can call only tools "a" and "b" |
+| `Some(["*"])` | Model can call any available tool (full access) |
+
+---
+
+### System Prompt: Describing Roles to the Orchestrator
+
+We tell the orchestrator what each role means via the system prompt:
+
+```
+You are an orchestrator that routes requests to the optimal resource.
+
+## Available Roles
+
+- "small": Fast 8B model (~300ms). Good for simple questions, summaries,
+  basic coding. Use when speed matters and task is straightforward.
+
+- "large": Powerful 120B model (~12s). Use for complex reasoning,
+  difficult problems, nuanced analysis. Expensive - only use when needed.
+
+- "vision": Can process images. Use when the query includes an image
+  or asks about visual content.
+
+- "code": Optimized for programming tasks. Use for debugging, code
+  generation, refactoring.
+
+## Available Tools
+
+- web_search: Search the internet for current information
+- read_file: Read contents of a file
+- write_file: Write content to a file
+- calculator: Perform mathematical calculations
+- run_command: Execute a shell command
+
+## Decision Format
+
+Respond with a JSON object. Examples:
+
+To call a tool:
+{"action": "call_tool", "tool": "web_search", "args": {"query": "..."}}
+
+To delegate to a model (no tools):
+{"action": "delegate", "role": "small", "prompt": "...", "tools": null}
+
+To delegate with specific tools:
+{"action": "delegate", "role": "large", "prompt": "...", "tools": ["read_file", "write_file"]}
+
+To respond directly:
+{"action": "respond", "answer": "..."}
+
+## Guidelines
+
+1. Prefer "small" for simple tasks - it's 40x faster than "large"
+2. Gather context with tools before delegating when helpful
+3. Only give models the tools they need - fewer tools = faster/cheaper
+4. Use "large" only for genuinely complex reasoning tasks
+5. You can respond directly for trivial queries (math, simple facts)
+```
+
+---
+
+### Configuration: Role Mapping
+
+Config maps role tags to actual model IDs:
+
+```rust
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct OrchestratorConfig {
+    /// Enable/disable orchestration
+    pub enabled: bool,
+    /// Model ID for the orchestrator itself
+    pub model_id: String,
+    /// Maps role tags to actual model IDs
+    pub role_mapping: HashMap<String, String>,
+    /// Fallback model if orchestration fails
+    pub fallback_model: String,
+    /// Max orchestration loop iterations
+    pub max_steps: usize,
+}
+```
+
+```json
+{
+  "enabled": true,
+  "model_id": "orchestrator",
+  "role_mapping": {
+    "small": "qwen3-vl-8b-instruct",
+    "large": "gpt-oss-120b",
+    "vision": "qwen3-vl-8b-instruct",
+    "code": "qwen3-vl-8b-instruct"
+  },
+  "fallback_model": "gpt-oss-120b",
+  "max_steps": 5
+}
+```
+
+**Benefits of role tags:**
+- Orchestrator reasons about capabilities, not model names
+- Swap models by changing config, not prompts
+- Add new roles (e.g., "math", "creative") without retraining anything
+
+---
+
+### Example Orchestrator Outputs
+
+**Simple question - small model, no tools:**
+```json
+{"action": "delegate", "role": "small", "prompt": "What is photosynthesis?", "tools": null}
+```
+
+**Needs current data - orchestrator gathers first:**
+```json
+{"action": "call_tool", "tool": "web_search", "args": {"query": "BTC price today"}}
+```
+Then after receiving result:
+```json
+{"action": "delegate", "role": "small", "prompt": "The current BTC price is $XX,XXX. Summarize this for the user.", "tools": null}
+```
+
+**Complex analysis - large model with context:**
+```json
+{"action": "delegate", "role": "large", "prompt": "Given the following data:\n[gathered context]\n\nAnalyze the trends and provide recommendations.", "tools": null}
+```
+
+**Code task - code role with file tools:**
+```json
+{"action": "delegate", "role": "code", "prompt": "Fix the authentication bug in auth.rs", "tools": ["read_file", "write_file"]}
+```
+
+**Trivial query - orchestrator answers directly:**
+```json
+{"action": "respond", "answer": "2 + 2 = 4"}
+```
+
+---
+
+### Two Access Paths (Preserved)
+
+```
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                           ACCESS MODES                                      │
+├─────────────────────────────────────────────────────────────────────────────┤
+│                                                                             │
+│  PATH 1: DIRECT ACCESS                                                      │
+│  ─────────────────────                                                      │
+│                                                                             │
+│    Request: { "model": "gpt-oss-120b", ... }                               │
+│                                                                             │
+│    → Bypasses orchestrator entirely                                         │
+│    → Full tool calling via existing executor loop                           │
+│    → Model decides its own tool usage                                       │
+│                                                                             │
+│    Use when: You want full control, or orchestrator is disabled             │
+│                                                                             │
+├─────────────────────────────────────────────────────────────────────────────┤
+│                                                                             │
+│  PATH 2: ORCHESTRATED ACCESS                                                │
+│  ──────────────────────────                                                 │
+│                                                                             │
+│    Request: { "model": "auto", ... }                                        │
+│                                                                             │
+│    → Orchestrator decides routing                                           │
+│    → Orchestrator controls tool access per-delegation                       │
+│    → Downstream models get tools specified in decision                      │
+│                                                                             │
+│    Use when: You want intelligent routing and cost optimization             │
+│                                                                             │
+└─────────────────────────────────────────────────────────────────────────────┘
+```
+
+---
+
+### Implementation: The Orchestration Loop
 
 ```rust
 pub async fn execute_orchestrated(
-    &self,
-    req: &CreateResponseRequest,
-    previous_messages: Vec<ChatMessage>,
-) -> Result<Response, ExecutionError> {
-    let mut trajectory = Trajectory::new(&req.input);
-    let max_steps = self.config.max_orchestration_steps; // default: 5
-
-    for step in 0..max_steps {
-        let decision = self.orchestrator.decide(
-            &req,
-            &trajectory,
-            &self.mcp.available_tools().await
-        ).await?;
-
-        match decision {
-            OrchestratorDecision::CallTool { tool, args } => {
-                // Orchestrator gathers context via tools
-                let result = self.mcp.call_tool_text(&tool, args).await?;
-                trajectory.add_tool_result(&tool, &result);
-            }
-
-            OrchestratorDecision::CallSmall { query, capability } => {
-                // Small model processes with gathered context
-                // Small model can also call tools (fast - 300ms per iteration)
-                let small_config = self.config.get_role("small")?;
-                let response = match small_config.tool_capability {
-                    ModelToolCapability::ResponseOnly => {
-                        // Just generate response from context
-                        self.call_model_response_only(&small_config.model_id, &query, &trajectory).await?
-                    }
-                    _ => {
-                        // Allow small model to also call tools
-                        self.call_model_with_tools(&small_config.model_id, &query, &trajectory).await?
-                    }
-                };
-                trajectory.add_model_response("small", &query, &response);
-            }
-
-            OrchestratorDecision::Respond { answer } => {
-                // Orchestrator or small model can answer directly
-                return Ok(self.build_response_from_trajectory(&trajectory, &answer, req));
-            }
-
-            OrchestratorDecision::Escalate { reason, task } => {
-                // Hand off to large model with complete trajectory
-                let large_config = self.config.get_role("large")?;
-                let context_prompt = trajectory.build_handoff_prompt(&reason, &task);
-
-                match large_config.tool_capability {
-                    ModelToolCapability::ResponseOnly => {
-                        // Large model just synthesizes (recommended)
-                        return self.call_large_response_only(&context_prompt).await;
-                    }
-                    ModelToolCapability::ToolCallingFallback => {
-                        // Large model can call tools if context incomplete
-                        let response = self.call_large_with_optional_tools(&context_prompt).await?;
-                        if response.needs_more_tools {
-                            // Let large model do one more tool call round
-                            return self.call_large_with_tools(&context_prompt).await;
-                        }
-                        return Ok(response);
-                    }
-                    ModelToolCapability::ToolCallingPrimary => {
-                        // Large model does all its own tool calling (bypass orchestrator)
-                        return self.call_large_with_tools(&context_prompt).await;
-                    }
-                }
-            }
-        }
-    }
-
-    // Max steps reached - escalate with what we have
-    let context_prompt = trajectory.build_emergency_handoff();
-    self.call_large_response_only(&context_prompt).await
-}
-```
-
-### Why Orchestrator-Centric Works Better
-
-The key insight is **latency asymmetry**:
-
-| Model | Per-Call Latency | Tool Iteration Cost |
-|-------|------------------|---------------------|
-| Orchestrator (8B) | ~300ms | ~800ms total |
-| Small Model (8B VL) | ~400ms | ~900ms total |
-| Large Model (120B) | ~12s | ~15s total |
-
-If a task needs 3 tool calls:
-- **Option A**: 3 × 800ms = 2.4s (orchestrator gathers) + 12s (large synthesizes) = **14.4s**
-- **Option B**: 3 × 15s = **45s** (large model does all tool calls)
-
-### Configuration for Phase 2
-
-```yaml
-ORCHESTRATOR_CONFIG: |
-  {
-    "enabled": true,
-    "model_id": "orchestrator",
-    "auto_model_id": "auto",
-    "max_orchestration_steps": 5,
-    "default_preference": "balanced",
-    "role_mapping": {
-      "small": {
-        "model_id": "qwen3-vl-8b-instruct",
-        "tool_capability": "tool_calling_fallback",
-        "max_context_tokens": 4000
-      },
-      "large": {
-        "model_id": "gpt-oss-120b",
-        "tool_capability": "response_only",
-        "max_context_tokens": 16000
-      },
-      "vision": {
-        "model_id": "qwen3-vl-8b-instruct",
-        "tool_capability": "response_only",
-        "max_context_tokens": 4000
-      }
-    },
-    "fallback_model": "gpt-oss-120b"
-  }
-```
-
-### Summary: Tool Calling Architecture
-
-**Critical Distinction**: Direct vs Orchestrated Access
-
-| Access Mode | Model | Tool Calling |
-|-------------|-------|--------------|
-| **Direct** (`model: "gpt-oss-120b"`) | Large | ✅ Full tool calling (existing behavior) |
-| **Direct** (`model: "qwen3-vl-8b-instruct"`) | Small | ✅ Full tool calling (existing behavior) |
-| **Orchestrated** (`model: "auto"`) | Orchestrator | ✅ Always - gathers context |
-| **Orchestrated** (`model: "auto"`) | Small | Depends on `tool_capability` config |
-| **Orchestrated** (`model: "auto"`) | Large | Depends on `tool_capability` config |
-
-The `ModelToolCapability` **only applies when routed through the orchestrator**. Direct model access always uses the existing executor tool loop.
-
-```
-┌─────────────────────────────────────────────────────────────────────────────┐
-│                        TWO ACCESS PATHS                                     │
-├─────────────────────────────────────────────────────────────────────────────┤
-│                                                                             │
-│  PATH 1: DIRECT ACCESS (existing behavior preserved)                        │
-│  ──────────────────────────────────────────────────                         │
-│                                                                             │
-│    Request: { "model": "gpt-oss-120b", ... }                               │
-│         │                                                                   │
-│         ▼                                                                   │
-│    ┌──────────────┐     ┌──────────────┐     ┌──────────────┐              │
-│    │  Large Model │ ──► │ Tool Calls   │ ──► │   Response   │              │
-│    │   (120B)     │ ◄── │ (full loop)  │ ◄── │              │              │
-│    └──────────────┘     └──────────────┘     └──────────────┘              │
-│                                                                             │
-│    ✅ Full tool calling capability                                          │
-│    ✅ Uses existing executor.rs tool loop                                   │
-│    ✅ No orchestrator involved                                              │
-│                                                                             │
-├─────────────────────────────────────────────────────────────────────────────┤
-│                                                                             │
-│  PATH 2: ORCHESTRATED ACCESS (new capability)                               │
-│  ────────────────────────────────────────────                               │
-│                                                                             │
-│    Request: { "model": "auto", ... }                                        │
-│         │                                                                   │
-│         ▼                                                                   │
-│    ┌──────────────┐                                                         │
-│    │ Orchestrator │ ──► Decides routing + gathers context                   │
-│    │    (8B)      │                                                         │
-│    └──────────────┘                                                         │
-│         │                                                                   │
-│         ├──► CallTool ──► MCP (orchestrator gathers context)                │
-│         │                                                                   │
-│         ├──► CallSmall ──► Small model (tool_capability applies)            │
-│         │                                                                   │
-│         └──► Escalate ──► Large model (tool_capability applies)             │
-│                                                                             │
-│    tool_capability determines if model can call more tools:                 │
-│    - ResponseOnly: Just synthesize gathered context                         │
-│    - ToolCallingFallback: Can call tools if context incomplete              │
-│    - ToolCallingPrimary: Full tool calling (like direct access)             │
-│                                                                             │
-└─────────────────────────────────────────────────────────────────────────────┘
-```
-
-### Implementation: Routing Based on Access Mode
-
-```rust
-/// In handlers.rs - determine which execution path to use
-pub async fn create_response(
-    State(state): State<AppState>,
-    Json(mut req): Json<CreateResponseRequest>,
-) -> Result<impl IntoResponse, ApiError> {
-    let previous_messages = resolve_previous_messages(&state, &req).await?;
-
-    // Check if this is an orchestrated request
-    if req.model == "auto" && state.orchestrator.is_enabled() {
-        // PATH 2: Orchestrated execution
-        // - Orchestrator decides routing
-        // - tool_capability applies to downstream models
-        return execute_orchestrated(&state, req, previous_messages).await;
-    }
-
-    // PATH 1: Direct execution (existing behavior)
-    // - Model specified directly
-    // - Full tool calling in executor loop
-    execute(&state, req, previous_messages).await
-}
-
-/// Direct execution - full tool calling (existing code, unchanged)
-async fn execute(
     state: &AppState,
     req: CreateResponseRequest,
     previous_messages: Vec<ChatMessage>,
 ) -> Result<Response, ApiError> {
-    // Existing executor.rs behavior
-    // Model can call tools freely via MCP
-    state.executor.execute(&req, previous_messages).await
-}
+    let mut trajectory = Trajectory::new(&req.input, &previous_messages);
 
-/// Orchestrated execution - tool_capability applies
-async fn execute_orchestrated(
-    state: &AppState,
-    req: CreateResponseRequest,
-    previous_messages: Vec<ChatMessage>,
-) -> Result<Response, ApiError> {
-    let mut trajectory = Trajectory::new(&req.input);
-
-    loop {
-        let decision = state.orchestrator.decide(&req, &trajectory).await?;
+    for _step in 0..state.orchestrator.config.max_steps {
+        // Ask orchestrator what to do next
+        let decision = state.orchestrator.decide(&trajectory).await?;
 
         match decision {
             OrchestratorDecision::CallTool { tool, args } => {
-                // Orchestrator always gathers context
+                // Orchestrator gathers context
                 let result = state.mcp.call_tool_text(&tool, args).await?;
                 trajectory.add_tool_result(&tool, &result);
+                // Loop continues - orchestrator will decide next step
             }
 
-            OrchestratorDecision::CallSmall { query, .. } => {
-                let config = state.orchestrator.get_role_config("small");
-                let response = call_with_capability(
-                    state, &config, &query, &trajectory
-                ).await?;
-                trajectory.add_model_response("small", &response);
-            }
+            OrchestratorDecision::Delegate { role, prompt, tools } => {
+                // Resolve role to actual model
+                let model_id = state.orchestrator.resolve_role(&role)?;
 
-            OrchestratorDecision::Escalate { reason, task } => {
-                let config = state.orchestrator.get_role_config("large");
-                let context = trajectory.build_handoff_prompt(&reason, &task);
-                return call_with_capability(
-                    state, &config, &context, &trajectory
-                ).await;
+                // Call model with specified tool access
+                let response = match tools {
+                    None => {
+                        // No tools - just generate
+                        call_model_no_tools(state, &model_id, &prompt).await?
+                    }
+                    Some(tool_list) if tool_list.is_empty() => {
+                        // Empty list - same as no tools
+                        call_model_no_tools(state, &model_id, &prompt).await?
+                    }
+                    Some(tool_list) => {
+                        // Specific tools - call with filtered tool access
+                        let filtered_tools = filter_tools(&state.mcp, &tool_list).await;
+                        call_model_with_tools(state, &model_id, &prompt, filtered_tools).await?
+                    }
+                };
+
+                // Delegation ends the loop - return response
+                return Ok(response);
             }
 
             OrchestratorDecision::Respond { answer } => {
-                return Ok(build_response(&trajectory, &answer));
+                // Orchestrator answered directly
+                return Ok(build_direct_response(&answer, &req));
             }
         }
     }
-}
 
-/// Call a model respecting its tool_capability setting
-async fn call_with_capability(
-    state: &AppState,
-    config: &RoleConfig,
-    prompt: &str,
-    trajectory: &Trajectory,
-) -> Result<Response, ApiError> {
-    match config.tool_capability {
-        ModelToolCapability::ResponseOnly => {
-            // No tool calling - just generate from context
-            call_model_no_tools(state, &config.model_id, prompt, trajectory).await
-        }
-        ModelToolCapability::ToolCallingFallback => {
-            // Can call tools if needed, but prefer using gathered context
-            call_model_optional_tools(state, &config.model_id, prompt, trajectory).await
-        }
-        ModelToolCapability::ToolCallingPrimary => {
-            // Full tool calling - same as direct access
-            // Useful if you want orchestrator routing but full model autonomy
-            call_model_with_tools(state, &config.model_id, prompt).await
-        }
-    }
+    // Max steps reached - fallback to large model with gathered context
+    let fallback_prompt = trajectory.build_fallback_prompt();
+    let model_id = &state.orchestrator.config.fallback_model;
+    call_model_no_tools(state, model_id, &fallback_prompt).await
 }
 ```
 
-### User Experience: Model Selection
+---
 
-From the frontend, users see:
+### Summary
 
-| Model Option | Behavior |
-|--------------|----------|
-| `auto` | Orchestrator routes intelligently, manages tool gathering |
-| `gpt-oss-120b` | Direct access, full tool calling, no orchestrator |
-| `qwen3-vl-8b-instruct` | Direct access, full tool calling, no orchestrator |
-| `orchestrator` | Hidden - only used internally by `auto` |
+| Concept | Description |
+|---------|-------------|
+| **Training** | None - we use NVIDIA's pre-trained weights |
+| **Role tags** | Abstract capabilities (small, large, vision, code) |
+| **Role mapping** | Config maps tags to actual model IDs |
+| **Decision types** | `CallTool`, `Delegate`, `Respond` - that's it |
+| **Tool access** | `Delegate.tools` field controls what model can call |
+| **Direct access** | Specify model directly → bypasses orchestrator, full tools |
+| **Orchestrated** | Use `model: "auto"` → orchestrator decides everything |
 
-The `auto` model is the only one that triggers orchestrated execution. All other models bypass the orchestrator entirely and use the existing executor tool loop.
-
-**The Goal**: Build complete trajectories with fast models (orchestrator + small) before handing off to the slow model (large). The large model should ideally just synthesize the gathered context into a final response.
-
-This aligns with your insight: *"get more complete trajectories to hand off using the faster model before calling the slower"*
-
-**But users always have the option** to bypass orchestration by selecting a model directly - preserving full tool calling capability for power users who want direct control.
+**The orchestrator is just a prompted LLM that outputs JSON.** We describe the available resources in the system prompt, it reasons about the best approach, and our code executes its decision.
