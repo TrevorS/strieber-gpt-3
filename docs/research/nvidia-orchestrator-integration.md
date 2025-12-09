@@ -4418,3 +4418,260 @@ match state.orchestrator.route(&req, ...).await {
 | `src/main.rs` | Create router + add to state | ~10 |
 | `compose.yml` | Update env vars, depends_on | ~10 |
 | **Total** | | **~425** |
+
+---
+
+## Part 20: Tool Calling Architecture for Phase 2
+
+### The Question: Who Calls Tools?
+
+In the current strieber-gpt-3 system, **any model** can do tool calling. The executor loop in `executor.rs` handles tool calls for any model via the MCP client. But for Phase 2 orchestration, we need to decide the architecture.
+
+### Option A: Orchestrator-Centric Tool Calling (Recommended)
+
+The orchestrator and small model gather **all context** via tools. The large model receives a complete context package and generates the final response.
+
+```
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                    OPTION A: ORCHESTRATOR-CENTRIC                           │
+├─────────────────────────────────────────────────────────────────────────────┤
+│                                                                             │
+│  User Query                                                                 │
+│       │                                                                     │
+│       ▼                                                                     │
+│  ┌──────────────┐                                                           │
+│  │ Orchestrator │ ──► CallTool(weather) ──► MCP ──► Result                 │
+│  │    (8B)      │ ◄───────────────────────────────────────                 │
+│  └──────────────┘                                                           │
+│       │                                                                     │
+│       ▼                                                                     │
+│  ┌──────────────┐                                                           │
+│  │ Small Model  │ ──► CallTool(search) ──► MCP ──► Result                  │
+│  │   (8B VL)    │ ◄───────────────────────────────────────                 │
+│  └──────────────┘                                                           │
+│       │                                                                     │
+│       │  All context gathered: weather data, search results                 │
+│       ▼                                                                     │
+│  ┌──────────────┐                                                           │
+│  │ Large Model  │ ──► Generates final response (NO tool calls)             │
+│  │   (120B)     │     Context already complete                             │
+│  └──────────────┘                                                           │
+│       │                                                                     │
+│       ▼                                                                     │
+│  Final Response                                                             │
+│                                                                             │
+└─────────────────────────────────────────────────────────────────────────────┘
+```
+
+**Pros:**
+- Large model gets complete context in one shot (no back-and-forth)
+- Don't pay 12s latency multiple times for tool iterations
+- Cleaner separation: fast models gather, large model synthesizes
+
+### Option B: Layered Tool Calling
+
+Orchestrator routes, then the destination model does its own tool calling.
+
+```
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                    OPTION B: LAYERED TOOL CALLING                           │
+├─────────────────────────────────────────────────────────────────────────────┤
+│                                                                             │
+│  User Query                                                                 │
+│       │                                                                     │
+│       ▼                                                                     │
+│  ┌──────────────┐                                                           │
+│  │ Orchestrator │ ──► Routes to Large Model                                 │
+│  │    (8B)      │                                                           │
+│  └──────────────┘                                                           │
+│       │                                                                     │
+│       ▼                                                                     │
+│  ┌──────────────┐                                                           │
+│  │ Large Model  │ ──► CallTool(weather) ──► MCP ──► Result ──► 12s         │
+│  │   (120B)     │ ──► CallTool(search) ──► MCP ──► Result ──► 12s          │
+│  └──────────────┘ ──► Generate response ────────────────────► 12s          │
+│       │                                                                     │
+│       │  Total: 36s+ (3 large model calls)                                 │
+│       ▼                                                                     │
+│  Final Response                                                             │
+│                                                                             │
+└─────────────────────────────────────────────────────────────────────────────┘
+```
+
+**Pros:**
+- Large model can do complex multi-step reasoning with tools
+- Better for tasks that need the large model's intelligence for tool selection
+
+**Cons:**
+- Much higher latency (each tool call iteration costs 12s)
+- Expensive - pays full cost for each iteration
+
+### Recommendation: Hybrid with Fallback
+
+For Phase 2, **Option A is the default**, but with a fallback to Option B when needed:
+
+```rust
+/// How a model handles tools when it's the final responder
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum ModelToolCapability {
+    /// Model receives pre-gathered context, generates response only (default)
+    #[default]
+    ResponseOnly,
+    /// Model can also make tool calls if trajectory is incomplete
+    ToolCallingFallback,
+    /// Model always does its own tool calling (bypasses orchestrator gathering)
+    ToolCallingPrimary,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RoleConfig {
+    pub model_id: String,
+    /// How this model handles tools
+    #[serde(default)]
+    pub tool_capability: ModelToolCapability,
+    /// Max context tokens to include in handoff
+    #[serde(default = "default_max_context")]
+    pub max_context_tokens: usize,
+}
+
+fn default_max_context() -> usize { 8000 }
+```
+
+### Phase 2 Trajectory Building with Tool Capability
+
+```rust
+pub async fn execute_orchestrated(
+    &self,
+    req: &CreateResponseRequest,
+    previous_messages: Vec<ChatMessage>,
+) -> Result<Response, ExecutionError> {
+    let mut trajectory = Trajectory::new(&req.input);
+    let max_steps = self.config.max_orchestration_steps; // default: 5
+
+    for step in 0..max_steps {
+        let decision = self.orchestrator.decide(
+            &req,
+            &trajectory,
+            &self.mcp.available_tools().await
+        ).await?;
+
+        match decision {
+            OrchestratorDecision::CallTool { tool, args } => {
+                // Orchestrator gathers context via tools
+                let result = self.mcp.call_tool_text(&tool, args).await?;
+                trajectory.add_tool_result(&tool, &result);
+            }
+
+            OrchestratorDecision::CallSmall { query, capability } => {
+                // Small model processes with gathered context
+                // Small model can also call tools (fast - 300ms per iteration)
+                let small_config = self.config.get_role("small")?;
+                let response = match small_config.tool_capability {
+                    ModelToolCapability::ResponseOnly => {
+                        // Just generate response from context
+                        self.call_model_response_only(&small_config.model_id, &query, &trajectory).await?
+                    }
+                    _ => {
+                        // Allow small model to also call tools
+                        self.call_model_with_tools(&small_config.model_id, &query, &trajectory).await?
+                    }
+                };
+                trajectory.add_model_response("small", &query, &response);
+            }
+
+            OrchestratorDecision::Respond { answer } => {
+                // Orchestrator or small model can answer directly
+                return Ok(self.build_response_from_trajectory(&trajectory, &answer, req));
+            }
+
+            OrchestratorDecision::Escalate { reason, task } => {
+                // Hand off to large model with complete trajectory
+                let large_config = self.config.get_role("large")?;
+                let context_prompt = trajectory.build_handoff_prompt(&reason, &task);
+
+                match large_config.tool_capability {
+                    ModelToolCapability::ResponseOnly => {
+                        // Large model just synthesizes (recommended)
+                        return self.call_large_response_only(&context_prompt).await;
+                    }
+                    ModelToolCapability::ToolCallingFallback => {
+                        // Large model can call tools if context incomplete
+                        let response = self.call_large_with_optional_tools(&context_prompt).await?;
+                        if response.needs_more_tools {
+                            // Let large model do one more tool call round
+                            return self.call_large_with_tools(&context_prompt).await;
+                        }
+                        return Ok(response);
+                    }
+                    ModelToolCapability::ToolCallingPrimary => {
+                        // Large model does all its own tool calling (bypass orchestrator)
+                        return self.call_large_with_tools(&context_prompt).await;
+                    }
+                }
+            }
+        }
+    }
+
+    // Max steps reached - escalate with what we have
+    let context_prompt = trajectory.build_emergency_handoff();
+    self.call_large_response_only(&context_prompt).await
+}
+```
+
+### Why Orchestrator-Centric Works Better
+
+The key insight is **latency asymmetry**:
+
+| Model | Per-Call Latency | Tool Iteration Cost |
+|-------|------------------|---------------------|
+| Orchestrator (8B) | ~300ms | ~800ms total |
+| Small Model (8B VL) | ~400ms | ~900ms total |
+| Large Model (120B) | ~12s | ~15s total |
+
+If a task needs 3 tool calls:
+- **Option A**: 3 × 800ms = 2.4s (orchestrator gathers) + 12s (large synthesizes) = **14.4s**
+- **Option B**: 3 × 15s = **45s** (large model does all tool calls)
+
+### Configuration for Phase 2
+
+```yaml
+ORCHESTRATOR_CONFIG: |
+  {
+    "enabled": true,
+    "model_id": "orchestrator",
+    "auto_model_id": "auto",
+    "max_orchestration_steps": 5,
+    "default_preference": "balanced",
+    "role_mapping": {
+      "small": {
+        "model_id": "qwen3-vl-8b-instruct",
+        "tool_capability": "tool_calling_fallback",
+        "max_context_tokens": 4000
+      },
+      "large": {
+        "model_id": "gpt-oss-120b",
+        "tool_capability": "response_only",
+        "max_context_tokens": 16000
+      },
+      "vision": {
+        "model_id": "qwen3-vl-8b-instruct",
+        "tool_capability": "response_only",
+        "max_context_tokens": 4000
+      }
+    },
+    "fallback_model": "gpt-oss-120b"
+  }
+```
+
+### Summary: Tool Calling Architecture
+
+| Component | Tool Calling? | When |
+|-----------|---------------|------|
+| **Orchestrator (8B)** | ✅ Yes | Always - gathers context, decides routing |
+| **Small Model (8B VL)** | ✅ Optional | Can extend trajectory if needed |
+| **Large Model (120B)** | ⚠️ Fallback only | Only if trajectory incomplete |
+
+**The Goal**: Build complete trajectories with fast models (orchestrator + small) before handing off to the slow model (large). The large model should ideally just synthesize the gathered context into a final response.
+
+This aligns with your insight: *"get more complete trajectories to hand off using the faster model before calling the slower"*
