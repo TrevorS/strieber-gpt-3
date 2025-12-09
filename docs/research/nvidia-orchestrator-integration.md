@@ -3077,3 +3077,224 @@ curl -X POST http://localhost:9060/v1/chat/completions \
 - All queries → large: 12000ms
 - Savings on simple queries: 12.3s → 2.3s = **81% faster**
 - Savings on tool queries: 12.3s → 0.8s = **93% faster**
+
+---
+
+## Part 17: Orchestrator-8B Serving Best Practices
+
+This section documents the specific requirements and best practices for serving NVIDIA Orchestrator-8B with llama.cpp, based on research from official sources.
+
+### Model Architecture Details
+
+| Property | Value | Notes |
+|----------|-------|-------|
+| **Base Model** | Qwen3-8B | Uses Qwen chat template |
+| **Parameters** | 8B | Decoder-only transformer |
+| **Chat Template** | `<\|im_start\|>...<\|im_end\|>` | Qwen/ChatML format |
+| **Tool Calling** | Hermes format | Single tool-call per turn only |
+| **Training** | GRPO (RL) | Multi-objective reward optimization |
+
+### GGUF Quantization Options
+
+From [bartowski/nvidia_Orchestrator-8B-GGUF](https://huggingface.co/bartowski/nvidia_Orchestrator-8B-GGUF):
+
+| Quantization | Size | Quality | Recommended For |
+|--------------|------|---------|-----------------|
+| **Q4_K_M** | 5.03GB | Good | **Production (recommended)** |
+| Q5_K_M | 5.85GB | High | Quality-sensitive deployments |
+| Q6_K | 6.73GB | Very High | Maximum accuracy |
+| Q8_0 | 8.71GB | Excellent | Testing/validation |
+| IQ4_NL | ~4.5GB | Good | ARM/AVX with online repacking |
+
+**Recommendation:** Use **Q4_K_M** for production. It provides the best balance of quality, speed, and VRAM usage (~6GB).
+
+### Critical Constraint: Single Tool-Call Per Turn
+
+The Orchestrator-8B model **only supports single tool-calls at once**. This is enforced in the official Jinja template:
+
+```
+"This model only supports single tool-calls at once!"
+```
+
+**Implications:**
+- The orchestrator will output ONE routing decision per query
+- Multi-step orchestration requires multiple turns
+- Our simple use case (one routing decision per request) is perfectly aligned
+
+### Chat Template Format
+
+The model uses ChatML/Qwen format:
+
+```
+<|im_start|>system
+{system_prompt}<|im_end|>
+<|im_start|>user
+{user_query}<|im_end|>
+<|im_start|>assistant
+```
+
+**llama.cpp Configuration:** Use `--jinja` flag to enable chat template support.
+
+### Tool Call Output Format
+
+When the orchestrator decides to call a tool/model, it outputs JSON in Hermes format:
+
+```json
+{"name": "tool_name", "parameters": {"key": "value"}}
+```
+
+For our routing use case, we'll structure it as:
+
+```json
+{
+  "action": "answer",
+  "model": "small",
+  "reasoning": "Simple greeting, no complex reasoning needed"
+}
+```
+
+Or for direct tool calls:
+
+```json
+{
+  "action": "use_tool",
+  "tool": "weather",
+  "tool_args": {"location": "NYC"},
+  "reasoning": "Direct weather request"
+}
+```
+
+### Recommended Inference Parameters
+
+Based on the official evaluation code and best practices:
+
+| Parameter | Value | Rationale |
+|-----------|-------|-----------|
+| **Temperature** | 0.1 | Low for consistent routing decisions |
+| **Max Tokens** | 256 | Routing decisions are short |
+| **Top-P** | 0.9 | Standard for focused output |
+| **Context Size** | 8192 | Sufficient for query + system prompt |
+| **Repeat Penalty** | 1.0 | No penalty needed for short outputs |
+
+### llama.cpp Server Flags
+
+Optimal configuration for llama-server:
+
+```bash
+llama-server \
+  -m /models/nvidia_Orchestrator-8B-Q4_K_M.gguf \
+  --port 8000 \
+  --host 0.0.0.0 \
+  -c 8192 \                    # Context size (8K sufficient for routing)
+  --n-gpu-layers 999 \         # Full GPU offload
+  --jinja \                    # Enable chat template support
+  -b 512 \                     # Batch size
+  -ub 512 \                    # Ubatch size
+  --flash-attn on \            # Flash attention for efficiency
+  --cont-batching \            # Continuous batching for throughput
+  --parallel 4 \               # Multiple concurrent routing requests
+  --no-mmap \                  # Better for unified memory
+  -t 0.1                       # Low temperature for consistent routing
+```
+
+### vLLM Alternative (Reference)
+
+If using vLLM instead of llama.cpp:
+
+```bash
+vllm serve nvidia/Orchestrator-8B \
+  --enable-auto-tool-choice \
+  --tool-call-parser hermes \
+  --max-model-len 8192 \
+  --tensor-parallel-size 1
+```
+
+### System Prompt for Routing
+
+Based on the official evaluation code structure:
+
+```
+<|im_start|>system
+You are an intelligent request router. Analyze the user's query and decide the best way to handle it.
+
+## Available Resources
+
+### Models
+- small: Fast 8B model for simple queries, greetings, translations (~2s latency)
+- large: Powerful 120B model for complex reasoning, analysis (~12s latency)
+- vision: 8B multimodal model for image understanding (~3s latency)
+
+### Tools (skip large model, call directly)
+- weather: Get weather forecasts for any location
+- web_search: Search the internet for current information
+- code_interpreter: Execute Python code
+- reader: Fetch and parse web pages
+- zimage: Generate images from text descriptions
+
+## User Preference: {preference}
+- "fast": Prefer small model and direct tools
+- "balanced": Use judgment based on complexity
+- "thorough": Prefer large model for non-trivial queries
+
+## Output Format
+Respond with ONLY a JSON object:
+
+For model routing:
+{"action": "answer", "model": "small|large|vision", "reasoning": "brief explanation"}
+
+For direct tool use:
+{"action": "use_tool", "tool": "tool_name", "tool_args": {...}, "reasoning": "brief explanation"}
+
+## Decision Guidelines
+1. Image in query → model: vision
+2. Explicit tool request (weather, search, generate image) → action: use_tool
+3. Simple greetings, facts, translations → model: small
+4. Complex analysis, multi-step reasoning, creative writing → model: large
+5. When uncertain → default to large (better to over-deliver)
+<|im_end|>
+```
+
+### Health Check Endpoint
+
+llama.cpp server exposes `/health` endpoint:
+
+```bash
+curl http://localhost:9060/health
+# Returns: {"status": "ok"}
+```
+
+### Performance Expectations
+
+On DGX Spark (GB10 Blackwell) with Q4_K_M:
+
+| Metric | Expected Value |
+|--------|----------------|
+| Time to First Token | ~50ms |
+| Tokens/second | ~100-150 tok/s |
+| Routing Decision Time | 200-400ms |
+| VRAM Usage | ~6GB |
+| Concurrent Requests | 4-8 |
+
+### Monitoring Routing Quality
+
+Track these metrics to ensure routing is working correctly:
+
+```bash
+# Check routing distribution over time
+docker compose logs responses-api | grep "Routing to" | \
+  awk '{print $NF}' | sort | uniq -c
+
+# Expected healthy distribution:
+#   45%  small
+#   35%  large
+#   15%  tools
+#   5%   vision
+```
+
+### Sources
+
+- [NVIDIA Orchestrator-8B Model Card](https://huggingface.co/nvidia/Orchestrator-8B)
+- [bartowski GGUF Quantizations](https://huggingface.co/bartowski/nvidia_Orchestrator-8B-GGUF)
+- [ToolOrchestra GitHub Repository](https://github.com/NVlabs/ToolOrchestra)
+- [ToolOrchestra Research Page](https://research.nvidia.com/labs/lpr/ToolOrchestra/)
+- [NVIDIA Technical Blog](https://developer.nvidia.com/blog/train-small-orchestration-agents-to-solve-big-problems/)

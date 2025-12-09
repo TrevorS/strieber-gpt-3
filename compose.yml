@@ -278,6 +278,98 @@ services:
       - strieber-net
 
   # ==========================================================================
+  # llama-server-orchestrator: NVIDIA Orchestrator-8B for intelligent routing
+  # ABOUTME: Purpose-trained routing model that decides which backend to use
+  # Fine-tuned from Qwen3-8B via GRPO for multi-objective optimization
+  # Routes queries to: small model, large model, vision model, or direct tools
+  # ==========================================================================
+  llama-server-orchestrator:
+    build:
+      context: .
+      dockerfile: Dockerfile.llamacpp
+      args:
+        CUDA_VERSION: "13.0.1"
+        UBUNTU_VERSION: "22.04"
+        CUDA_DOCKER_ARCH: "121"  # Blackwell GB10
+
+    image: strieber-llama-server:latest  # Reuse same image
+    container_name: strieber-llama-server-orchestrator
+
+    # Restart policy
+    restart: unless-stopped
+
+    # GPU configuration (shares GPU 0 with other services)
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+
+    # Shared memory for CUDA operations
+    shm_size: 4g  # Small model, minimal overhead
+
+    # IPC mode for better GPU communication
+    ipc: host
+
+    # Port mapping: 9060 = orchestrator routing layer
+    ports:
+      - "9060:8000"
+
+    # Volume mounts
+    volumes:
+      # Models directory: NVIDIA Orchestrator GGUF
+      - /home/trevor/models/llama-cpp/orchestrator:/models
+
+    # Environment variables
+    environment:
+      - LLAMA_ARG_HOST=0.0.0.0
+      - LLAMA_ARG_PORT=8000
+      - LLAMA_LOG_VERBOSITY=0
+      - LLAMA_LOG_TIMESTAMPS=true
+      - LLAMA_LOG_PREFIX=true
+
+    # Server command optimized for Orchestrator-8B routing decisions
+    # Key settings: low temperature for consistent routing, --jinja for chat template
+    # Critical: Uses Qwen/ChatML format (<|im_start|>...<|im_end|>)
+    # Constraint: Only supports single tool-call per turn (perfect for routing)
+    command:
+      - "-m"
+      - "/models/nvidia_Orchestrator-8B-Q4_K_M.gguf"
+      - "--port"
+      - "8000"
+      - "--host"
+      - "0.0.0.0"
+      - "-c"
+      - "8192"                              # Context: 8K tokens (sufficient for routing)
+      - "--n-gpu-layers"
+      - "999"                               # Auto-detect layers for GPU offload
+      - "--jinja"                           # Enable chat template support (required!)
+      - "-b"
+      - "512"                               # Batch size: standard
+      - "-ub"
+      - "512"                               # Ubatch size: physical batch
+      - "--flash-attn"
+      - "on"                                # Flash attention: efficiency
+      - "--cont-batching"                   # Continuous batching for throughput
+      - "--parallel"
+      - "4"                                 # Higher parallelism (fast routing decisions)
+      - "--no-mmap"                         # Better for unified memory
+
+    # Health check - routing service must be responsive
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 5s
+      start_period: 30s
+      retries: 3
+
+    # Network configuration
+    networks:
+      - strieber-net
+
+  # ==========================================================================
   # embeddinggemma: EmbeddingGemma-300M embedding model server
   # ABOUTME: Lightweight embedding inference for RAG and semantic search
   # Provides OpenAI-compatible /v1/embeddings endpoint for document vectorization
