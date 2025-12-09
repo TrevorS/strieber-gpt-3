@@ -31,7 +31,7 @@ def mock_search_result():
         "url": "https://example.com",
         "snippet": "This is a test snippet with enough content to be meaningful.",
         "date": "2024-01-01",
-        "extra_snippets": []
+        "extra_snippets": [],
     }
 
 
@@ -49,7 +49,7 @@ def mock_weather_data():
             "apparent_temperature": 70.0,
             "relative_humidity_2m": 65,
             "weather_code": 1,
-            "wind_speed_10m": 10.5
+            "wind_speed_10m": 10.5,
         }
     }
 
@@ -64,11 +64,7 @@ def mock_openai_client():
     mock_client = AsyncMock()
     mock_client.chat.completions.create = AsyncMock(
         return_value=MagicMock(
-            choices=[
-                MagicMock(
-                    message=MagicMock(content='["variant 1", "variant 2"]')
-                )
-            ]
+            choices=[MagicMock(message=MagicMock(content='["variant 1", "variant 2"]'))]
         )
     )
     return mock_client

@@ -5,12 +5,9 @@ geocoding to handle location names like "Savannah, GA". Returns dual-format resp
 human-readable text for LLM context + structured JSON for frontend rendering.
 """
 
-import asyncio
 import json
-import logging
-import os
-from typing import Optional, Dict, Any, Literal, List
-from datetime import datetime, timedelta
+from typing import Dict, Any, Literal, List
+from datetime import datetime
 from enum import Enum
 
 import httpx
@@ -19,16 +16,11 @@ from mcp.server.fastmcp import Context
 from mcp.types import TextContent, CallToolResult
 
 from common.mcp_base import MCPServerBase
-from common.validation import validate_string_length, validate_non_empty_string
+from common.validation import validate_string_length
 from common.error_handling import (
-    ERROR_INVALID_INPUT,
     ERROR_TIMEOUT,
-    ERROR_NOT_FOUND,
     ERROR_FETCH_FAILED,
-    create_error_result,
     create_validation_error,
-    create_network_error,
-    create_timeout_error,
 )
 from common.http_utils import safe_http_get
 
@@ -116,21 +108,27 @@ ERROR_CODE_INVALID_COORDINATES = "invalid_coordinates"
 ERROR_CODE_INVALID_FORECAST_TYPE = "invalid_forecast_type"
 ERROR_CODE_INVALID_UNITS = "invalid_units"
 
+
 # Forecast type and unit enums
 class ForecastType(str, Enum):
     """Valid forecast types."""
+
     CURRENT = "current"
     DAILY = "daily"
     WEEKLY = "weekly"
 
+
 class UnitSystem(str, Enum):
     """Valid unit systems."""
+
     METRIC = "metric"
     IMPERIAL = "imperial"
+
 
 # ============================================================================
 # PYDANTIC MODELS
 # ============================================================================
+
 
 class WeatherInputSchema(BaseModel):
     """Input schema for get_weather tool."""
@@ -139,15 +137,15 @@ class WeatherInputSchema(BaseModel):
         ...,
         description="Location name (e.g., 'Paris', 'New York', 'Tokyo')",
         min_length=MIN_LOCATION_LENGTH,
-        max_length=MAX_LOCATION_LENGTH
+        max_length=MAX_LOCATION_LENGTH,
     )
     forecast_type: Literal["current", "daily", "weekly"] = Field(
         default="current",
-        description="Type of forecast - 'current' for current weather, 'daily' for 24h forecast, 'weekly' for 7d forecast"
+        description="Type of forecast - 'current' for current weather, 'daily' for 24h forecast, 'weekly' for 7d forecast",
     )
     units: Literal["metric", "imperial"] = Field(
         default="imperial",
-        description="Unit system - 'metric' (°C, km/h) or 'imperial' (°F, mph)"
+        description="Unit system - 'metric' (°C, km/h) or 'imperial' (°F, mph)",
     )
 
     @field_validator("location")
@@ -173,9 +171,12 @@ class WeatherInputSchema(BaseModel):
 
         # Check length
         if len(v) > MAX_LOCATION_LENGTH:
-            raise ValueError(f"Location name too long (max {MAX_LOCATION_LENGTH} characters)")
+            raise ValueError(
+                f"Location name too long (max {MAX_LOCATION_LENGTH} characters)"
+            )
 
         return v
+
 
 class WeatherOutputSchema(BaseModel):
     """Output schema for get_weather tool."""
@@ -185,8 +186,11 @@ class WeatherOutputSchema(BaseModel):
     longitude: float = Field(..., description="Longitude coordinate")
     forecast_type: str = Field(..., description="Type of forecast returned")
     units: str = Field(..., description="Temperature units used")
-    timestamp: str = Field(..., description="ISO8601 timestamp of when data was fetched")
+    timestamp: str = Field(
+        ..., description="ISO8601 timestamp of when data was fetched"
+    )
     data: Dict[str, Any] = Field(..., description="Structured weather data")
+
 
 # ============================================================================
 # WMO WEATHER CODES
@@ -264,6 +268,7 @@ def get_weather_emoji(code: int) -> str:
     else:
         return EMOJI_DEFAULT
 
+
 def get_unit_symbol(units: str) -> str:
     """Get temperature unit symbol.
 
@@ -275,6 +280,7 @@ def get_unit_symbol(units: str) -> str:
     """
     return FAHRENHEIT_DISPLAY_UNIT if units == "imperial" else CELSIUS_DISPLAY_UNIT
 
+
 def get_wind_speed_unit(units: str) -> str:
     """Get wind speed unit based on unit system.
 
@@ -285,6 +291,7 @@ def get_wind_speed_unit(units: str) -> str:
         Wind speed unit string ("mph" or "km/h")
     """
     return "mph" if units == "imperial" else "km/h"
+
 
 # ============================================================================
 # GEOCODING FUNCTIONS
@@ -314,16 +321,11 @@ async def geocode_location(location: str) -> Dict[str, Any]:
             "q": location,
             "format": "json",
             "limit": GEOCODING_MAX_RESULTS,
-            "addressdetails": 0
+            "addressdetails": 0,
         }
-        headers = {
-            "User-Agent": USER_AGENT
-        }
+        headers = {"User-Agent": USER_AGENT}
         resp = await safe_http_get(
-            GEOCODING_API,
-            params=params,
-            headers=headers,
-            timeout=API_TIMEOUT_SECONDS
+            GEOCODING_API, params=params, headers=headers, timeout=API_TIMEOUT_SECONDS
         )
 
         data = resp.json()
@@ -333,7 +335,7 @@ async def geocode_location(location: str) -> Dict[str, Any]:
             logger.warning(f"Location not found: '{location}'")
             raise ValueError(
                 f"Location not found: {location}",
-                {"error_code": ERROR_CODE_LOCATION_NOT_FOUND, "location": location}
+                {"error_code": ERROR_CODE_LOCATION_NOT_FOUND, "location": location},
             )
 
         result = data[0]
@@ -350,7 +352,7 @@ async def geocode_location(location: str) -> Dict[str, Any]:
             "latitude": lat,
             "longitude": lon,
             "country": result.get("address", {}).get("country"),
-            "timezone": None  # Nominatim doesn't provide timezone
+            "timezone": None,  # Nominatim doesn't provide timezone
         }
 
         logger.info(f"Geocoded '{location}' to {location_name} ({lat}, {lon})")
@@ -360,7 +362,7 @@ async def geocode_location(location: str) -> Dict[str, Any]:
         logger.error(f"Geocoding timeout for '{location}': {e}")
         raise Exception(
             f"Geocoding request timed out for: {location}",
-            {"error_code": ERROR_TIMEOUT, "location": location}
+            {"error_code": ERROR_TIMEOUT, "location": location},
         )
     except ValueError:
         # Re-raise ValueError with original message
@@ -369,8 +371,9 @@ async def geocode_location(location: str) -> Dict[str, Any]:
         logger.error(f"Geocoding failed for '{location}': {e}")
         raise Exception(
             f"Geocoding service error: {str(e)}",
-            {"error_code": ERROR_CODE_GEOCODE_SERVICE_ERROR, "location": location}
+            {"error_code": ERROR_CODE_GEOCODE_SERVICE_ERROR, "location": location},
         )
+
 
 # ============================================================================
 # WEATHER FETCH HELPERS
@@ -407,15 +410,12 @@ def _build_base_params(lat: float, lon: float, units: str) -> Dict[str, Any]:
         "longitude": lon,
         "temperature_unit": "fahrenheit" if units == "imperial" else "celsius",
         "wind_speed_unit": "mph" if units == "imperial" else "kmh",
-        "timezone": "auto"
+        "timezone": "auto",
     }
 
 
 async def _fetch_weather_data(
-    params: Dict[str, Any],
-    lat: float,
-    lon: float,
-    forecast_type: str
+    params: Dict[str, Any], lat: float, lon: float, forecast_type: str
 ) -> Dict[str, Any]:
     """Fetch weather data from Open-Meteo API with error handling.
 
@@ -432,19 +432,21 @@ async def _fetch_weather_data(
         Exception: If API request fails or times out
     """
     try:
-        resp = await safe_http_get(WEATHER_API, params=params, timeout=API_TIMEOUT_SECONDS)
+        resp = await safe_http_get(
+            WEATHER_API, params=params, timeout=API_TIMEOUT_SECONDS
+        )
         return resp.json()
     except httpx.TimeoutException as e:
         logger.error(f"{forecast_type} weather fetch timeout for ({lat}, {lon}): {e}")
         raise Exception(
-            f"Weather request timed out",
-            {"error_code": ERROR_TIMEOUT, "latitude": lat, "longitude": lon}
+            "Weather request timed out",
+            {"error_code": ERROR_TIMEOUT, "latitude": lat, "longitude": lon},
         )
     except Exception as e:
         logger.error(f"Failed to fetch {forecast_type} weather for ({lat}, {lon}): {e}")
         raise Exception(
             f"Weather fetch failed: {str(e)}",
-            {"error_code": ERROR_FETCH_FAILED, "latitude": lat, "longitude": lon}
+            {"error_code": ERROR_FETCH_FAILED, "latitude": lat, "longitude": lon},
         )
 
 
@@ -453,7 +455,9 @@ async def _fetch_weather_data(
 # ============================================================================
 
 
-async def fetch_current_weather(lat: float, lon: float, units: str = "metric") -> Dict[str, Any]:
+async def fetch_current_weather(
+    lat: float, lon: float, units: str = "metric"
+) -> Dict[str, Any]:
     """Fetch current weather for given coordinates.
 
     Args:
@@ -490,14 +494,18 @@ async def fetch_current_weather(lat: float, lon: float, units: str = "metric") -
         "uv_index": current.get("uv_index"),
         "pressure_msl": current.get("pressure_msl"),
         "dew_point": current.get("dew_point_2m"),
-        "units": units
+        "units": units,
     }
 
-    logger.debug(f"Successfully fetched current weather: {weather_data['temperature']}{get_unit_symbol(units)}, {weather_data['condition']}")
+    logger.debug(
+        f"Successfully fetched current weather: {weather_data['temperature']}{get_unit_symbol(units)}, {weather_data['condition']}"
+    )
     return weather_data
 
 
-async def fetch_daily_forecast(lat: float, lon: float, units: str = "metric") -> Dict[str, Any]:
+async def fetch_daily_forecast(
+    lat: float, lon: float, units: str = "metric"
+) -> Dict[str, Any]:
     """Fetch daily forecast (24 hours) for given coordinates.
 
     Args:
@@ -536,16 +544,19 @@ async def fetch_daily_forecast(lat: float, lon: float, units: str = "metric") ->
     }
 
     # Build forecast items functionally (with conditions)
-    forecast = _build_forecast_items(hourly, field_mapping, DAILY_FORECAST_HOURS, add_condition=True)
+    forecast = _build_forecast_items(
+        hourly, field_mapping, DAILY_FORECAST_HOURS, add_condition=True
+    )
 
-    logger.debug(f"Successfully fetched daily forecast with {len(forecast)} hourly entries")
-    return {
-        "forecast": forecast,
-        "units": units
-    }
+    logger.debug(
+        f"Successfully fetched daily forecast with {len(forecast)} hourly entries"
+    )
+    return {"forecast": forecast, "units": units}
 
 
-async def fetch_weekly_forecast(lat: float, lon: float, units: str = "metric") -> Dict[str, Any]:
+async def fetch_weekly_forecast(
+    lat: float, lon: float, units: str = "metric"
+) -> Dict[str, Any]:
     """Fetch weekly forecast (7 days) for given coordinates.
 
     Args:
@@ -583,19 +594,21 @@ async def fetch_weekly_forecast(lat: float, lon: float, units: str = "metric") -
     }
 
     # Build forecast items functionally (with conditions)
-    forecast = _build_forecast_items(daily, field_mapping, WEEKLY_FORECAST_DAYS, add_condition=True)
+    forecast = _build_forecast_items(
+        daily, field_mapping, WEEKLY_FORECAST_DAYS, add_condition=True
+    )
 
-    logger.debug(f"Successfully fetched weekly forecast with {len(forecast)} daily entries")
-    return {
-        "forecast": forecast,
-        "units": units
-    }
+    logger.debug(
+        f"Successfully fetched weekly forecast with {len(forecast)} daily entries"
+    )
+    return {"forecast": forecast, "units": units}
+
 
 def _build_forecast_items(
     data_source: Dict[str, List[Any]],
     field_mapping: Dict[str, str],
     limit: int,
-    add_condition: bool = True
+    add_condition: bool = True,
 ) -> List[Dict[str, Any]]:
     """Build forecast items from API data using functional approach.
 
@@ -652,7 +665,7 @@ async def get_weather(
     location: str,
     forecast_type: Literal["current", "daily", "weekly"] = "current",
     units: Literal["metric", "imperial"] = "imperial",
-    ctx: Context = None
+    ctx: Context = None,
 ) -> CallToolResult:
     """Get weather information for a location.
 
@@ -729,50 +742,62 @@ async def get_weather(
         get_weather("Tokyo", forecast_type="weekly", units="metric")
     """
     request_timestamp = datetime.utcnow().isoformat() + "Z"
-    logger.info(f"Weather request: location='{location}', type={forecast_type}, units={units}")
+    logger.info(
+        f"Weather request: location='{location}', type={forecast_type}, units={units}"
+    )
 
     if ctx:
         await ctx.info(f"Fetching {forecast_type} weather for {location}")
 
     try:
         # Validate location using shared validation
-        is_valid, error_msg = validate_string_length(location, MIN_LOCATION_LENGTH, MAX_LOCATION_LENGTH, "location")
+        is_valid, error_msg = validate_string_length(
+            location, MIN_LOCATION_LENGTH, MAX_LOCATION_LENGTH, "location"
+        )
         if not is_valid:
             logger.warning(f"Location validation failed: {error_msg}")
             return create_validation_error(
-                field_name="location",
-                error_message=error_msg,
-                field_value=location
+                field_name="location", error_message=error_msg, field_value=location
             )
 
         # Validate forecast_type (already type-checked by Literal, but add runtime check)
         if forecast_type not in ["current", "daily", "weekly"]:
             logger.warning(f"Invalid forecast_type: {forecast_type}")
             return CallToolResult(
-                content=[TextContent(type="text", text=f"Invalid forecast_type: {forecast_type}. Must be 'current', 'daily', or 'weekly'")],
+                content=[
+                    TextContent(
+                        type="text",
+                        text=f"Invalid forecast_type: {forecast_type}. Must be 'current', 'daily', or 'weekly'",
+                    )
+                ],
                 metadata={
                     "error_type": "validation_error",
                     "error_code": ERROR_CODE_INVALID_FORECAST_TYPE,
                     "forecast_type_provided": forecast_type,
                     "valid_options": ["current", "daily", "weekly"],
-                    "timestamp": request_timestamp
+                    "timestamp": request_timestamp,
                 },
-                isError=True
+                isError=True,
             )
 
         # Validate units (already type-checked by Literal, but add runtime check)
         if units not in ["metric", "imperial"]:
             logger.warning(f"Invalid units: {units}")
             return CallToolResult(
-                content=[TextContent(type="text", text=f"Invalid units: {units}. Must be 'metric' or 'imperial'")],
+                content=[
+                    TextContent(
+                        type="text",
+                        text=f"Invalid units: {units}. Must be 'metric' or 'imperial'",
+                    )
+                ],
                 metadata={
                     "error_type": "validation_error",
                     "error_code": ERROR_CODE_INVALID_UNITS,
                     "units_provided": units,
                     "valid_options": ["metric", "imperial"],
-                    "timestamp": request_timestamp
+                    "timestamp": request_timestamp,
                 },
-                isError=True
+                isError=True,
             )
 
         # Geocode location
@@ -781,20 +806,22 @@ async def get_weather(
 
         try:
             geo_data = await geocode_location(location)
-        except ValueError as e:
+        except ValueError:
             # Location not found
             logger.warning(f"Location not found: {location}")
             if ctx:
                 await ctx.warning(f"Location not found: {location}")
             return CallToolResult(
-                content=[TextContent(type="text", text=f"Location not found: {location}")],
+                content=[
+                    TextContent(type="text", text=f"Location not found: {location}")
+                ],
                 metadata={
                     "error_type": "geocoding_error",
                     "error_code": ERROR_CODE_LOCATION_NOT_FOUND,
                     "location_query": location,
-                    "timestamp": request_timestamp
+                    "timestamp": request_timestamp,
                 },
-                isError=True
+                isError=True,
             )
         except Exception as e:
             # Geocoding service error
@@ -802,14 +829,16 @@ async def get_weather(
             if ctx:
                 await ctx.error(f"Geocoding failed: {str(e)}")
             return CallToolResult(
-                content=[TextContent(type="text", text=f"Geocoding service error: {str(e)}")],
+                content=[
+                    TextContent(type="text", text=f"Geocoding service error: {str(e)}")
+                ],
                 metadata={
                     "error_type": "geocoding_error",
                     "error_code": ERROR_CODE_GEOCODE_SERVICE_ERROR,
                     "location_query": location,
-                    "timestamp": request_timestamp
+                    "timestamp": request_timestamp,
                 },
-                isError=True
+                isError=True,
             )
 
         location_name = geo_data["name"]
@@ -836,12 +865,14 @@ async def get_weather(
                 await ctx.error(f"Weather fetch failed: {str(e)}")
 
             # Determine error code from exception metadata if available
-            error_code = ERROR_CODE_FETCH_FAILED
-            if hasattr(e, 'args') and len(e.args) > 1 and isinstance(e.args[1], dict):
-                error_code = e.args[1].get("error_code", ERROR_CODE_FETCH_FAILED)
+            error_code = ERROR_FETCH_FAILED
+            if hasattr(e, "args") and len(e.args) > 1 and isinstance(e.args[1], dict):
+                error_code = e.args[1].get("error_code", ERROR_FETCH_FAILED)
 
             return CallToolResult(
-                content=[TextContent(type="text", text=f"Weather fetch failed: {str(e)}")],
+                content=[
+                    TextContent(type="text", text=f"Weather fetch failed: {str(e)}")
+                ],
                 metadata={
                     "error_type": "fetch_error",
                     "error_code": error_code,
@@ -849,9 +880,9 @@ async def get_weather(
                     "latitude": lat,
                     "longitude": lon,
                     "forecast_type": forecast_type,
-                    "timestamp": request_timestamp
+                    "timestamp": request_timestamp,
                 },
-                isError=True
+                isError=True,
             )
 
         # Prepare response
@@ -868,18 +899,20 @@ async def get_weather(
             "forecast_type": forecast_type,
             "units": units,
             "timestamp": request_timestamp,
-            "data": weather_data
+            "data": weather_data,
         }
 
         if ctx:
             await ctx.report_progress(5, 5, "Complete")
 
-        logger.info(f"Successfully retrieved {forecast_type} weather for {location_name}")
+        logger.info(
+            f"Successfully retrieved {forecast_type} weather for {location_name}"
+        )
 
         # Return raw JSON data, let model interpret using the voice guidance
         return CallToolResult(
             content=[TextContent(type="text", text=json.dumps(weather_data, indent=2))],
-            metadata=metadata
+            metadata=metadata,
         )
 
     except Exception as e:
@@ -896,10 +929,11 @@ async def get_weather(
                 "location_query": location,
                 "forecast_type": forecast_type,
                 "units": units,
-                "timestamp": request_timestamp
+                "timestamp": request_timestamp,
             },
-            isError=True
+            isError=True,
         )
+
 
 # ============================================================================
 # SERVER ENTRY POINT

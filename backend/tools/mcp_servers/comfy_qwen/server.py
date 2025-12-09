@@ -486,7 +486,9 @@ async def qwen_image(
                     )
 
                     # Add markdown image link (renders inline without token overhead)
-                    markdown_text = f"![Image {idx + 1} - file_id: {file_id}]({content_url})"
+                    markdown_text = (
+                        f"![Image {idx + 1} - file_id: {file_id}]({content_url})"
+                    )
                     logger.info(f"Creating markdown content block: {markdown_text}")
                     text_block = TextContent(type="text", text=markdown_text)
                     logger.info(

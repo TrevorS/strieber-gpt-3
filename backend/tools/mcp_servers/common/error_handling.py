@@ -39,6 +39,7 @@ ERROR_UNEXPECTED: str = "unexpected_error"
 # HTTP Status Code Helpers
 # =============================================================================
 
+
 class HTTPStatusCodes:
     """Helper methods for HTTP status code checks.
 
@@ -131,11 +132,12 @@ class HTTPStatusCodes:
 # Main Error Creation Function
 # =============================================================================
 
+
 def create_error_result(
     error_message: str,
     error_code: str,
     error_type: str = "error",
-    additional_metadata: Optional[Dict[str, Any]] = None
+    additional_metadata: Optional[Dict[str, Any]] = None,
 ) -> CallToolResult:
     """Create standardized error CallToolResult.
 
@@ -170,7 +172,7 @@ def create_error_result(
     return CallToolResult(
         content=[TextContent(type="text", text=f"Error: {error_message}")],
         isError=True,
-        metadata=metadata
+        metadata=metadata,
     )
 
 
@@ -178,10 +180,9 @@ def create_error_result(
 # Convenience Wrapper Functions
 # =============================================================================
 
+
 def create_validation_error(
-    field_name: str,
-    error_message: str,
-    field_value: Any = None
+    field_name: str, error_message: str, field_value: Any = None
 ) -> CallToolResult:
     """Create a validation error for invalid input fields.
 
@@ -208,7 +209,7 @@ def create_validation_error(
         error_message=f"{field_name}: {error_message}",
         error_code=ERROR_VALIDATION_FAILED,
         error_type="validation_error",
-        additional_metadata=metadata
+        additional_metadata=metadata,
     )
 
 
@@ -216,7 +217,7 @@ def create_network_error(
     url: str,
     error_message: str,
     timeout_seconds: Optional[float] = None,
-    status_code: Optional[int] = None
+    status_code: Optional[int] = None,
 ) -> CallToolResult:
     """Create a network error for failed HTTP requests.
 
@@ -248,14 +249,11 @@ def create_network_error(
         error_message=f"Network error fetching {url}: {error_message}",
         error_code=ERROR_NETWORK_ERROR,
         error_type="network_error",
-        additional_metadata=metadata
+        additional_metadata=metadata,
     )
 
 
-def create_timeout_error(
-    timeout_seconds: float,
-    context: str = ""
-) -> CallToolResult:
+def create_timeout_error(timeout_seconds: float, context: str = "") -> CallToolResult:
     """Create a timeout error for operations that exceeded time limits.
 
     Args:
@@ -279,17 +277,11 @@ def create_timeout_error(
         error_message=message,
         error_code=ERROR_TIMEOUT,
         error_type="timeout_error",
-        additional_metadata={
-            "timeout_seconds": timeout_seconds,
-            "context": context
-        }
+        additional_metadata={"timeout_seconds": timeout_seconds, "context": context},
     )
 
 
-def create_not_found_error(
-    resource_type: str,
-    resource_id: str
-) -> CallToolResult:
+def create_not_found_error(resource_type: str, resource_id: str) -> CallToolResult:
     """Create a not found error for missing resources.
 
     Args:
@@ -311,14 +303,13 @@ def create_not_found_error(
         error_type="not_found_error",
         additional_metadata={
             "resource_type": resource_type,
-            "resource_id": resource_id
-        }
+            "resource_id": resource_id,
+        },
     )
 
 
 def create_rate_limit_error(
-    retry_after_seconds: Optional[int] = None,
-    limit_description: Optional[str] = None
+    retry_after_seconds: Optional[int] = None, limit_description: Optional[str] = None
 ) -> CallToolResult:
     """Create a rate limit error for throttled requests.
 
@@ -353,5 +344,5 @@ def create_rate_limit_error(
         error_message=message,
         error_code=ERROR_RATE_LIMITED,
         error_type="rate_limit_error",
-        additional_metadata=metadata if metadata else None
+        additional_metadata=metadata if metadata else None,
     )

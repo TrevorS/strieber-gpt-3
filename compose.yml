@@ -111,90 +111,6 @@ services:
       - strieber-net
 
   # ==========================================================================
-  # llama-server-readerlm: Inference engine for ReaderLM-v2 model
-  # ABOUTME: Local HTML-to-Markdown conversion without external API calls
-  # Dedicated instance for privacy: URLs and content never leave this server
-  # ==========================================================================
-  llama-server-readerlm:
-    build:
-      context: .
-      dockerfile: Dockerfile.llamacpp
-      args:
-        CUDA_VERSION: "13.0.1"
-        UBUNTU_VERSION: "22.04"
-        CUDA_DOCKER_ARCH: "121"  # Blackwell GB10
-
-    image: strieber-llama-server:latest  # Reuse same image
-    container_name: strieber-llama-server-readerlm
-
-    # Restart policy
-    restart: unless-stopped
-
-    # GPU configuration (shares GPU 0 with main llama-server)
-    deploy:
-      resources:
-        reservations:
-          devices:
-            - driver: nvidia
-              count: 1  # Request 1 GPU, will share with llama-server
-              capabilities: [gpu]
-
-    # Shared memory for CUDA operations
-    shm_size: 8g  # Less than main server (smaller model)
-
-    # IPC mode for better GPU communication
-    ipc: host
-
-    # Port mapping: host:container (9030 = LLM range, ReaderLM)
-    ports:
-      - "9030:8000"
-
-    # Volume mounts
-    volumes:
-      # Models directory: ReaderLM for HTML-to-Markdown conversion
-      - /home/trevor/models/llama-cpp/specialized:/models
-
-    # Environment variables
-    environment:
-      - LLAMA_ARG_HOST=0.0.0.0
-      - LLAMA_ARG_PORT=8000
-      - LLAMA_LOG_VERBOSITY=0
-      - LLAMA_LOG_TIMESTAMPS=true
-      - LLAMA_LOG_PREFIX=true
-
-    # Server command optimized for ReaderLM-v2 (1.5B params)
-    # Smaller model = lower latency, lower VRAM requirements
-    # Extended context: Model trained to 256K, can extrapolate to 512K tokens
-    command:
-      - "-m"
-      - "/models/ReaderLM-v2-Q4_K_M.gguf"
-      - "--port"
-      - "8000"
-      - "--host"
-      - "0.0.0.0"
-      - "-c"
-      - "131072"                          # Context: 128k tokens (max safe, matches main server)
-      - "--n-gpu-layers"
-      - "999"                             # Auto-detect layers for GPU offload
-      - "--jinja"                         # Enable chat template support
-      - "-b"
-      - "1024"                            # Batch size: smaller for smaller model
-      - "-ub"
-      - "1024"                            # Ubatch size: physical batch size
-      - "--flash-attn"
-      - "on"                              # Flash attention: efficiency
-      - "--cont-batching"                 # Continuous batching
-      - "--parallel"
-      - "1"                               # Single concurrent request (full 131K context per request)
-      - "-t"
-      - "0.1"                             # Temperature: near-zero for deterministic conversion
-      - "--no-mmap"                       # Disable mmap
-
-    # Network configuration for MCP server communication
-    networks:
-      - strieber-net
-
-  # ==========================================================================
   # llama-server-qwen-vl: Vision-language model for task routing and image analysis
   # ABOUTME: Qwen3-VL-2B multimodal model for vision tasks and text generation
   # Supports: Image understanding, visual question answering, task classification
@@ -580,8 +496,8 @@ services:
 
   # ==========================================================================
   # mcp-reader: Privacy-first web content extraction
-  # ABOUTME: Local HTML-to-Markdown conversion with instruction-based extraction
-  # Uses: Playwright scraper + ReaderLM-v2 for complete private pipeline
+  # ABOUTME: Local HTML-to-Markdown conversion using Trafilatura + markdownify
+  # Uses: Playwright scraper for fetching, rule-based extraction (~100ms)
   # ==========================================================================
   mcp-reader:
     build:
@@ -597,11 +513,8 @@ services:
     environment:
       - PORT=8000
       - SCRAPER_ENDPOINT=http://playwright-scraper:8000
-      - LLAMA_ENDPOINT=http://llama-server-readerlm:8000
     depends_on:
       playwright-scraper:
-        condition: service_healthy
-      llama-server-readerlm:
         condition: service_healthy
     networks:
       - strieber-net

@@ -1,8 +1,6 @@
 """ABOUTME: Reader MCP Server - Privacy-first web content extraction.
 
-Provides completely self-hosted web-to-Markdown conversion with:
-- Fast path: Trafilatura + markdownify (no LLM, ~100ms)
-- LLM path: Trafilatura + ReaderLM-v2 (higher quality, ~2-3s)
+Uses Trafilatura + markdownify for fast, high-quality HTML-to-Markdown conversion (~100ms).
 
 Features:
 - Multiple output formats: markdown, html, text, screenshot
@@ -10,6 +8,7 @@ Features:
 - Links extraction: internal/external URLs
 - BM25 query filtering: extract only content relevant to a query
 - CSS selector waiting for dynamic content
+- Ensemble extraction: Trafilatura + readability-lxml fallback (F1: 0.981)
 
 Zero external API calls. All URLs and content processed locally.
 """
@@ -85,10 +84,6 @@ class FetchPageInput(BaseModel):
         default=False,
         description="Force Playwright rendering for JavaScript-heavy SPAs",
     )
-    use_llm: bool = Field(
-        default=False,
-        description="Use ReaderLM-v2 for higher quality conversion (~2-3s vs ~100ms)",
-    )
     output_format: str = Field(
         default="markdown",
         description="Output format: 'markdown' (default), 'html', 'text', or 'screenshot'",
@@ -154,9 +149,6 @@ class FetchPageOutput(BaseModel):
 
     content: str = Field(description="Extracted content or error message")
     method: str = Field(description="Scraping method used (http or playwright)")
-    pipeline: str = Field(
-        description="Conversion pipeline used (fast_path or llm_path)"
-    )
     output_format: str = Field(description="Output format used")
     html_size: int = Field(description="Size of fetched HTML in bytes")
     content_size: int = Field(description="Size of extracted content in bytes")
@@ -175,7 +167,6 @@ logger = server.get_logger()
 
 pipeline = ReaderPipeline(
     scraper_endpoint=os.getenv("SCRAPER_ENDPOINT", "http://playwright-scraper:8000"),
-    llama_endpoint=os.getenv("LLAMA_ENDPOINT", "http://llama-server-readerlm:8000"),
 )
 
 
@@ -194,7 +185,6 @@ async def fetch_page(
     url: str,
     timeout: int = TIMEOUT_DEFAULT,
     force_js_rendering: bool = False,
-    use_llm: bool = False,
     output_format: str = "markdown",
     include_metadata: bool = False,
     include_links: bool = False,
@@ -209,10 +199,7 @@ async def fetch_page(
     """Fetch and extract web page content with advanced options.
 
     Privacy-first: URLs and content never leave your infrastructure.
-
-    **Conversion Paths**:
-    • Fast path (default): Trafilatura + markdownify (~100-200ms)
-    • LLM path: Trafilatura + ReaderLM-v2 (~2-3s, higher quality)
+    Uses Trafilatura + markdownify for fast extraction (~100-200ms).
 
     **Output Formats**:
     • markdown: Clean markdown (default)
@@ -233,7 +220,6 @@ async def fetch_page(
         url: URL to fetch (must include http:// or https://)
         timeout: Max page load time (5-300 seconds, default: 30)
         force_js_rendering: Force Playwright for JS-heavy SPAs
-        use_llm: Use ReaderLM-v2 for higher quality (slower)
         output_format: "markdown", "html", "text", or "screenshot"
         include_metadata: Extract page metadata (title, author, date, etc.)
         include_links: Extract all links from the page
@@ -273,10 +259,7 @@ async def fetch_page(
         # Screenshot
         fetch_page("https://example.com", output_format="screenshot")
     """
-    pipeline_name = "llm_path" if use_llm else "fast_path"
-    logger.debug(
-        f"fetch_page: url={url}, format={output_format}, llm={use_llm}, query={query}"
-    )
+    logger.debug(f"fetch_page: url={url}, format={output_format}, query={query}")
 
     try:
         url_preview = url[:50] + ("..." if len(url) > 50 else "")
@@ -284,9 +267,7 @@ async def fetch_page(
         if ctx:
             await ctx.report_progress(1, 4, f"Scraping: {url_preview}")
 
-        logger.info(
-            f"Processing URL: {url} (format={output_format}, pipeline={pipeline_name})"
-        )
+        logger.info(f"Processing URL: {url} (format={output_format})")
 
         start_time = time.time()
 
@@ -303,7 +284,6 @@ async def fetch_page(
             url=url,
             timeout=timeout,
             force_playwright=force_js_rendering,
-            use_llm=use_llm,
             output_format=output_format,
             include_metadata=include_metadata,
             include_links=include_links,
@@ -343,7 +323,6 @@ async def fetch_page(
                 additional_metadata={
                     "url": url,
                     "method_used": method_used,
-                    "pipeline": pipeline_name,
                     "output_format": output_format,
                 },
             )
@@ -352,8 +331,7 @@ async def fetch_page(
         if ctx:
             method = metadata.get("method_used", "unknown")
             await ctx.report_progress(2, 4, f"Scraped ({method})")
-            converter = "ReaderLM-v2" if use_llm else "markdownify"
-            await ctx.report_progress(3, 4, f"Converting with {converter}...")
+            await ctx.report_progress(3, 4, "Converting with markdownify...")
             await ctx.report_progress(4, 4, f"Complete: {len(result.content)} chars")
 
         # Log warning for large content
@@ -361,9 +339,9 @@ async def fetch_page(
             logger.warning(f"Large content from {url}: {len(result.content)} chars")
 
         logger.info(
-            f"Processed {url}: {len(result.content)} chars ({pipeline_name}) - "
+            f"Processed {url}: {len(result.content)} chars - "
             f"Scrape: {metadata.get('scrape_time_ms', 0)}ms, "
-            f"Convert: {metadata.get('inference_time_ms', 0)}ms, "
+            f"Convert: {metadata.get('conversion_time_ms', 0)}ms, "
             f"Total: {total_time_ms}ms"
         )
 
@@ -389,12 +367,11 @@ async def fetch_page(
             isError=False,
             metadata={
                 "method": metadata.get("method_used", "unknown"),
-                "pipeline": pipeline_name,
                 "output_format": output_format,
                 "html_size": metadata.get("html_size", 0),
                 "content_size": len(result.content),
                 "scrape_time_ms": metadata.get("scrape_time_ms", 0),
-                "conversion_time_ms": metadata.get("inference_time_ms", 0),
+                "conversion_time_ms": metadata.get("conversion_time_ms", 0),
                 "total_time_ms": total_time_ms,
                 "url": url,
                 "has_metadata": result.page_metadata is not None,
@@ -427,11 +404,9 @@ if __name__ == "__main__":
     logger.info(
         f"  Scraper endpoint: {os.getenv('SCRAPER_ENDPOINT', 'http://playwright-scraper:8000')}"
     )
-    logger.info(
-        f"  Llama endpoint: {os.getenv('LLAMA_ENDPOINT', 'http://llama-server-readerlm:8000')}"
-    )
     logger.info("")
     logger.info("Features:")
+    logger.info("  - Trafilatura + markdownify extraction (~100ms)")
     logger.info("  - Output formats: markdown, html, text, screenshot")
     logger.info("  - Metadata extraction: title, author, date, language")
     logger.info("  - Links extraction: internal/external URLs")

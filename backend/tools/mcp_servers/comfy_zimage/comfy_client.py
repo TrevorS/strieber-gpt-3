@@ -60,7 +60,9 @@ class ComfyUIClient:
             async with httpx.AsyncClient(timeout=self.timeout) as client:
                 # Clean up workflow: remove comment keys (start with # or _) that ComfyUI doesn't understand
                 clean_workflow = {
-                    k: v for k, v in workflow.items() if not k.startswith("#") and not k.startswith("_")
+                    k: v
+                    for k, v in workflow.items()
+                    if not k.startswith("#") and not k.startswith("_")
                 }
 
                 payload = {

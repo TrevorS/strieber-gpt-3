@@ -12,6 +12,11 @@ Run validation in order: Format → Lint → Type Check → Test
 - **Lint**: `docker compose run --rm frontend-dev npm run lint`
 - **Type Check**: `docker compose run --rm frontend-dev npm run check`
 
+### Python MCP Servers (backend/tools/mcp_servers/)
+- **Format**: `source .venv/bin/activate && ruff format .`
+- **Lint**: `source .venv/bin/activate && ruff check --fix .`
+- **Test**: `source .venv/bin/activate && pytest -v`
+
 ### Project Permissions
 - **Project Type**: personal
 - **Direct Commits Allowed**: yes

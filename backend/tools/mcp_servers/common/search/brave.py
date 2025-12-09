@@ -39,7 +39,9 @@ class BraveSearchBackend(SearchBackend):
         """
         self.api_key = api_key or os.getenv("BRAVE_API_KEY")
         if not self.api_key:
-            raise ValueError("BRAVE_API_KEY not set. Brave Search backend requires API key.")
+            raise ValueError(
+                "BRAVE_API_KEY not set. Brave Search backend requires API key."
+            )
 
         self.base_url = "https://api.search.brave.com/res/v1"
         self.last_request_time: Optional[float] = None
@@ -76,7 +78,7 @@ class BraveSearchBackend(SearchBackend):
         country: str = "US",
         search_lang: str = "en",
         safesearch: str = "moderate",
-        **kwargs
+        **kwargs,
     ) -> SearchResponse:
         """Execute a Brave Search API query.
 
@@ -113,14 +115,14 @@ class BraveSearchBackend(SearchBackend):
             headers = {
                 "Accept": "application/json",
                 "Accept-Encoding": "gzip",
-                "X-Subscription-Token": self.api_key
+                "X-Subscription-Token": self.api_key,
             }
             params = {
                 "q": query,
                 "count": count,
                 "country": country,
                 "search_lang": search_lang,
-                "safesearch": safesearch
+                "safesearch": safesearch,
             }
             if freshness:
                 params["freshness"] = freshness
@@ -136,11 +138,7 @@ class BraveSearchBackend(SearchBackend):
 
             if not web_results:
                 logger.warning(f"No results found for query: {query}")
-                return SearchResponse(
-                    query=query,
-                    results=[],
-                    total_results=0
-                )
+                return SearchResponse(query=query, results=[], total_results=0)
 
             # Convert to standardized format
             results = self._format_results(web_results)
@@ -154,20 +152,24 @@ class BraveSearchBackend(SearchBackend):
                 metadata={
                     "backend": "brave",
                     "country": country,
-                    "search_lang": search_lang
-                }
+                    "search_lang": search_lang,
+                },
             )
 
         except httpx.HTTPStatusError as e:
             if e.response.status_code == 429:
                 logger.warning("Brave API rate limit exceeded")
-                raise Exception("Rate limit exceeded. Free tier allows 1 request/second, 2000 requests/month.")
+                raise Exception(
+                    "Rate limit exceeded. Free tier allows 1 request/second, 2000 requests/month."
+                )
             elif e.response.status_code == 401:
                 logger.error("Invalid Brave API key")
                 raise Exception("Invalid BRAVE_API_KEY")
             else:
                 logger.error(f"Brave API HTTP error: {e}")
-                raise Exception(f"HTTP Error {e.response.status_code}: {e.response.text}")
+                raise Exception(
+                    f"HTTP Error {e.response.status_code}: {e.response.text}"
+                )
 
         except httpx.TimeoutException:
             logger.error("Brave API request timeout")
@@ -184,7 +186,7 @@ class BraveSearchBackend(SearchBackend):
         freshness: Optional[str] = None,
         country: str = "US",
         search_lang: str = "en",
-        **kwargs
+        **kwargs,
     ) -> SearchResponse:
         """Execute a Brave News Search API query.
 
@@ -220,13 +222,13 @@ class BraveSearchBackend(SearchBackend):
             headers = {
                 "Accept": "application/json",
                 "Accept-Encoding": "gzip",
-                "X-Subscription-Token": self.api_key
+                "X-Subscription-Token": self.api_key,
             }
             params = {
                 "q": query,
                 "count": count,
                 "country": country,
-                "search_lang": search_lang
+                "search_lang": search_lang,
             }
             if freshness:
                 params["freshness"] = freshness
@@ -243,16 +245,15 @@ class BraveSearchBackend(SearchBackend):
             if not news_results:
                 logger.warning(f"No news results found for query: {query}")
                 return SearchResponse(
-                    query=query,
-                    results=[],
-                    total_results=0,
-                    metadata={"type": "news"}
+                    query=query, results=[], total_results=0, metadata={"type": "news"}
                 )
 
             # Convert to standardized format
             results = self._format_news_results(news_results)
 
-            logger.info(f"Brave news search returned {len(results)} results for '{query}'")
+            logger.info(
+                f"Brave news search returned {len(results)} results for '{query}'"
+            )
 
             return SearchResponse(
                 query=query,
@@ -262,27 +263,33 @@ class BraveSearchBackend(SearchBackend):
                     "backend": "brave",
                     "type": "news",
                     "country": country,
-                    "search_lang": search_lang
-                }
+                    "search_lang": search_lang,
+                },
             )
 
         except httpx.HTTPStatusError as e:
             if e.response.status_code == 429:
                 logger.warning("Brave API rate limit exceeded")
-                raise Exception("Rate limit exceeded. Free tier allows 1 request/second, 2000 requests/month.")
+                raise Exception(
+                    "Rate limit exceeded. Free tier allows 1 request/second, 2000 requests/month."
+                )
             elif e.response.status_code == 401:
                 logger.error("Invalid Brave API key")
                 raise Exception("Invalid BRAVE_API_KEY")
             else:
                 logger.error(f"Brave API HTTP error: {e}")
-                raise Exception(f"HTTP Error {e.response.status_code}: {e.response.text}")
+                raise Exception(
+                    f"HTTP Error {e.response.status_code}: {e.response.text}"
+                )
 
         except httpx.TimeoutException:
             logger.error("Brave API request timeout")
             raise Exception("Search request timed out after 10 seconds")
 
         except Exception as e:
-            logger.error(f"Unexpected error during Brave news search: {e}", exc_info=True)
+            logger.error(
+                f"Unexpected error during Brave news search: {e}", exc_info=True
+            )
             raise
 
     def _format_results(self, raw_results: list[dict]) -> list[SearchResult]:
@@ -318,24 +325,24 @@ class BraveSearchBackend(SearchBackend):
             is_live = result.get("is_live")
 
             # Convert to SearchResult
-            formatted_results.append(SearchResult(
-                title=title,
-                url=url,
-                snippet=description,
-                date=age if age else None,
-                extra_snippets=extra_snippets if extra_snippets else [],
-                metadata={
-                    "backend": "brave"
-                },
-                source_name=source_name,
-                source_favicon=source_favicon,
-                content_type=content_type,
-                thumbnail_url=thumbnail_url,
-                thumbnail_is_logo=thumbnail_is_logo,
-                language=language,
-                page_timestamp=page_timestamp,
-                is_live=is_live
-            ))
+            formatted_results.append(
+                SearchResult(
+                    title=title,
+                    url=url,
+                    snippet=description,
+                    date=age if age else None,
+                    extra_snippets=extra_snippets if extra_snippets else [],
+                    metadata={"backend": "brave"},
+                    source_name=source_name,
+                    source_favicon=source_favicon,
+                    content_type=content_type,
+                    thumbnail_url=thumbnail_url,
+                    thumbnail_is_logo=thumbnail_is_logo,
+                    language=language,
+                    page_timestamp=page_timestamp,
+                    is_live=is_live,
+                )
+            )
 
         return formatted_results
 
@@ -360,7 +367,9 @@ class BraveSearchBackend(SearchBackend):
             source = result.get("source", "")
             breaking = result.get("breaking", False)
             thumbnail = result.get("thumbnail", {})
-            thumbnail_url = thumbnail.get("src", "") if isinstance(thumbnail, dict) else ""
+            thumbnail_url = (
+                thumbnail.get("src", "") if isinstance(thumbnail, dict) else ""
+            )
             page_timestamp = result.get("page_age")
 
             # Build metadata with news-specific info
@@ -368,24 +377,26 @@ class BraveSearchBackend(SearchBackend):
                 "backend": "brave",
                 "type": "news",
                 "source": source,
-                "is_breaking": breaking
+                "is_breaking": breaking,
             }
             if thumbnail_url:
                 metadata["thumbnail_url"] = thumbnail_url
 
             # Convert to SearchResult with rich metadata
-            formatted_results.append(SearchResult(
-                title=title,
-                url=url,
-                snippet=description,
-                date=age if age else None,
-                extra_snippets=[],  # News results typically don't have extra snippets
-                metadata=metadata,
-                source_name=source,  # Use source field as source_name for news
-                thumbnail_url=thumbnail_url if thumbnail_url else None,
-                page_timestamp=page_timestamp,
-                is_live=False  # News articles aren't live
-            ))
+            formatted_results.append(
+                SearchResult(
+                    title=title,
+                    url=url,
+                    snippet=description,
+                    date=age if age else None,
+                    extra_snippets=[],  # News results typically don't have extra snippets
+                    metadata=metadata,
+                    source_name=source,  # Use source field as source_name for news
+                    thumbnail_url=thumbnail_url if thumbnail_url else None,
+                    page_timestamp=page_timestamp,
+                    is_live=False,  # News articles aren't live
+                )
+            )
 
         return formatted_results
 

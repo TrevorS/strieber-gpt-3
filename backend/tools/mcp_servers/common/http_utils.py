@@ -16,10 +16,12 @@ async def safe_http_get(
     headers: Optional[Dict[str, str]] = None,
     params: Optional[Dict[str, Any]] = None,
     timeout: float = DEFAULT_HTTP_TIMEOUT,
-    follow_redirects: bool = True
+    follow_redirects: bool = True,
 ) -> httpx.Response:
     """Perform async HTTP GET with standard error handling."""
-    async with httpx.AsyncClient(timeout=timeout, follow_redirects=follow_redirects) as client:
+    async with httpx.AsyncClient(
+        timeout=timeout, follow_redirects=follow_redirects
+    ) as client:
         response = await client.get(url, headers=headers, params=params)
         response.raise_for_status()
         return response

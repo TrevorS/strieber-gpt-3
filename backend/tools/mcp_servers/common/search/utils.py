@@ -4,15 +4,11 @@ Provides filtering functions used by both quick and deep modes,
 formatting utilities, and result condensing for token budgets.
 """
 
-import json
 import logging
-import os
-from typing import Optional
 from urllib.parse import urlparse
 
-from openai import AsyncOpenAI
 
-from .backend import SearchBackend, SearchResult, SearchResponse
+from .backend import SearchResult
 
 # Configure logging
 logger = logging.getLogger(__name__)
@@ -22,9 +18,9 @@ logger = logging.getLogger(__name__)
 # Filtering Functions
 # ===========================
 
+
 def filter_low_quality(
-    results: list[SearchResult],
-    min_snippet_length: int = 50
+    results: list[SearchResult], min_snippet_length: int = 50
 ) -> list[SearchResult]:
     """Remove low-quality search results.
 
@@ -50,7 +46,9 @@ def filter_low_quality(
 
         # Must have minimum snippet length
         if len(result.snippet) < min_snippet_length:
-            logger.debug(f"Filtered: snippet too short ({len(result.snippet)} chars) - {result.title}")
+            logger.debug(
+                f"Filtered: snippet too short ({len(result.snippet)} chars) - {result.title}"
+            )
             continue
 
         # Must have non-whitespace content
@@ -65,8 +63,7 @@ def filter_low_quality(
 
 
 def deduplicate_domains(
-    results: list[SearchResult],
-    max_per_domain: int = 3
+    results: list[SearchResult], max_per_domain: int = 3
 ) -> list[SearchResult]:
     """Limit number of results per domain to reduce redundancy.
 
@@ -120,9 +117,7 @@ def extract_domain(url: str) -> str:
 
 
 def apply_quality_filters(
-    results: list[SearchResult],
-    min_snippet_length: int = 50,
-    max_per_domain: int = 3
+    results: list[SearchResult], min_snippet_length: int = 50, max_per_domain: int = 3
 ) -> list[SearchResult]:
     """Apply all quality filters to search results.
 
@@ -150,10 +145,9 @@ def apply_quality_filters(
 # Formatting Functions
 # ===========================
 
+
 def format_as_markdown(
-    results: list[SearchResult],
-    query: str,
-    include_metadata: bool = True
+    results: list[SearchResult], query: str, include_metadata: bool = True
 ) -> str:
     """Format search results as markdown.
 
@@ -173,7 +167,7 @@ def format_as_markdown(
     output = []
 
     if include_metadata:
-        output.append(f"# Search Results for: \"{query}\"\n")
+        output.append(f'# Search Results for: "{query}"\n')
         output.append(f"Found {len(results)} results\n")
         output.append("---\n")
 
@@ -205,15 +199,14 @@ def format_as_markdown(
         output.append("---\n")
 
     # Add citation instruction for the LLM
-    output.append("\n**Citation Format:** When referencing these sources in your response, use [N] notation (e.g., [1], [2]) corresponding to the result numbers above.\n")
+    output.append(
+        "\n**Citation Format:** When referencing these sources in your response, use [N] notation (e.g., [1], [2]) corresponding to the result numbers above.\n"
+    )
 
     return "\n".join(output)
 
 
-def estimate_markdown_tokens(
-    results: list[SearchResult],
-    query: str
-) -> int:
+def estimate_markdown_tokens(results: list[SearchResult], query: str) -> int:
     """Estimate token count for markdown-formatted results.
 
     Args:
@@ -224,7 +217,9 @@ def estimate_markdown_tokens(
         Estimated token count
     """
     # Header tokens
-    header_tokens = len(query.split()) + 20  # "Search Results for: {query}\nFound X results"
+    header_tokens = (
+        len(query.split()) + 20
+    )  # "Search Results for: {query}\nFound X results"
 
     # Result tokens
     result_tokens = sum(r.estimate_tokens() for r in results)
@@ -258,8 +253,7 @@ def deduplicate_by_url(results: list[SearchResult]) -> list[SearchResult]:
 
 
 def condense_results(
-    results: list[SearchResult],
-    max_tokens: int = 2000
+    results: list[SearchResult], max_tokens: int = 2000
 ) -> list[SearchResult]:
     """Condense results to fit within token budget.
 
@@ -324,7 +318,7 @@ def condense_results(
                 thumbnail_is_logo=result.thumbnail_is_logo,
                 language=result.language,
                 page_timestamp=result.page_timestamp,
-                is_live=result.is_live
+                is_live=result.is_live,
             )
             condensed.append(condensed_result)
         else:

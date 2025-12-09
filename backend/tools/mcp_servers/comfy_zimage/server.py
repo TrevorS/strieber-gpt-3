@@ -50,12 +50,12 @@ ZIMAGE_CONTROLNET_WORKFLOW = _load_workflow("zimage_controlnet_api.json")
 
 ImageSize = Literal[
     "1024x1024",  # Square
-    "1024x768",   # Landscape 4:3
-    "768x1024",   # Portrait 3:4
-    "1280x720",   # Landscape 16:9
-    "720x1280",   # Portrait 9:16
-    "1344x768",   # Wide landscape
-    "768x1344",   # Tall portrait
+    "1024x768",  # Landscape 4:3
+    "768x1024",  # Portrait 3:4
+    "1280x720",  # Landscape 16:9
+    "720x1280",  # Portrait 9:16
+    "1344x768",  # Wide landscape
+    "768x1344",  # Tall portrait
 ]
 
 # Size presets map string sizes to (width, height) tuples
@@ -71,16 +71,16 @@ SIZE_PRESETS: Dict[ImageSize, Tuple[int, int]] = {
 
 # Node ID mappings for z-image workflow
 ZIMAGE_NODES = {
-    "clip_loader": "1",       # CLIPLoader (qwen_3_4b, lumina2)
-    "vae_loader": "2",        # VAELoader (ae.safetensors)
-    "unet_loader": "3",       # UNETLoader (z_image_turbo_bf16)
-    "empty_latent": "4",      # EmptySD3LatentImage (width, height, batch_size)
-    "positive_prompt": "5",   # CLIPTextEncode for positive prompt
-    "negative_zero": "6",     # ConditioningZeroOut
-    "model_sampling": "7",    # ModelSamplingAuraFlow (shift=3)
-    "sampler": "8",           # KSampler (seed, steps, cfg)
-    "vae_decode": "9",        # VAEDecode
-    "save_image": "10",       # SaveImage
+    "clip_loader": "1",  # CLIPLoader (qwen_3_4b, lumina2)
+    "vae_loader": "2",  # VAELoader (ae.safetensors)
+    "unet_loader": "3",  # UNETLoader (z_image_turbo_bf16)
+    "empty_latent": "4",  # EmptySD3LatentImage (width, height, batch_size)
+    "positive_prompt": "5",  # CLIPTextEncode for positive prompt
+    "negative_zero": "6",  # ConditioningZeroOut
+    "model_sampling": "7",  # ModelSamplingAuraFlow (shift=3)
+    "sampler": "8",  # KSampler (seed, steps, cfg)
+    "vae_decode": "9",  # VAEDecode
+    "save_image": "10",  # SaveImage
 }
 
 # Node ID mappings for z-image ControlNet workflow
@@ -172,9 +172,7 @@ async def zimage_turbo(
     Returns:
         Generated image(s) as base64 PNG.
     """
-    logger.info(
-        f"zimage_turbo called: prompt='{prompt[:50]}...', size={size}, n={n}"
-    )
+    logger.info(f"zimage_turbo called: prompt='{prompt[:50]}...', size={size}, n={n}")
 
     # Clamp parameters
     n = max(1, min(4, n))
@@ -219,13 +217,13 @@ async def zimage_turbo(
         # 1. Text summary with all parameters
         summary_parts = [
             f"Generated {len(output_files)} image(s).",
-            f"Parameters:",
+            "Parameters:",
             f"  prompt: {prompt[:100]}{'...' if len(prompt) > 100 else ''}",
             f"  size: {size} ({width}x{height})",
             f"  n: {n}",
             f"  steps: {steps}",
             f"  seed: {seed}",
-            f"  cfg: 1.0",
+            "  cfg: 1.0",
         ]
 
         summary_text = "\n".join(summary_parts)
@@ -324,18 +322,23 @@ async def zimage_controlnet(
         # Upload input image to ComfyUI via API
         img_bytes = base64.b64decode(image_data)
         input_filename = await comfy_client.upload_image(
-            img_bytes,
-            f"controlnet_input_{uuid.uuid4().hex[:8]}.png"
+            img_bytes, f"controlnet_input_{uuid.uuid4().hex[:8]}.png"
         )
 
         # Prepare workflow
         workflow = json.loads(json.dumps(ZIMAGE_CONTROLNET_WORKFLOW))  # Deep copy
 
         # Update workflow nodes with parameters
-        workflow[ZIMAGE_CONTROLNET_NODES["load_image"]]["inputs"]["image"] = input_filename
-        workflow[ZIMAGE_CONTROLNET_NODES["preprocessor"]]["inputs"]["preprocessor"] = PREPROCESSOR_MAP[control_type]
+        workflow[ZIMAGE_CONTROLNET_NODES["load_image"]]["inputs"]["image"] = (
+            input_filename
+        )
+        workflow[ZIMAGE_CONTROLNET_NODES["preprocessor"]]["inputs"]["preprocessor"] = (
+            PREPROCESSOR_MAP[control_type]
+        )
         workflow[ZIMAGE_CONTROLNET_NODES["positive_prompt"]]["inputs"]["text"] = prompt
-        workflow[ZIMAGE_CONTROLNET_NODES["controlnet"]]["inputs"]["strength"] = control_strength
+        workflow[ZIMAGE_CONTROLNET_NODES["controlnet"]]["inputs"]["strength"] = (
+            control_strength
+        )
         workflow[ZIMAGE_CONTROLNET_NODES["empty_latent"]]["inputs"]["width"] = width
         workflow[ZIMAGE_CONTROLNET_NODES["empty_latent"]]["inputs"]["height"] = height
         workflow[ZIMAGE_CONTROLNET_NODES["sampler"]]["inputs"]["seed"] = seed
@@ -348,7 +351,9 @@ async def zimage_controlnet(
         if ctx:
             async for progress in comfy_client.progress(prompt_id):
                 await ctx.report_progress(
-                    progress, 100, f"Generating with {control_type} control... {progress}%"
+                    progress,
+                    100,
+                    f"Generating with {control_type} control... {progress}%",
                 )
 
         # Collect outputs
@@ -360,7 +365,7 @@ async def zimage_controlnet(
         # 1. Text summary with all parameters
         summary_parts = [
             f"Generated {len(output_files)} image(s) with {control_type} ControlNet.",
-            f"Parameters:",
+            "Parameters:",
             f"  prompt: {prompt[:100]}{'...' if len(prompt) > 100 else ''}",
             f"  control_type: {control_type}",
             f"  control_strength: {control_strength}",

@@ -7,21 +7,15 @@ Supports matplotlib figure capture and serialization.
 
 import asyncio
 import ast
-import base64
 import docker
-import io
 import json
-import logging
-import os
-import sys
-from typing import Dict, Any, List, Optional
+from typing import Any, List, Optional
 from mcp.server.fastmcp import Context
 from mcp.types import TextContent, ImageContent, CallToolResult
 
 from common.mcp_base import MCPServerBase
 from common.error_handling import (
     ERROR_INVALID_INPUT,
-    ERROR_TIMEOUT,
     create_error_result,
 )
 
@@ -81,6 +75,7 @@ except Exception as e:
 # HELPER FUNCTIONS
 # ============================================================================
 
+
 def _validate_python_code(code: str) -> tuple[bool, Optional[str]]:
     """Validate Python code syntax without executing it.
 
@@ -111,25 +106,25 @@ def _should_wrap_matplotlib(code: str) -> bool:
     # Check for actual matplotlib and seaborn usage patterns, not just imports
     # Look for plt./sns. or pyplot/seaborn usage, which indicates real visualization code
     visualization_usage_patterns = [
-        'plt.',              # matplotlib.pyplot alias
-        'pyplot.',           # Direct pyplot module usage
-        'matplotlib.pyplot', # Full module path
-        'sns.',              # seaborn alias
-        'seaborn.',          # seaborn module
-        'plt.show()',        # Explicit show call (even though we don't need it)
-        'plt.plot(',         # matplotlib plotting functions
-        'plt.scatter(',
-        'plt.bar(',
-        'plt.hist(',
-        'plt.imshow(',
-        'sns.histplot(',     # seaborn plotting functions
-        'sns.scatterplot(',
-        'sns.lineplot(',
-        'sns.barplot(',
-        'sns.boxplot(',
-        'sns.violinplot(',
-        'sns.heatmap(',
-        'sns.pairplot(',
+        "plt.",  # matplotlib.pyplot alias
+        "pyplot.",  # Direct pyplot module usage
+        "matplotlib.pyplot",  # Full module path
+        "sns.",  # seaborn alias
+        "seaborn.",  # seaborn module
+        "plt.show()",  # Explicit show call (even though we don't need it)
+        "plt.plot(",  # matplotlib plotting functions
+        "plt.scatter(",
+        "plt.bar(",
+        "plt.hist(",
+        "plt.imshow(",
+        "sns.histplot(",  # seaborn plotting functions
+        "sns.scatterplot(",
+        "sns.lineplot(",
+        "sns.barplot(",
+        "sns.boxplot(",
+        "sns.violinplot(",
+        "sns.heatmap(",
+        "sns.pairplot(",
     ]
 
     return any(pattern in code for pattern in visualization_usage_patterns)
@@ -195,6 +190,7 @@ if _figures:
 # MCP TOOLS
 # ============================================================================
 
+
 @mcp.tool()
 async def execute_python(code: str, ctx: Context = None) -> CallToolResult:
     """Execute Python code in a sandboxed Docker container.
@@ -244,7 +240,7 @@ async def execute_python(code: str, ctx: Context = None) -> CallToolResult:
         return create_error_result(
             error_message="Docker client not available. Is Docker running?",
             error_code=ERROR_CODE_DOCKER_NOT_AVAILABLE,
-            error_type="docker_error"
+            error_type="docker_error",
         )
 
     # Validate: Code is not empty
@@ -255,13 +251,15 @@ async def execute_python(code: str, ctx: Context = None) -> CallToolResult:
         return create_error_result(
             error_message="Code cannot be empty or whitespace-only",
             error_code=ERROR_INVALID_INPUT,
-            error_type="validation_error"
+            error_type="validation_error",
         )
 
     # Validate: Code length limit (50KB per MCP best practices)
-    code_bytes = len(code.encode('utf-8'))
+    code_bytes = len(code.encode("utf-8"))
     if code_bytes > MAX_CODE_LENGTH_BYTES:
-        logger.warning(f"Code too large: {code_bytes} bytes (max: {MAX_CODE_LENGTH_BYTES})")
+        logger.warning(
+            f"Code too large: {code_bytes} bytes (max: {MAX_CODE_LENGTH_BYTES})"
+        )
         if ctx:
             await ctx.error(f"Code exceeds {MAX_CODE_LENGTH_BYTES} byte limit")
         return create_error_result(
@@ -271,7 +269,7 @@ async def execute_python(code: str, ctx: Context = None) -> CallToolResult:
             additional_metadata={
                 "code_length": code_bytes,
                 "max_length": MAX_CODE_LENGTH_BYTES,
-            }
+            },
         )
 
     # Validate: Python syntax
@@ -284,7 +282,7 @@ async def execute_python(code: str, ctx: Context = None) -> CallToolResult:
             error_message=f"Invalid Python syntax: {syntax_error}",
             error_code=ERROR_INVALID_INPUT,
             error_type="validation_error",
-            additional_metadata={"syntax_error": syntax_error}
+            additional_metadata={"syntax_error": syntax_error},
         )
 
     # ============================================================================
@@ -293,6 +291,7 @@ async def execute_python(code: str, ctx: Context = None) -> CallToolResult:
 
     try:
         import time
+
         start_time = time.time()
 
         logger.info(f"Executing Python code (length: {code_bytes} bytes)")
@@ -305,7 +304,9 @@ async def execute_python(code: str, ctx: Context = None) -> CallToolResult:
 
         logger.debug(f"Code wrapped for matplotlib: {is_wrapped}")
         if ctx:
-            await ctx.report_progress(2, 4, f"Executing {code_bytes} bytes of Python code...")
+            await ctx.report_progress(
+                2, 4, f"Executing {code_bytes} bytes of Python code..."
+            )
 
         # Execute in Docker container
         result = await asyncio.to_thread(
@@ -319,13 +320,15 @@ async def execute_python(code: str, ctx: Context = None) -> CallToolResult:
             network_disabled=DOCKER_NETWORK_DISABLED,
             stdout=True,
             stderr=True,
-            user=DOCKER_USER
+            user=DOCKER_USER,
         )
 
         execution_time_ms = int((time.time() - start_time) * 1000)
-        output = result.decode('utf-8')
+        output = result.decode("utf-8")
 
-        logger.info(f"Code execution successful (output: {len(output)} chars, time: {execution_time_ms}ms)")
+        logger.info(
+            f"Code execution successful (output: {len(output)} chars, time: {execution_time_ms}ms)"
+        )
         if ctx:
             await ctx.report_progress(3, 4, f"Parsing output ({len(output)} chars)...")
 
@@ -354,18 +357,13 @@ async def execute_python(code: str, ctx: Context = None) -> CallToolResult:
 
         # Add stdout if present
         if stdout:
-            content.append(TextContent(
-                type="text",
-                text=stdout
-            ))
+            content.append(TextContent(type="text", text=stdout))
 
         # Add images as ImageContent blocks
         for img_base64 in images:
-            content.append(ImageContent(
-                type="image",
-                data=img_base64,
-                mimeType=FIGURE_MIME_TYPE
-            ))
+            content.append(
+                ImageContent(type="image", data=img_base64, mimeType=FIGURE_MIME_TYPE)
+            )
 
         # Return empty text if no output
         if not content:
@@ -380,16 +378,18 @@ async def execute_python(code: str, ctx: Context = None) -> CallToolResult:
                 "output_length": len(stdout),
                 "image_count": len(images),
                 "wrapped": is_wrapped,
-            }
+            },
         )
 
     except docker.errors.ContainerError as e:
         # Container exited with non-zero code (execution error)
         execution_time_ms = int((time.time() - start_time) * 1000)
-        stderr = e.stderr.decode('utf-8') if e.stderr else str(e)
+        stderr = e.stderr.decode("utf-8") if e.stderr else str(e)
         stdout = ""  # ContainerError only captures stderr, not stdout
 
-        logger.warning(f"Container execution error (exit code {e.exit_status}): {stderr[:200]}")
+        logger.warning(
+            f"Container execution error (exit code {e.exit_status}): {stderr[:200]}"
+        )
         if ctx:
             await ctx.error(f"Execution error: {stderr[:100]}")
 
@@ -400,7 +400,9 @@ async def execute_python(code: str, ctx: Context = None) -> CallToolResult:
         if stderr:
             error_details.append(f"Error:\n{stderr}")
 
-        error_message = "\n".join(error_details) if error_details else "Execution error (no output)"
+        error_message = (
+            "\n".join(error_details) if error_details else "Execution error (no output)"
+        )
 
         return create_error_result(
             error_message=error_message,
@@ -409,7 +411,7 @@ async def execute_python(code: str, ctx: Context = None) -> CallToolResult:
             additional_metadata={
                 "exit_status": e.exit_status,
                 "execution_time_ms": execution_time_ms,
-            }
+            },
         )
 
     except docker.errors.ImageNotFound:
@@ -422,7 +424,7 @@ async def execute_python(code: str, ctx: Context = None) -> CallToolResult:
             error_message=error_msg,
             error_code=ERROR_CODE_IMAGE_NOT_FOUND,
             error_type="docker_error",
-            additional_metadata={"image_name": DOCKER_IMAGE_NAME}
+            additional_metadata={"image_name": DOCKER_IMAGE_NAME},
         )
 
     except docker.errors.APIError as e:
@@ -435,7 +437,7 @@ async def execute_python(code: str, ctx: Context = None) -> CallToolResult:
             error_message=error_msg,
             error_code=ERROR_CODE_API_ERROR,
             error_type="docker_error",
-            additional_metadata={"api_error": str(e)}
+            additional_metadata={"api_error": str(e)},
         )
 
     except Exception as e:
@@ -448,7 +450,7 @@ async def execute_python(code: str, ctx: Context = None) -> CallToolResult:
             error_message=error_msg,
             error_code=ERROR_CODE_EXECUTION_FAILED,
             error_type="execution_error",
-            additional_metadata={"exception": str(e)}
+            additional_metadata={"exception": str(e)},
         )
 
 
