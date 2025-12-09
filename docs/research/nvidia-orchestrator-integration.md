@@ -7,6 +7,13 @@
 
 NVIDIA's Orchestrator-8B represents a paradigm shift from monolithic LLM deployments to **composite AI systems** where a small, specialized routing model coordinates larger models and tools. This document analyzes how a similar approach could transform the strieber-gpt-3 local stack—potentially fronting the 120B GPT-OSS model with a lightweight orchestrator to reduce costs, improve latency, and maintain accuracy.
 
+> **Important Clarification:** The orchestrator IS an LLM (8B parameters). When we say "skip the large model" or "direct tool call," we mean:
+> - The orchestrator LLM (8B, ~300ms) analyzes the query and decides the routing
+> - For simple tool calls, we avoid calling the large LLM (120B, ~12s)
+> - Total latency: ~0.8s (orchestrator + tool) vs ~25s (full round-trip through 120B)
+>
+> The orchestrator doesn't "skip all LLMs"—it *is* the LLM that decides whether a larger, slower model is needed.
+
 ---
 
 ## Part 1: NVIDIA Orchestrator-8B Overview
@@ -300,7 +307,7 @@ User Query
     │    "Solve this differential equation"
     │
     ├─── Tool-only task? ──────────► Direct tool call
-    │    "What's the weather in NYC?"     (skip LLM entirely)
+    │    "What's the weather in NYC?"     (skip large model, ~12s saved)
     │
     ├─── Multi-modal? ─────────────► Qwen3-VL-2B
     │    "Describe this image"
@@ -498,7 +505,7 @@ pub async fn execute(
         RoutingDecision::LargeModel =>
             model_config,
         RoutingDecision::DirectTool { tool_name, args } => {
-            // Skip LLM entirely, execute tool directly
+            // Skip large model, execute tool directly (orchestrator already called)
             return self.execute_tool_only(tool_name, args, mcp_client).await;
         }
         // ... other cases
@@ -669,7 +676,7 @@ The model outputs structured routing decisions in its response.
 Assuming query distribution:
 - 60% simple (routable to 7B model)
 - 25% medium (require 120B)
-- 15% tool-only (no LLM needed)
+- 15% tool-only (orchestrator only, skip large model)
 
 | Scenario | GPU-seconds/query | Queries/hour | GPU Utilization |
 |----------|-------------------|--------------|-----------------|
@@ -1050,7 +1057,7 @@ For the orchestrator integration, define a routing-specific tool schema:
 {
   "action": "call_tool",
   "target": "weather__get_forecast",
-  "reasoning": "Direct tool request, no LLM needed",
+  "reasoning": "Direct tool request, skip large model",
   "confidence": 0.99,
   "tool_args": {"location": "NYC", "days": 1}
 }
@@ -1429,7 +1436,7 @@ This is the NVIDIA ToolOrchestra format adapted for your stack:
       "type": "function",
       "function": {
         "name": "use_tool",
-        "description": "Call a tool directly without involving an LLM",
+        "description": "Call a tool directly (skip large model, orchestrator handles routing)",
         "parameters": {
           "type": "object",
           "properties": {
@@ -1508,7 +1515,7 @@ You are a request router. Analyze the user's query and decide how to handle it.
 - Same as "small" but explicitly for image/video tasks
 - Use when: User provides an image or asks about visual content
 
-## Your Tools (can skip LLM entirely)
+## Your Tools (can skip the large model, orchestrator decides)
 
 | Tool | When to Use |
 |------|-------------|
@@ -1632,11 +1639,11 @@ POST http://llama-server-qwen-vl:8000/v1/chat/completions
   "action": "use_tool",
   "tool": "weather",
   "tool_args": {"location": "San Francisco", "days": 1},
-  "reasoning": "Direct weather request, no LLM needed"
+  "reasoning": "Direct weather request, skip large model"
 }
 ```
 
-→ Skips LLM entirely, calls MCP weather tool directly.
+→ Skips the 120B model (~12s saved), orchestrator (8B, ~300ms) calls MCP weather tool directly.
 
 ### Docker Compose for This Exact Setup
 
@@ -1743,7 +1750,7 @@ impl Executor {
 
         match routing.action.as_str() {
             "use_tool" => {
-                // Direct tool call - skip LLM entirely
+                // Direct tool call - skip large model (orchestrator already called)
                 let tool_name = routing.tool.unwrap();
                 let tool_args = routing.tool_args.unwrap_or_default();
                 self.execute_tool_directly(&tool_name, tool_args).await
@@ -1819,8 +1826,8 @@ struct RoutingDecision {
 | "Hello!" | small | Qwen3-VL-8B |
 | "What's in this image?" | vision | Qwen3-VL-8B |
 | "Explain quantum entanglement" | large | gpt-oss-120b |
-| "What's the weather in NYC?" | use_tool:weather | MCP (no LLM) |
-| "Search for latest AI news" | use_tool:web_search | MCP (no LLM) |
+| "What's the weather in NYC?" | use_tool:weather | MCP (skip 120B) |
+| "Search for latest AI news" | use_tool:web_search | MCP (skip 120B) |
 | "Write me a novel opening" | large | gpt-oss-120b |
 | "Translate 'hello' to Spanish" | small | Qwen3-VL-8B |
 | "Analyze this contract" + image | vision | Qwen3-VL-8B |
@@ -2032,7 +2039,7 @@ pub fn build_system_prompt(
 - Same as "small" but explicitly for image/video tasks
 - Use when: User provides an image or asks about visual content
 
-## Your Tools (can skip LLM entirely)
+## Your Tools (can skip the large model, orchestrator decides)
 {tools_list}
 
 ## User Preference: {preference_str}
@@ -2357,10 +2364,10 @@ impl Executor {
                         self.execute(&routed_req, previous_messages).await
                     }
                     RoutingAction::UseTool { tool, tool_args } => {
-                        // Direct tool call - skip LLM
+                        // Direct tool call - skip large model (orchestrator already called)
                         tracing::info!(
                             tool = %tool,
-                            "Direct tool call, skipping LLM"
+                            "Direct tool call, skipping large model"
                         );
                         self.execute_direct_tool(&tool, tool_args, req).await
                     }
@@ -2380,7 +2387,7 @@ impl Executor {
         }
     }
 
-    /// Execute a tool call directly without involving an LLM.
+    /// Execute a tool call directly (orchestrator routes, skips large model).
     async fn execute_direct_tool(
         &self,
         tool_name: &str,
@@ -2587,7 +2594,7 @@ docker compose logs -f responses-api
 │     {"action": "use_tool", "tool": "weather__get_forecast",                │
 │      "tool_args": {"location": "NYC"}}                                     │
 │                                                                             │
-│  3. Execute Direct Tool (NO LLM CALL!)                                      │
+│  3. Execute Direct Tool (SKIP LARGE MODEL!)                                 │
 │     └─► mcp.call_tool("weather__get_forecast", {"location": "NYC"})        │
 │                                                                             │
 │     ┌──────────────────────────────────────────────────────────────────┐   │
@@ -2665,3 +2672,408 @@ docker compose logs -f responses-api | grep "Direct tool call"
 | `src/lib.rs` | ADD - `mod orchestration;` |
 | `compose.yml` | ADD - orchestrator service |
 | Environment | ADD - `ORCHESTRATOR_CONFIG` |
+
+---
+
+## Part 16: Complete Docker Service Setup
+
+This section provides production-ready Docker Compose service definitions that follow the existing `compose.yml` patterns exactly.
+
+### Port Assignment Strategy
+
+The existing codebase uses a structured port scheme:
+
+| Port Range | Purpose | Examples |
+|------------|---------|----------|
+| 9010-9019 | Main LLM inference | 9010: gpt-oss-120b |
+| 9020-9029 | Vision/multimodal models | 9020: Qwen3-VL-2B |
+| 9030-9039 | Specialized models | 9030: ReaderLM |
+| 9050-9059 | Embeddings | 9050: EmbeddingGemma |
+| **9060-9069** | **Orchestrator** (NEW) | **9060: Orchestrator-8B** |
+| **9070-9079** | **Small general models** (NEW) | **9070: Qwen3-8B** |
+| 9100-9199 | MCP tool servers | 9100-9141: Various MCP |
+| 9150 | Responses API | 9150: responses-api |
+| 9200-9299 | Web UIs | 9200: Open WebUI |
+| 9300-9399 | Frontend | 9300: Chat UI |
+
+### Service Definition: NVIDIA Orchestrator-8B
+
+Add this to `compose.yml`:
+
+```yaml
+  # ==========================================================================
+  # llama-server-orchestrator: NVIDIA Orchestrator-8B for intelligent routing
+  # ABOUTME: Purpose-trained routing model that decides which backend to use
+  # Fine-tuned from Qwen3-8B via GRPO for multi-objective optimization
+  # ==========================================================================
+  llama-server-orchestrator:
+    build:
+      context: .
+      dockerfile: Dockerfile.llamacpp
+      args:
+        CUDA_VERSION: "13.0.1"
+        UBUNTU_VERSION: "22.04"
+        CUDA_DOCKER_ARCH: "121"  # Blackwell GB10
+
+    image: strieber-llama-server:latest  # Reuse same image
+    container_name: strieber-llama-server-orchestrator
+
+    # Restart policy
+    restart: unless-stopped
+
+    # GPU configuration (shares GPU 0 with other services)
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+
+    # Shared memory for CUDA operations
+    shm_size: 4g  # Small model, minimal overhead
+
+    # IPC mode for better GPU communication
+    ipc: host
+
+    # Port mapping: 9060 = orchestrator routing layer
+    ports:
+      - "9060:8000"
+
+    # Volume mounts
+    volumes:
+      # Models directory: NVIDIA Orchestrator GGUF
+      - /home/trevor/models/llama-cpp/orchestrator:/models
+
+    # Environment variables
+    environment:
+      - LLAMA_ARG_HOST=0.0.0.0
+      - LLAMA_ARG_PORT=8000
+      - LLAMA_LOG_VERBOSITY=0
+      - LLAMA_LOG_TIMESTAMPS=true
+      - LLAMA_LOG_PREFIX=true
+
+    # Server command optimized for Orchestrator-8B routing decisions
+    # Low temperature for consistent routing, limited context (queries are short)
+    command:
+      - "-m"
+      - "/models/nvidia_Orchestrator-8B-Q4_K_M.gguf"
+      - "--port"
+      - "8000"
+      - "--host"
+      - "0.0.0.0"
+      - "-c"
+      - "8192"                              # Context: 8K tokens (sufficient for routing)
+      - "--n-gpu-layers"
+      - "999"                               # Auto-detect layers for GPU offload
+      - "--jinja"                           # Enable chat template support
+      - "-b"
+      - "512"                               # Batch size: standard
+      - "-ub"
+      - "512"                               # Ubatch size: physical batch
+      - "--flash-attn"
+      - "on"                                # Flash attention: efficiency
+      - "--cont-batching"                   # Continuous batching
+      - "--parallel"
+      - "4"                                 # Higher parallelism for routing (fast decisions)
+      - "--no-mmap"                         # Disable mmap
+      - "-t"
+      - "0.1"                               # Temperature: low for consistent routing
+
+    # Health check
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 5s
+      start_period: 30s
+      retries: 3
+
+    # Network configuration
+    networks:
+      - strieber-net
+```
+
+### Service Definition: Qwen3-VL-8B-Instruct (Upgraded)
+
+Replace the existing `llama-server-qwen-vl` with the 8B version:
+
+```yaml
+  # ==========================================================================
+  # llama-server-qwen-vl: Qwen3-VL-8B-Instruct vision-language model
+  # ABOUTME: Upgraded from 2B to 8B for better quality on simple tasks
+  # Serves dual purpose: vision tasks AND small general queries via orchestrator
+  # ==========================================================================
+  llama-server-qwen-vl:
+    build:
+      context: .
+      dockerfile: Dockerfile.llamacpp
+      args:
+        CUDA_VERSION: "13.0.1"
+        UBUNTU_VERSION: "22.04"
+        CUDA_DOCKER_ARCH: "121"  # Blackwell GB10
+
+    image: strieber-llama-server:latest  # Reuse same image
+    container_name: strieber-llama-server-qwen-vl
+
+    # Restart policy
+    restart: unless-stopped
+
+    # GPU configuration (shares GPU 0 with other llama-server instances)
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+
+    # Shared memory for CUDA operations
+    shm_size: 8g  # Larger than 2B version
+
+    # IPC mode for better GPU communication
+    ipc: host
+
+    # Port mapping: 9020 = vision/multimodal + small general tasks
+    ports:
+      - "9020:8000"
+
+    # Volume mounts
+    volumes:
+      # Models directory: Qwen-VL 8B model and mmproj
+      - /home/trevor/models/llama-cpp/qwen-vl:/models
+
+    # Environment variables
+    environment:
+      - LLAMA_ARG_HOST=0.0.0.0
+      - LLAMA_ARG_PORT=8000
+      - LLAMA_LOG_VERBOSITY=0
+      - LLAMA_LOG_TIMESTAMPS=true
+      - LLAMA_LOG_PREFIX=true
+
+    # Server command optimized for Qwen3-VL-8B-Instruct
+    # Handles both vision tasks and general queries routed by orchestrator
+    command:
+      - "-m"
+      - "/models/Qwen3-VL-8B-Instruct-Q4_K_M.gguf"
+      - "--mmproj"
+      - "/models/mmproj-Qwen3-VL-8B-F16.gguf"   # Multimodal projector for vision
+      - "--port"
+      - "8000"
+      - "--host"
+      - "0.0.0.0"
+      - "-c"
+      - "32768"                               # Context: 32k tokens
+      - "--n-gpu-layers"
+      - "999"                                 # Auto-detect layers for GPU offload
+      - "--jinja"                             # Enable chat template support
+      - "-b"
+      - "512"                                 # Batch size
+      - "-ub"
+      - "512"                                 # Ubatch size
+      - "--flash-attn"
+      - "on"                                  # Flash attention: efficiency
+      - "--cont-batching"                     # Continuous batching
+      - "--parallel"
+      - "2"                                   # Concurrent requests
+      - "--no-mmap"                           # Disable mmap
+
+    # Health check
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 5s
+      start_period: 60s                       # Longer startup for 8B model
+      retries: 3
+
+    # Network configuration
+    networks:
+      - strieber-net
+```
+
+### Model Download Commands
+
+```bash
+# Create model directories
+mkdir -p ~/models/llama-cpp/orchestrator
+mkdir -p ~/models/llama-cpp/qwen-vl
+
+# 1. Download NVIDIA Orchestrator-8B (Q4_K_M = 5GB)
+huggingface-cli download bartowski/nvidia_Orchestrator-8B-GGUF \
+  --include "nvidia_Orchestrator-8B-Q4_K_M.gguf" \
+  --local-dir ~/models/llama-cpp/orchestrator
+
+# 2. Download Qwen3-VL-8B-Instruct (model + mmproj)
+#    Note: File names may vary - check HuggingFace for exact names
+huggingface-cli download Qwen/Qwen3-VL-8B-Instruct-GGUF \
+  --include "*.gguf" \
+  --local-dir ~/models/llama-cpp/qwen-vl
+
+# Alternative: If Qwen official GGUF not available, use bartowski's conversion
+huggingface-cli download bartowski/Qwen3-VL-8B-Instruct-GGUF \
+  --include "*Q4_K_M*.gguf" \
+  --include "*mmproj*.gguf" \
+  --local-dir ~/models/llama-cpp/qwen-vl
+```
+
+### Updated responses-api Service
+
+Update the `responses-api` service to include orchestrator configuration:
+
+```yaml
+  # ==========================================================================
+  # responses-api: OpenAI Responses API adapter with Orchestrator routing
+  # ABOUTME: Now includes intelligent routing via NVIDIA Orchestrator-8B
+  # ==========================================================================
+  responses-api:
+    build:
+      context: ./backend/responses-api
+      dockerfile: Dockerfile
+    image: strieber-responses-api:latest
+    container_name: strieber-responses-api
+    restart: unless-stopped
+    ports:
+      - "9150:8000"
+    environment:
+      - PORT=8000
+      - HOST=0.0.0.0
+      # Models: Include orchestrator + small + large
+      - MODELS_CONFIG={"models":[{"id":"orchestrator","url":"http://llama-server-orchestrator:8000","owned_by":"nvidia"},{"id":"qwen3-vl-8b-instruct","url":"http://llama-server-qwen-vl:8000","supports_vision":true,"supported_tools":[]},{"id":"gpt-oss-120b","url":"http://llama-server:8000","reasoning":{"effort":"high"}}]}
+      # Orchestrator configuration
+      - ORCHESTRATOR_CONFIG={"enabled":true,"model_id":"orchestrator","default_preference":"balanced","role_mapping":{"small":"qwen3-vl-8b-instruct","large":"gpt-oss-120b","vision":"qwen3-vl-8b-instruct"},"fallback_model":"gpt-oss-120b","max_tokens":256,"temperature":0.1}
+      # MCP servers (unchanged)
+      - MCP_CONFIG={"servers":[{"name":"weather","url":"http://mcp-weather:8000/mcp","builtin_type":"weather"},{"name":"web_search","url":"http://mcp-web-search:8000/mcp","builtin_type":"web_search"},{"name":"code_interpreter","url":"http://mcp-code-interpreter:8000/mcp","builtin_type":"code_interpreter"},{"name":"reader","url":"http://mcp-reader:8000/mcp","builtin_type":"reader"},{"name":"zimage","url":"http://mcp-comfy-zimage:8000/mcp","builtin_type":"zimage_turbo"}]}
+      - MAX_TOOL_ITERATIONS=10
+      - TIMEOUT_SECS=300
+      - RESPONSE_TTL_SECS=3600
+      - RUST_LOG=responses_api=info,tower_http=info
+    volumes:
+      - responses-data:/data
+    depends_on:
+      llama-server:
+        condition: service_healthy
+      llama-server-orchestrator:
+        condition: service_healthy
+      llama-server-qwen-vl:
+        condition: service_healthy
+      mcp-weather:
+        condition: service_started
+      mcp-web-search:
+        condition: service_started
+      mcp-code-interpreter:
+        condition: service_started
+      mcp-reader:
+        condition: service_started
+      mcp-comfy-zimage:
+        condition: service_started
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 5s
+      start_period: 10s
+      retries: 3
+    networks:
+      - strieber-net
+```
+
+### VRAM Budget Analysis
+
+| Service | Model | VRAM (Q4_K_M) | Purpose |
+|---------|-------|---------------|---------|
+| llama-server | gpt-oss-120b | ~16GB | Complex reasoning |
+| llama-server-orchestrator | Orchestrator-8B | ~6GB | Routing decisions |
+| llama-server-qwen-vl | Qwen3-VL-8B | ~8GB | Simple tasks + vision |
+| llama-server-readerlm | ReaderLM-v2 | ~2GB | HTML→Markdown |
+| embeddinggemma | EmbeddingGemma | ~1GB | Embeddings |
+| **Total** | | **~33GB** | |
+
+**Note:** DGX Spark has 128GB unified memory, so this fits comfortably with room for:
+- ComfyUI image generation
+- KV cache overhead
+- Multiple concurrent requests
+
+### Startup Order
+
+The services should start in this order (handled by `depends_on`):
+
+```
+1. llama-server (gpt-oss-120b)           ← Base, always needed
+2. llama-server-orchestrator             ← Routing layer
+3. llama-server-qwen-vl                  ← Small model for routed queries
+4. llama-server-readerlm                 ← Specialized (reader tool)
+5. mcp-* servers                         ← Tools
+6. responses-api                         ← API layer (depends on all above)
+7. chat-ui                               ← Frontend (depends on responses-api)
+```
+
+### Quick Start Commands
+
+```bash
+# Build custom llama.cpp image (if not already built)
+docker compose build llama-server
+
+# Start the full orchestrated stack
+docker compose up -d \
+  llama-server \
+  llama-server-orchestrator \
+  llama-server-qwen-vl \
+  mcp-weather \
+  mcp-web-search \
+  mcp-code-interpreter \
+  responses-api \
+  chat-ui
+
+# Watch startup progress
+docker compose logs -f llama-server-orchestrator llama-server-qwen-vl
+
+# Test orchestrator is working
+curl -s http://localhost:9060/health | jq .
+
+# Test Qwen-VL is working
+curl -s http://localhost:9020/health | jq .
+
+# Test full stack via responses-api
+curl -X POST http://localhost:9150/v1/responses \
+  -H "Content-Type: application/json" \
+  -d '{"model": "auto", "input": "Hello, what can you help me with?"}' | jq .
+```
+
+### Debugging Tips
+
+```bash
+# Check GPU allocation across services
+nvidia-smi
+
+# View orchestrator routing logs
+docker compose logs responses-api | grep -E "(Orchestrator|Routing|route)"
+
+# Check model load status
+curl -s http://localhost:9060/v1/models | jq .
+curl -s http://localhost:9020/v1/models | jq .
+
+# Test orchestrator directly (bypass responses-api)
+curl -X POST http://localhost:9060/v1/chat/completions \
+  -H "Content-Type: application/json" \
+  -d '{
+    "model": "nvidia_Orchestrator-8B-Q4_K_M",
+    "messages": [
+      {"role": "system", "content": "You are a router. Return JSON: {\"action\":\"answer\",\"model\":\"small\"}"},
+      {"role": "user", "content": "What is 2+2?"}
+    ],
+    "temperature": 0.1,
+    "max_tokens": 100
+  }' | jq .
+```
+
+### Expected Latency Breakdown
+
+| Route | Orchestrator | Backend | Tool | Total |
+|-------|--------------|---------|------|-------|
+| Simple → small | 300ms | 2000ms | - | **2.3s** |
+| Complex → large | 300ms | 12000ms | - | **12.3s** |
+| Tool → weather | 300ms | - | 500ms | **0.8s** |
+| Vision → small | 300ms | 3000ms | - | **3.3s** |
+
+**Comparison without orchestrator:**
+- All queries → large: 12000ms
+- Savings on simple queries: 12.3s → 2.3s = **81% faster**
+- Savings on tool queries: 12.3s → 0.8s = **93% faster**
