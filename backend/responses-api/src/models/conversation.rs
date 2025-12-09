@@ -146,6 +146,11 @@ impl CreateItemsRequest {
 // Query Parameters
 // ============================================================================
 
+use super::common::{IncludeValidationError, VALID_ITEM_INCLUDES, validate_include_values};
+
+/// Valid include values for GET /v1/conversations/{id}
+pub const VALID_CONVERSATION_INCLUDES: &[&str] = &["conversation.items"];
+
 /// Query parameters for GET /v1/conversations/{id}
 #[derive(Debug, Clone, Default, Deserialize)]
 pub struct GetConversationQuery {
@@ -162,6 +167,11 @@ impl GetConversationQuery {
             .as_ref()
             .map(|v| v.iter().any(|s| s == "conversation.items"))
             .unwrap_or(false)
+    }
+
+    /// Validate the include parameter values.
+    pub fn validate_include(&self) -> Result<(), IncludeValidationError> {
+        validate_include_values(&self.include, VALID_CONVERSATION_INCLUDES)
     }
 }
 
@@ -186,6 +196,11 @@ impl CreateItemsQuery {
             .map(|v| v.iter().any(|s| s == value))
             .unwrap_or(false)
     }
+
+    /// Validate the include parameter values.
+    pub fn validate_include(&self) -> Result<(), IncludeValidationError> {
+        validate_include_values(&self.include, VALID_ITEM_INCLUDES)
+    }
 }
 
 /// Query parameters for GET /v1/conversations/{conv_id}/items/{item_id}
@@ -208,6 +223,11 @@ impl GetItemQuery {
             .as_ref()
             .map(|v| v.iter().any(|s| s == value))
             .unwrap_or(false)
+    }
+
+    /// Validate the include parameter values.
+    pub fn validate_include(&self) -> Result<(), IncludeValidationError> {
+        validate_include_values(&self.include, VALID_ITEM_INCLUDES)
     }
 }
 
@@ -325,5 +345,67 @@ mod tests {
     fn create_items_request_rejects_empty() {
         let req = CreateItemsRequest { items: vec![] };
         assert!(req.validate().is_err());
+    }
+
+    // ========================================================================
+    // Query Parameter Validation Tests
+    // ========================================================================
+
+    #[test]
+    fn get_conversation_query_accepts_valid_include() {
+        let query = GetConversationQuery {
+            include: Some(vec!["conversation.items".to_string()]),
+        };
+        assert!(query.validate_include().is_ok());
+        assert!(query.include_items());
+    }
+
+    #[test]
+    fn get_conversation_query_rejects_invalid_include() {
+        let query = GetConversationQuery {
+            include: Some(vec!["invalid.include".to_string()]),
+        };
+        assert!(query.validate_include().is_err());
+    }
+
+    #[test]
+    fn get_conversation_query_rejects_item_includes() {
+        // Item includes are not valid for the conversation endpoint
+        let query = GetConversationQuery {
+            include: Some(vec!["message.input_image.image_url".to_string()]),
+        };
+        assert!(query.validate_include().is_err());
+    }
+
+    #[test]
+    fn create_items_query_accepts_valid_include() {
+        let query = CreateItemsQuery {
+            include: Some(vec!["message.input_image.image_url".to_string()]),
+        };
+        assert!(query.validate_include().is_ok());
+    }
+
+    #[test]
+    fn create_items_query_rejects_invalid_include() {
+        let query = CreateItemsQuery {
+            include: Some(vec!["not.valid".to_string()]),
+        };
+        assert!(query.validate_include().is_err());
+    }
+
+    #[test]
+    fn get_item_query_accepts_valid_include() {
+        let query = GetItemQuery {
+            include: Some(vec!["reasoning.encrypted_content".to_string()]),
+        };
+        assert!(query.validate_include().is_ok());
+    }
+
+    #[test]
+    fn get_item_query_rejects_invalid_include() {
+        let query = GetItemQuery {
+            include: Some(vec!["conversation.items".to_string()]), // Not valid for items
+        };
+        assert!(query.validate_include().is_err());
     }
 }

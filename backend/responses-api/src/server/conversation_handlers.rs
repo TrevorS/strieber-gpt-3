@@ -56,6 +56,11 @@ pub async fn get_conversation(
     Path(conversation_id): Path<String>,
     Query(query): Query<GetConversationQuery>,
 ) -> Result<Json<ConversationWithItems>, ApiError> {
+    // Validate include parameter
+    query
+        .validate_include()
+        .map_err(|e| validation_error(&e.to_string()))?;
+
     let conversation = state
         .conversations
         .get(&conversation_id)
@@ -136,9 +141,14 @@ pub async fn list_items(
     Path(conversation_id): Path<String>,
     Query(query): Query<ItemsListQuery>,
 ) -> Result<Json<ListResponse<ConversationItem>>, ApiError> {
-    // Validate query parameters
+    // Validate query parameters (pagination)
     query
         .validate()
+        .map_err(|e| validation_error(&e.to_string()))?;
+
+    // Validate include parameter values
+    query
+        .validate_include()
         .map_err(|e| validation_error(&e.to_string()))?;
 
     // Convert to pagination query for storage layer
@@ -178,8 +188,13 @@ pub async fn create_items(
     Query(query): Query<CreateItemsQuery>,
     Json(req): Json<CreateItemsRequest>,
 ) -> Result<Json<ListResponse<ConversationItem>>, ApiError> {
-    // Validate request
+    // Validate request body
     req.validate()
+        .map_err(|e| validation_error(&e.to_string()))?;
+
+    // Validate include parameter values
+    query
+        .validate_include()
         .map_err(|e| validation_error(&e.to_string()))?;
 
     let list = state
@@ -219,6 +234,11 @@ pub async fn get_item(
     Path((conversation_id, item_id)): Path<(String, String)>,
     Query(query): Query<GetItemQuery>,
 ) -> Result<Json<ConversationItem>, ApiError> {
+    // Validate include parameter values
+    query
+        .validate_include()
+        .map_err(|e| validation_error(&e.to_string()))?;
+
     // First check if conversation exists
     if state.conversations.get(&conversation_id).is_none() {
         return Err(not_found_error("Conversation", &conversation_id));

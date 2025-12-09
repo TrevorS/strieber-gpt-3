@@ -92,6 +92,54 @@ fn default_limit() -> u32 {
 }
 
 // ============================================================================
+// Include Parameter Validation
+// ============================================================================
+
+/// Valid include values for items endpoints.
+pub const VALID_ITEM_INCLUDES: &[&str] = &[
+    "message.input_image.image_url",
+    "message.output_text.logprobs",
+    "computer_call_output.output.image_url",
+    "reasoning.encrypted_content",
+];
+
+/// Validation error for include parameter.
+#[derive(Debug, Clone)]
+pub struct IncludeValidationError {
+    pub invalid_value: String,
+}
+
+impl std::fmt::Display for IncludeValidationError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "Invalid include value: '{}'. Valid values are: {}",
+            self.invalid_value,
+            VALID_ITEM_INCLUDES.join(", ")
+        )
+    }
+}
+
+impl std::error::Error for IncludeValidationError {}
+
+/// Validate include values against a list of valid options.
+pub fn validate_include_values(
+    include: &Option<Vec<String>>,
+    valid_values: &[&str],
+) -> Result<(), IncludeValidationError> {
+    if let Some(values) = include {
+        for value in values {
+            if !valid_values.contains(&value.as_str()) {
+                return Err(IncludeValidationError {
+                    invalid_value: value.clone(),
+                });
+            }
+        }
+    }
+    Ok(())
+}
+
+// ============================================================================
 // Items Query (Pagination + Include)
 // ============================================================================
 
@@ -140,6 +188,11 @@ impl ItemsListQuery {
             limit: self.limit,
             order: self.order,
         }
+    }
+
+    /// Validate the include parameter values.
+    pub fn validate_include(&self) -> Result<(), IncludeValidationError> {
+        validate_include_values(&self.include, VALID_ITEM_INCLUDES)
     }
 
     /// Check if a specific include value is requested.
@@ -326,5 +379,73 @@ mod tests {
         let query = ItemsListQuery::default();
         assert!(!query.includes("message.input_image.image_url"));
         assert!(!query.includes_message_data());
+    }
+
+    // ========================================================================
+    // Include Validation Tests
+    // ========================================================================
+
+    #[test]
+    fn validate_include_accepts_valid_values() {
+        let include = Some(vec![
+            "message.input_image.image_url".to_string(),
+            "message.output_text.logprobs".to_string(),
+        ]);
+        assert!(validate_include_values(&include, VALID_ITEM_INCLUDES).is_ok());
+    }
+
+    #[test]
+    fn validate_include_accepts_none() {
+        let include: Option<Vec<String>> = None;
+        assert!(validate_include_values(&include, VALID_ITEM_INCLUDES).is_ok());
+    }
+
+    #[test]
+    fn validate_include_accepts_empty_vec() {
+        let include = Some(vec![]);
+        assert!(validate_include_values(&include, VALID_ITEM_INCLUDES).is_ok());
+    }
+
+    #[test]
+    fn validate_include_rejects_invalid_value() {
+        let include = Some(vec!["invalid.value".to_string()]);
+        let result = validate_include_values(&include, VALID_ITEM_INCLUDES);
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        assert_eq!(err.invalid_value, "invalid.value");
+        assert!(err.to_string().contains("invalid.value"));
+        assert!(err.to_string().contains("message.input_image.image_url"));
+    }
+
+    #[test]
+    fn validate_include_rejects_mixed_valid_invalid() {
+        let include = Some(vec![
+            "message.input_image.image_url".to_string(), // valid
+            "invalid.value".to_string(),                 // invalid
+        ]);
+        let result = validate_include_values(&include, VALID_ITEM_INCLUDES);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn items_list_query_validate_include_accepts_valid() {
+        let query = ItemsListQuery {
+            after: None,
+            limit: 20,
+            order: SortOrder::Desc,
+            include: Some(vec!["reasoning.encrypted_content".to_string()]),
+        };
+        assert!(query.validate_include().is_ok());
+    }
+
+    #[test]
+    fn items_list_query_validate_include_rejects_invalid() {
+        let query = ItemsListQuery {
+            after: None,
+            limit: 20,
+            order: SortOrder::Desc,
+            include: Some(vec!["not.a.valid.include".to_string()]),
+        };
+        assert!(query.validate_include().is_err());
     }
 }
