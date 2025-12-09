@@ -91,6 +91,82 @@ fn default_limit() -> u32 {
     20
 }
 
+// ============================================================================
+// Items Query (Pagination + Include)
+// ============================================================================
+
+/// Query parameters for items list endpoints.
+/// Combines pagination with the include parameter for expanding nested content.
+#[derive(Debug, Clone, Deserialize, Validate)]
+pub struct ItemsListQuery {
+    /// Cursor: return items after this ID
+    pub after: Option<String>,
+
+    /// Number of items to return (1-100, default 20)
+    #[validate(range(min = 1, max = 100))]
+    #[serde(default = "default_limit")]
+    pub limit: u32,
+
+    /// Sort order (asc or desc, default desc)
+    #[serde(default)]
+    pub order: SortOrder,
+
+    /// Additional data to include in the response.
+    /// Valid values include:
+    /// - `message.input_image.image_url`
+    /// - `message.output_text.logprobs`
+    /// - `computer_call_output.output.image_url`
+    /// - `reasoning.encrypted_content`
+    #[serde(default)]
+    pub include: Option<Vec<String>>,
+}
+
+impl Default for ItemsListQuery {
+    fn default() -> Self {
+        Self {
+            after: None,
+            limit: default_limit(),
+            order: SortOrder::default(),
+            include: None,
+        }
+    }
+}
+
+impl ItemsListQuery {
+    /// Convert to a PaginationQuery for storage layer operations.
+    pub fn to_pagination(&self) -> PaginationQuery {
+        PaginationQuery {
+            after: self.after.clone(),
+            limit: self.limit,
+            order: self.order,
+        }
+    }
+
+    /// Check if a specific include value is requested.
+    pub fn includes(&self, value: &str) -> bool {
+        self.include
+            .as_ref()
+            .map(|v| v.iter().any(|s| s == value))
+            .unwrap_or(false)
+    }
+
+    /// Check if any message-related includes are requested.
+    pub fn includes_message_data(&self) -> bool {
+        self.includes("message.input_image.image_url")
+            || self.includes("message.output_text.logprobs")
+    }
+
+    /// Check if computer call output image URL is requested.
+    pub fn includes_computer_call_image(&self) -> bool {
+        self.includes("computer_call_output.output.image_url")
+    }
+
+    /// Check if reasoning encrypted content is requested.
+    pub fn includes_reasoning_encrypted(&self) -> bool {
+        self.includes("reasoning.encrypted_content")
+    }
+}
+
 /// Sort order for pagination.
 #[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
@@ -201,5 +277,54 @@ mod tests {
         assert_eq!(response.object, "list");
         assert!(response.data.is_empty());
         assert!(!response.has_more);
+    }
+
+    #[test]
+    fn items_list_query_default_values() {
+        let query = ItemsListQuery::default();
+        assert_eq!(query.limit, 20);
+        assert_eq!(query.order, SortOrder::Desc);
+        assert!(query.after.is_none());
+        assert!(query.include.is_none());
+    }
+
+    #[test]
+    fn items_list_query_to_pagination() {
+        let query = ItemsListQuery {
+            after: Some("item_123".to_string()),
+            limit: 50,
+            order: SortOrder::Asc,
+            include: Some(vec!["message.input_image.image_url".to_string()]),
+        };
+        let pagination = query.to_pagination();
+        assert_eq!(pagination.after, Some("item_123".to_string()));
+        assert_eq!(pagination.limit, 50);
+        assert_eq!(pagination.order, SortOrder::Asc);
+    }
+
+    #[test]
+    fn items_list_query_includes() {
+        let query = ItemsListQuery {
+            after: None,
+            limit: 20,
+            order: SortOrder::Desc,
+            include: Some(vec![
+                "message.input_image.image_url".to_string(),
+                "reasoning.encrypted_content".to_string(),
+            ]),
+        };
+        assert!(query.includes("message.input_image.image_url"));
+        assert!(query.includes("reasoning.encrypted_content"));
+        assert!(!query.includes("message.output_text.logprobs"));
+        assert!(query.includes_message_data());
+        assert!(query.includes_reasoning_encrypted());
+        assert!(!query.includes_computer_call_image());
+    }
+
+    #[test]
+    fn items_list_query_includes_none() {
+        let query = ItemsListQuery::default();
+        assert!(!query.includes("message.input_image.image_url"));
+        assert!(!query.includes_message_data());
     }
 }

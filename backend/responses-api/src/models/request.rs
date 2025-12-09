@@ -127,6 +127,9 @@ pub enum InputItem {
     /// A function call from the assistant (to include in context)
     FunctionCall(FunctionCallInput),
 
+    /// A custom tool call from the assistant (to include in context for multi-turn)
+    CustomToolCall(CustomToolCallInput),
+
     /// Computer call output (screenshot result, etc.)
     ComputerCallOutput(ComputerCallOutputInput),
 
@@ -276,6 +279,25 @@ pub struct CustomToolCallOutputInput {
     pub output: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub id: Option<String>,
+}
+
+/// Custom tool call from the assistant (to include in context for multi-turn).
+/// This represents a custom_tool_call the model made, which uses free-form text input
+/// rather than JSON schema like function calls.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CustomToolCallInput {
+    /// The call_id to reference when sending results back
+    pub call_id: String,
+    /// Name of the custom tool
+    pub name: String,
+    /// Free-form text input (not JSON)
+    pub input: String,
+    /// Unique ID for this item
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub id: Option<String>,
+    /// Status of this item
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub status: Option<String>,
 }
 
 // ============================================================================

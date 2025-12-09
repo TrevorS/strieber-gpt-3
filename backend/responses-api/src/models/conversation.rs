@@ -165,6 +165,52 @@ impl GetConversationQuery {
     }
 }
 
+/// Query parameters for POST /v1/conversations/{id}/items
+#[derive(Debug, Clone, Default, Deserialize)]
+pub struct CreateItemsQuery {
+    /// Additional data to include in the response.
+    /// Valid values include:
+    /// - `message.input_image.image_url`
+    /// - `message.output_text.logprobs`
+    /// - `computer_call_output.output.image_url`
+    /// - `reasoning.encrypted_content`
+    #[serde(default)]
+    pub include: Option<Vec<String>>,
+}
+
+impl CreateItemsQuery {
+    /// Check if a specific include value is requested.
+    pub fn includes(&self, value: &str) -> bool {
+        self.include
+            .as_ref()
+            .map(|v| v.iter().any(|s| s == value))
+            .unwrap_or(false)
+    }
+}
+
+/// Query parameters for GET /v1/conversations/{conv_id}/items/{item_id}
+#[derive(Debug, Clone, Default, Deserialize)]
+pub struct GetItemQuery {
+    /// Additional data to include in the response.
+    /// Valid values include:
+    /// - `message.input_image.image_url`
+    /// - `message.output_text.logprobs`
+    /// - `computer_call_output.output.image_url`
+    /// - `reasoning.encrypted_content`
+    #[serde(default)]
+    pub include: Option<Vec<String>>,
+}
+
+impl GetItemQuery {
+    /// Check if a specific include value is requested.
+    pub fn includes(&self, value: &str) -> bool {
+        self.include
+            .as_ref()
+            .map(|v| v.iter().any(|s| s == value))
+            .unwrap_or(false)
+    }
+}
+
 // ============================================================================
 // Response Types
 // ============================================================================

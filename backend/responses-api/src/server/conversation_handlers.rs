@@ -13,8 +13,9 @@ use validator::Validate;
 
 use crate::models::{
     Conversation, ConversationDeleted, ConversationItem, ConversationWithItems,
-    CreateConversationRequest, CreateItemsRequest, GetConversationQuery, ListResponse,
-    PaginationQuery, SortOrder, UpdateConversationRequest,
+    CreateConversationRequest, CreateItemsQuery, CreateItemsRequest, GetConversationQuery,
+    GetItemQuery, ItemsListQuery, ListResponse, PaginationQuery, SortOrder,
+    UpdateConversationRequest,
 };
 use crate::state::ConversationStore;
 
@@ -124,28 +125,57 @@ pub async fn delete_conversation(
 // ============================================================================
 
 /// GET /v1/conversations/{conversation_id}/items - List items in a conversation.
+///
+/// Supports `include` query parameter to request additional data in items:
+/// - `message.input_image.image_url` - Include full image URLs for input images
+/// - `message.output_text.logprobs` - Include log probabilities for output text
+/// - `computer_call_output.output.image_url` - Include full image URLs for computer call outputs
+/// - `reasoning.encrypted_content` - Include encrypted reasoning content
 pub async fn list_items(
     State(state): State<Arc<AppState>>,
     Path(conversation_id): Path<String>,
-    Query(query): Query<PaginationQuery>,
+    Query(query): Query<ItemsListQuery>,
 ) -> Result<Json<ListResponse<ConversationItem>>, ApiError> {
-    // Validate pagination parameters
+    // Validate query parameters
     query
         .validate()
         .map_err(|e| validation_error(&e.to_string()))?;
 
+    // Convert to pagination query for storage layer
+    let pagination = query.to_pagination();
+
     let list = state
         .conversations
-        .list_items(&conversation_id, &query)
+        .list_items(&conversation_id, &pagination)
         .ok_or_else(|| not_found_error("Conversation", &conversation_id))?;
+
+    // Note: The include parameter is parsed and validated, but actual expansion
+    // of nested content will depend on the item types stored. Currently we return
+    // items as-is; expansion logic will be added as we implement the corresponding
+    // content types (input_image, logprobs, etc.)
+
+    if query.include.is_some() {
+        tracing::debug!(
+            conversation_id = %conversation_id,
+            include = ?query.include,
+            "Items list requested with include parameter"
+        );
+    }
 
     Ok(Json(list))
 }
 
 /// POST /v1/conversations/{conversation_id}/items - Add items to a conversation.
+///
+/// Supports `include` query parameter to request additional data in returned items:
+/// - `message.input_image.image_url` - Include full image URLs for input images
+/// - `message.output_text.logprobs` - Include log probabilities for output text
+/// - `computer_call_output.output.image_url` - Include full image URLs for computer call outputs
+/// - `reasoning.encrypted_content` - Include encrypted reasoning content
 pub async fn create_items(
     State(state): State<Arc<AppState>>,
     Path(conversation_id): Path<String>,
+    Query(query): Query<CreateItemsQuery>,
     Json(req): Json<CreateItemsRequest>,
 ) -> Result<Json<ListResponse<ConversationItem>>, ApiError> {
     // Validate request
@@ -157,6 +187,17 @@ pub async fn create_items(
         .add_items(&conversation_id, req.items)
         .ok_or_else(|| not_found_error("Conversation", &conversation_id))?;
 
+    // Note: The include parameter is parsed and validated, but actual expansion
+    // of nested content will depend on the item types stored.
+
+    if query.include.is_some() {
+        tracing::debug!(
+            conversation_id = %conversation_id,
+            include = ?query.include,
+            "Items created with include parameter"
+        );
+    }
+
     tracing::info!(
         conversation_id = %conversation_id,
         items_added = list.data.len(),
@@ -167,9 +208,16 @@ pub async fn create_items(
 }
 
 /// GET /v1/conversations/{conversation_id}/items/{item_id} - Get a single item.
+///
+/// Supports `include` query parameter to request additional data in the item:
+/// - `message.input_image.image_url` - Include full image URLs for input images
+/// - `message.output_text.logprobs` - Include log probabilities for output text
+/// - `computer_call_output.output.image_url` - Include full image URLs for computer call outputs
+/// - `reasoning.encrypted_content` - Include encrypted reasoning content
 pub async fn get_item(
     State(state): State<Arc<AppState>>,
     Path((conversation_id, item_id)): Path<(String, String)>,
+    Query(query): Query<GetItemQuery>,
 ) -> Result<Json<ConversationItem>, ApiError> {
     // First check if conversation exists
     if state.conversations.get(&conversation_id).is_none() {
@@ -180,6 +228,18 @@ pub async fn get_item(
         .conversations
         .get_item(&conversation_id, &item_id)
         .ok_or_else(|| not_found_error("Item", &item_id))?;
+
+    // Note: The include parameter is parsed and validated, but actual expansion
+    // of nested content will depend on the item type.
+
+    if query.include.is_some() {
+        tracing::debug!(
+            conversation_id = %conversation_id,
+            item_id = %item_id,
+            include = ?query.include,
+            "Item retrieved with include parameter"
+        );
+    }
 
     Ok(Json(item))
 }

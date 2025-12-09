@@ -267,6 +267,7 @@ fn input_to_conversation_item(item: InputItem) -> ConversationItem {
         InputItem::Message(_) => message_id(),
         InputItem::Reasoning(_) => reasoning_id(),
         InputItem::FunctionCall(_) => function_call_id(),
+        InputItem::CustomToolCall(_) => item_id(), // Custom tool calls get item_xxx IDs
         InputItem::FunctionCallOutput(_) => item_id(),
         InputItem::CustomToolCallOutput(_) => item_id(),
         InputItem::ComputerCallOutput(_) => item_id(),

@@ -3,8 +3,8 @@
 use crate::models::{
     ChatCompletionRequest, ChatContent, ChatContentPart, ChatFunction, ChatFunctionName,
     ChatImageUrl, ChatMessage, ChatRole, ChatTool, ChatToolChoice, ChatToolType, ContentPart,
-    CreateResponseRequest, Input, InputItem, MessageContent, MessageInput, ReasoningContentInput,
-    ReasoningInput, Role, Tool, ToolChoice, ToolChoiceMode,
+    CreateResponseRequest, CustomToolCallInput, Input, InputItem, MessageContent, MessageInput,
+    ReasoningContentInput, ReasoningInput, Role, Tool, ToolChoice, ToolChoiceMode,
 };
 
 /// Translate a Responses API request into a Chat Completions request.
@@ -106,6 +106,9 @@ fn input_item_to_message(item: &InputItem) -> Option<ChatMessage> {
             }]),
             tool_call_id: None,
         }),
+        // Custom tool calls are similar to function calls but use free-form text input
+        // instead of JSON arguments. We convert them the same way for the chat format.
+        InputItem::CustomToolCall(ctc) => Some(custom_tool_call_to_chat(ctc)),
         // Reasoning items are converted to assistant messages with <think> tags
         InputItem::Reasoning(reasoning) => reasoning_input_to_chat(reasoning),
         // Custom tool calls use free-form text input instead of JSON schema.
@@ -133,6 +136,28 @@ fn input_item_to_message(item: &InputItem) -> Option<ChatMessage> {
             );
             None
         }
+    }
+}
+
+/// Convert CustomToolCallInput to a ChatMessage.
+/// Custom tool calls use free-form text input instead of JSON arguments,
+/// but we convert them to the same format as function calls for the chat API.
+fn custom_tool_call_to_chat(ctc: &CustomToolCallInput) -> ChatMessage {
+    ChatMessage {
+        role: ChatRole::Assistant,
+        content: None,
+        reasoning_content: None,
+        tool_calls: Some(vec![crate::models::ChatToolCall {
+            id: ctc.call_id.clone(),
+            tool_type: ChatToolType::Function,
+            function: crate::models::ChatFunctionCall {
+                name: ctc.name.clone(),
+                // Custom tool calls use free-form text, so we pass it as-is
+                // The model will interpret it based on the tool definition
+                arguments: ctc.input.clone(),
+            },
+        }]),
+        tool_call_id: None,
     }
 }
 
@@ -452,8 +477,8 @@ pub fn assemble_context_from_chain(
 mod tests {
     use super::*;
     use crate::models::{
-        FunctionCallInput, FunctionCallOutputInput, FunctionToolWrapper, ReasoningContentInput,
-        ReasoningInput,
+        CustomToolCallOutputInput, FunctionCallInput, FunctionCallOutputInput, FunctionToolWrapper,
+        ReasoningContentInput, ReasoningInput,
     };
     use pretty_assertions::assert_eq;
     use serde_json::json;
@@ -1334,5 +1359,121 @@ mod tests {
         } else {
             panic!("Expected Text input");
         }
+    }
+
+    // ========================================================================
+    // Custom Tool Call Input Tests
+    // ========================================================================
+
+    use crate::models::CustomToolCallInput;
+
+    #[test]
+    fn custom_tool_call_input_converts_to_assistant_message() {
+        let req = CreateResponseRequest {
+            model: "gpt-4".to_string(),
+            input: Input::Items(vec![
+                InputItem::Message(MessageInput {
+                    role: Role::User,
+                    content: MessageContent::Text("Help me analyze this".to_string()),
+                }),
+                InputItem::CustomToolCall(CustomToolCallInput {
+                    call_id: "ctc_123".to_string(),
+                    name: "my_custom_tool".to_string(),
+                    input: "free form text input".to_string(),
+                    id: Some("item_456".to_string()),
+                    status: None,
+                }),
+            ]),
+            instructions: None,
+            tools: vec![],
+            tool_choice: ToolChoice::default(),
+            parallel_tool_calls: true,
+            previous_response_id: None,
+            max_output_tokens: None,
+            max_tool_calls: None,
+            temperature: 1.0,
+            top_p: 1.0,
+            stream: false,
+            store: true,
+            reasoning: None,
+            text: None,
+            truncation: Default::default(),
+            metadata: None,
+            conversation: None,
+        };
+
+        let chat_req = to_chat_completion(&req, None);
+
+        assert_eq!(chat_req.messages.len(), 2);
+
+        // First: user message
+        assert_eq!(chat_req.messages[0].role, ChatRole::User);
+
+        // Second: assistant with tool call (custom tool call)
+        assert_eq!(chat_req.messages[1].role, ChatRole::Assistant);
+        assert!(chat_req.messages[1].tool_calls.is_some());
+        let tool_calls = chat_req.messages[1].tool_calls.as_ref().unwrap();
+        assert_eq!(tool_calls.len(), 1);
+        assert_eq!(tool_calls[0].id, "ctc_123");
+        assert_eq!(tool_calls[0].function.name, "my_custom_tool");
+        assert_eq!(tool_calls[0].function.arguments, "free form text input");
+    }
+
+    #[test]
+    fn custom_tool_call_followed_by_output_converts_correctly() {
+        let req = CreateResponseRequest {
+            model: "gpt-4".to_string(),
+            input: Input::Items(vec![
+                InputItem::CustomToolCall(CustomToolCallInput {
+                    call_id: "ctc_789".to_string(),
+                    name: "analyzer".to_string(),
+                    input: "analyze the data".to_string(),
+                    id: None,
+                    status: None,
+                }),
+                InputItem::CustomToolCallOutput(CustomToolCallOutputInput {
+                    call_id: "ctc_789".to_string(),
+                    output: "Analysis complete: all systems normal".to_string(),
+                    id: None,
+                }),
+            ]),
+            instructions: None,
+            tools: vec![],
+            tool_choice: ToolChoice::default(),
+            parallel_tool_calls: true,
+            previous_response_id: None,
+            max_output_tokens: None,
+            max_tool_calls: None,
+            temperature: 1.0,
+            top_p: 1.0,
+            stream: false,
+            store: true,
+            reasoning: None,
+            text: None,
+            truncation: Default::default(),
+            metadata: None,
+            conversation: None,
+        };
+
+        let chat_req = to_chat_completion(&req, None);
+
+        assert_eq!(chat_req.messages.len(), 2);
+
+        // First: assistant with custom tool call
+        assert_eq!(chat_req.messages[0].role, ChatRole::Assistant);
+        assert!(chat_req.messages[0].tool_calls.is_some());
+
+        // Second: tool result
+        assert_eq!(chat_req.messages[1].role, ChatRole::Tool);
+        assert_eq!(
+            chat_req.messages[1].tool_call_id,
+            Some("ctc_789".to_string())
+        );
+        assert_eq!(
+            chat_req.messages[1].content,
+            Some(ChatContent::Text(
+                "Analysis complete: all systems normal".to_string()
+            ))
+        );
     }
 }
