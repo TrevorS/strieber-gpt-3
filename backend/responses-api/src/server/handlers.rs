@@ -186,6 +186,14 @@ async fn create_streaming_response(
         None
     };
 
+    // Extract conversation parameters for streaming
+    let conversation_id = req.conversation.as_ref().map(|c| c.id.clone());
+    let conversation_store = if conversation_id.is_some() {
+        Some(state.conversations.clone())
+    } else {
+        None
+    };
+
     let mcp = state.mcp.clone();
     let containers = state.containers.clone();
     let stream = execute_streaming(
@@ -195,6 +203,8 @@ async fn create_streaming_response(
         previous_messages,
         store,
         containers,
+        conversation_store,
+        conversation_id,
     );
 
     let sse_stream = stream.map(|result| -> Result<Event, Infallible> {

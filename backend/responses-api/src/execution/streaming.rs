@@ -13,12 +13,12 @@ use crate::containers::ContainerStore;
 use crate::mcp::{CallToolResult, McpClient};
 use crate::models::{
     Annotation, ChatCompletionChunk, ChatFunctionCall, ChatMessage, ChatRole, ChatToolCall,
-    ChatToolType, CreateResponseRequest, FinishReason, FunctionCallOutput, FunctionToolWrapper,
-    MessageOutput, OutputContent, OutputItem, OutputRole, OutputStatus, ReasoningContent,
-    ReasoningOutput, Response, ResponseStatus, SseEvent, Tool, Usage, WebSearchAction,
-    WebSearchCallOutput, WebSearchSource,
+    ChatToolType, ConversationItem, ConversationItemContent, CreateResponseRequest, FinishReason,
+    FunctionCallOutput, FunctionToolWrapper, MessageOutput, OutputContent, OutputItem, OutputRole,
+    OutputStatus, ReasoningContent, ReasoningOutput, Response, ResponseStatus, SseEvent, Tool,
+    Usage, WebSearchAction, WebSearchCallOutput, WebSearchSource,
 };
-use crate::state::{InMemoryStore, ResponseStore};
+use crate::state::{ConversationStore, InMemoryConversationStore, InMemoryStore, ResponseStore};
 use crate::translation::{
     build_url_citations, function_call_id, message_id, parse_reasoning_tags, reasoning_id,
     response_id, to_chat_completion, tool_result_message,
@@ -57,6 +57,9 @@ struct AccumulatedToolCall {
 /// * `previous_messages` - Messages from resolved previous_response_id chain
 /// * `store` - Optional store for persisting the response (if req.store is true)
 /// * `containers` - Container store for persisting generated files (images, etc.)
+/// * `conversation_store` - Optional conversation store for stateful conversations
+/// * `conversation_id` - Optional conversation ID to append output items to
+#[allow(clippy::too_many_arguments)]
 pub fn execute_streaming(
     config: ExecutorConfig,
     mcp: McpClient,
@@ -64,6 +67,8 @@ pub fn execute_streaming(
     previous_messages: Vec<ChatMessage>,
     store: Option<InMemoryStore>,
     containers: ContainerStore,
+    conversation_store: Option<InMemoryConversationStore>,
+    conversation_id: Option<String>,
 ) -> Pin<Box<dyn Stream<Item = Result<SseEvent, ExecutionError>> + Send>> {
     let (tx, rx) = mpsc::channel(32);
 
@@ -75,6 +80,8 @@ pub fn execute_streaming(
             previous_messages,
             store,
             containers,
+            conversation_store,
+            conversation_id,
             tx.clone(),
         )
         .await
@@ -86,6 +93,7 @@ pub fn execute_streaming(
     Box::pin(tokio_stream::wrappers::ReceiverStream::new(rx))
 }
 
+#[allow(clippy::too_many_arguments)]
 async fn run_streaming_loop(
     config: ExecutorConfig,
     mcp: McpClient,
@@ -93,6 +101,8 @@ async fn run_streaming_loop(
     previous_messages: Vec<ChatMessage>,
     store: Option<InMemoryStore>,
     containers: ContainerStore,
+    conversation_store: Option<InMemoryConversationStore>,
+    conversation_id: Option<String>,
     tx: mpsc::Sender<Result<SseEvent, ExecutionError>>,
 ) -> Result<(), ExecutionError> {
     // Look up model configuration
@@ -244,6 +254,11 @@ async fn run_streaming_loop(
                     output_items = final_response.output.len(),
                     "Stored streaming response (max iterations)"
                 );
+            }
+
+            // Append output to conversation if using conversation API
+            if let (Some(conv_store), Some(conv_id)) = (&conversation_store, &conversation_id) {
+                append_output_to_conversation(conv_store, conv_id, &final_response.output);
             }
 
             send(&tx, SseEvent::response_completed(final_response.clone())).await?;
@@ -829,6 +844,11 @@ async fn run_streaming_loop(
             tracing::debug!(response_id = %resp_id, "Response not stored (store=false)");
         }
 
+        // Append output to conversation if using conversation API
+        if let (Some(conv_store), Some(conv_id)) = (&conversation_store, &conversation_id) {
+            append_output_to_conversation(conv_store, conv_id, &final_response.output);
+        }
+
         send(&tx, SseEvent::response_completed(final_response.clone())).await?;
         send(&tx, SseEvent::response_done(final_response)).await?;
 
@@ -1241,4 +1261,44 @@ fn mcp_tool_to_function_tool(mcp_tool: rmcp::model::Tool) -> Tool {
         parameters,
         strict: false,
     })
+}
+
+/// Append response output items to a conversation.
+///
+/// Converts each `OutputItem` to a `ConversationItem` and appends to the store.
+fn append_output_to_conversation(
+    store: &InMemoryConversationStore,
+    conversation_id: &str,
+    output: &[OutputItem],
+) {
+    use crate::translation::item_id;
+
+    let items: Vec<ConversationItem> = output
+        .iter()
+        .map(|output_item| {
+            let id = match output_item {
+                OutputItem::Message(m) => m.id.clone(),
+                OutputItem::FunctionCall(f) => f.id.clone(),
+                OutputItem::Reasoning(r) => r.id.clone(),
+                OutputItem::WebSearchCall(w) => w.id.clone(),
+                _ => item_id(),
+            };
+            ConversationItem {
+                id,
+                status: OutputStatus::Completed,
+                content: ConversationItemContent::Output(
+                    serde_json::to_value(output_item).unwrap_or_default(),
+                ),
+            }
+        })
+        .collect();
+
+    if !items.is_empty() {
+        store.append_output_items(conversation_id, items.clone());
+        tracing::debug!(
+            conversation_id = %conversation_id,
+            items_appended = items.len(),
+            "Appended streaming response output to conversation"
+        );
+    }
 }
