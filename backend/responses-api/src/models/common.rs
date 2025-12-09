@@ -96,11 +96,15 @@ fn default_limit() -> u32 {
 // ============================================================================
 
 /// Valid include values for items endpoints.
+/// See: https://platform.openai.com/docs/api-reference/responses
 pub const VALID_ITEM_INCLUDES: &[&str] = &[
     "message.input_image.image_url",
     "message.output_text.logprobs",
     "computer_call_output.output.image_url",
     "reasoning.encrypted_content",
+    "file_search_call.results",
+    "web_search_call.action.sources",
+    "code_interpreter_call.outputs",
 ];
 
 /// Validation error for include parameter.
@@ -217,6 +221,21 @@ impl ItemsListQuery {
     /// Check if reasoning encrypted content is requested.
     pub fn includes_reasoning_encrypted(&self) -> bool {
         self.includes("reasoning.encrypted_content")
+    }
+
+    /// Check if file search results are requested.
+    pub fn includes_file_search_results(&self) -> bool {
+        self.includes("file_search_call.results")
+    }
+
+    /// Check if web search sources are requested.
+    pub fn includes_web_search_sources(&self) -> bool {
+        self.includes("web_search_call.action.sources")
+    }
+
+    /// Check if code interpreter outputs are requested.
+    pub fn includes_code_interpreter_outputs(&self) -> bool {
+        self.includes("code_interpreter_call.outputs")
     }
 }
 
