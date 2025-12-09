@@ -5,8 +5,11 @@ for backend instantiation.
 """
 
 import pytest
-from common.search import SearchBackend, SearchResult, SearchResponse, get_search_backend
-from common.search.backend import SearchBackend as DirectBackend
+from common.search import (
+    SearchResult,
+    SearchResponse,
+    get_search_backend,
+)
 
 
 class TestSearchResult:
@@ -17,7 +20,10 @@ class TestSearchResult:
         result = SearchResult(**mock_search_result)
         assert result.title == "Test Result"
         assert result.url == "https://example.com"
-        assert result.snippet == "This is a test snippet with enough content to be meaningful."
+        assert (
+            result.snippet
+            == "This is a test snippet with enough content to be meaningful."
+        )
 
     def test_get_all_text_single_snippet(self, mock_search_result):
         """Test get_all_text with only main snippet."""
@@ -31,7 +37,7 @@ class TestSearchResult:
             title="Test",
             url="https://example.com",
             snippet="Main snippet",
-            extra_snippets=["Extra 1", "Extra 2"]
+            extra_snippets=["Extra 1", "Extra 2"],
         )
         text = result.get_all_text()
         assert "Main snippet" in text
@@ -43,7 +49,7 @@ class TestSearchResult:
         result = SearchResult(
             title="Test Title",
             url="https://example.com/very/long/path",
-            snippet="A" * 400  # ~100 tokens
+            snippet="A" * 400,  # ~100 tokens
         )
         tokens = result.estimate_tokens()
         assert tokens > 0
@@ -56,22 +62,14 @@ class TestSearchResponse:
     def test_search_response_creation(self, mock_search_result):
         """Test creating a SearchResponse."""
         result = SearchResult(**mock_search_result)
-        response = SearchResponse(
-            query="test query",
-            results=[result],
-            total_results=1
-        )
+        response = SearchResponse(query="test query", results=[result], total_results=1)
         assert response.query == "test query"
         assert len(response.results) == 1
         assert response.total_results == 1
 
     def test_search_response_empty_results(self):
         """Test SearchResponse with no results."""
-        response = SearchResponse(
-            query="no results",
-            results=[],
-            total_results=0
-        )
+        response = SearchResponse(query="no results", results=[], total_results=0)
         assert response.results == []
         assert response.total_results == 0
 

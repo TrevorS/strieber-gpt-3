@@ -27,21 +27,27 @@ def run_server(server_module: str, host: str = "0.0.0.0", port: int = 8000) -> N
     try:
         if server_module == "weather":
             from weather import server as weather_server
+
             mcp_instance = weather_server.get_mcp()
         elif server_module == "web_search":
             from web_search import server as web_search_server
+
             mcp_instance = web_search_server.get_mcp()
         elif server_module == "code_interpreter":
             from code_interpreter import server as code_interpreter_server
+
             mcp_instance = code_interpreter_server.get_mcp()
         elif server_module == "reader":
             from reader import server as reader_server
+
             mcp_instance = reader_server.get_mcp()
         elif server_module == "comfy_qwen":
             from comfy_qwen import server as comfy_qwen_server
+
             mcp_instance = comfy_qwen_server.get_mcp()
         elif server_module == "comfy_zimage":
             from comfy_zimage import server as comfy_zimage_server
+
             mcp_instance = comfy_zimage_server.get_mcp()
         else:
             raise ValueError(f"Unknown MCP server module: {server_module}")
@@ -54,19 +60,24 @@ def run_server(server_module: str, host: str = "0.0.0.0", port: int = 8000) -> N
     # Patch uvicorn.Config to bind to 0.0.0.0 for Docker inter-container networking
     # This must be done BEFORE any uvicorn instances are created
     import uvicorn
+
     original_init = uvicorn.Config.__init__
 
     def patched_init(self, *args, **kwargs):
         # Force host to 0.0.0.0 to ensure Docker inter-container networking works
         kwargs["host"] = host
         kwargs.setdefault("port", port)
-        logger.info(f"Patched uvicorn.Config - binding to {host}:{kwargs.get('port', port)}")
+        logger.info(
+            f"Patched uvicorn.Config - binding to {host}:{kwargs.get('port', port)}"
+        )
         return original_init(self, *args, **kwargs)
 
     uvicorn.Config.__init__ = patched_init
 
     try:
-        logger.info(f"Starting {server_module} MCP server on {host}:{port} (transport: streamable-http)")
+        logger.info(
+            f"Starting {server_module} MCP server on {host}:{port} (transport: streamable-http)"
+        )
         # Call mcp.run() which properly initializes the streamable HTTP transport
         # The patched uvicorn.Config ensures binding to 0.0.0.0
         mcp_instance.run(transport="streamable-http")

@@ -39,6 +39,7 @@ DEFAULT_MAX_STRING_LENGTH: int = 65536  # 64KB
 # Pydantic Field Validator Functions (for @field_validator decorators)
 # =============================================================================
 
+
 def validate_url_field(v: str) -> str:
     """Pydantic field validator for URL fields.
 
@@ -70,9 +71,7 @@ def validate_url_field(v: str) -> str:
 
 
 def validate_timeout_field(
-    v: int,
-    min_val: int = MIN_TIMEOUT_SECONDS,
-    max_val: int = MAX_TIMEOUT_SECONDS
+    v: int, min_val: int = MIN_TIMEOUT_SECONDS, max_val: int = MAX_TIMEOUT_SECONDS
 ) -> int:
     """Pydantic field validator for timeout fields.
 
@@ -111,7 +110,7 @@ def validate_string_length_field(
     v: str,
     min_length: int = DEFAULT_MIN_STRING_LENGTH,
     max_length: int = DEFAULT_MAX_STRING_LENGTH,
-    field_name: str = "value"
+    field_name: str = "value",
 ) -> str:
     """Pydantic field validator for string length constraints.
 
@@ -172,6 +171,7 @@ def validate_non_empty_string_field(v: str, field_name: str = "field") -> str:
 # Standalone Validator Functions (for non-Pydantic validation)
 # =============================================================================
 
+
 def validate_url(url: str) -> Tuple[bool, Optional[str]]:
     """Validate URL format and return (is_valid, error_message).
 
@@ -215,7 +215,7 @@ def validate_url(url: str) -> Tuple[bool, Optional[str]]:
             return False, "URL must contain a valid domain name"
 
         # Check for invalid characters in domain
-        if any(char in parsed.netloc for char in [' ', '\t', '\n', '\r']):
+        if any(char in parsed.netloc for char in [" ", "\t", "\n", "\r"]):
             return False, "URL domain contains invalid whitespace characters"
 
     except Exception as e:
@@ -225,9 +225,7 @@ def validate_url(url: str) -> Tuple[bool, Optional[str]]:
 
 
 def validate_timeout(
-    timeout: int,
-    min_val: int = MIN_TIMEOUT_SECONDS,
-    max_val: int = MAX_TIMEOUT_SECONDS
+    timeout: int, min_val: int = MIN_TIMEOUT_SECONDS, max_val: int = MAX_TIMEOUT_SECONDS
 ) -> Tuple[bool, Optional[str]]:
     """Validate timeout value and return (is_valid, error_message).
 
@@ -261,10 +259,7 @@ def validate_timeout(
 
 
 def validate_string_length(
-    value: str,
-    min_length: int,
-    max_length: int,
-    field_name: str = "value"
+    value: str, min_length: int, max_length: int, field_name: str = "value"
 ) -> Tuple[bool, Optional[str]]:
     """Validate string length and return (is_valid, error_message).
 
@@ -293,17 +288,22 @@ def validate_string_length(
     value_len = len(value_stripped)
 
     if value_len < min_length:
-        return False, f"{field_name} must be at least {min_length} character(s), got {value_len}"
+        return (
+            False,
+            f"{field_name} must be at least {min_length} character(s), got {value_len}",
+        )
 
     if value_len > max_length:
-        return False, f"{field_name} too long (max {max_length} characters, got {value_len})"
+        return (
+            False,
+            f"{field_name} too long (max {max_length} characters, got {value_len})",
+        )
 
     return True, None
 
 
 def validate_non_empty_string(
-    value: str,
-    field_name: str = "field"
+    value: str, field_name: str = "field"
 ) -> Tuple[bool, Optional[str]]:
     """Validate that string is not empty and return (is_valid, error_message).
 
@@ -336,9 +336,9 @@ def validate_non_empty_string(
 # Additional Validation Helpers
 # =============================================================================
 
+
 def validate_positive_integer(
-    value: int,
-    field_name: str = "value"
+    value: int, field_name: str = "value"
 ) -> Tuple[bool, Optional[str]]:
     """Validate that value is a positive integer.
 
@@ -366,10 +366,7 @@ def validate_positive_integer(
 
 
 def validate_integer_range(
-    value: int,
-    min_val: int,
-    max_val: int,
-    field_name: str = "value"
+    value: int, min_val: int, max_val: int, field_name: str = "value"
 ) -> Tuple[bool, Optional[str]]:
     """Validate that integer is within range.
 
@@ -393,6 +390,9 @@ def validate_integer_range(
         return False, f"{field_name} must be an integer, got {type(value).__name__}"
 
     if value < min_val or value > max_val:
-        return False, f"{field_name} must be between {min_val} and {max_val}, got {value}"
+        return (
+            False,
+            f"{field_name} must be between {min_val} and {max_val}, got {value}",
+        )
 
     return True, None

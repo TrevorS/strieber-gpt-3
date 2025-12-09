@@ -10,7 +10,6 @@ future backends (Google, DuckDuckGo, etc.).
 
 import asyncio
 import json
-import logging
 import os
 import re
 from typing import Optional, Any
@@ -22,14 +21,22 @@ from pydantic import BaseModel, Field
 
 from common.mcp_base import MCPServerBase
 from common.error_handling import (
-    ERROR_INVALID_INPUT,
-    ERROR_RATE_LIMITED,
     create_error_result,
     create_validation_error,
-    create_rate_limit_error
+    create_rate_limit_error,
 )
-from common.search import SearchBackend, SearchResult, SearchResponse, get_search_backend
-from common.search.utils import apply_quality_filters, format_as_markdown, deduplicate_by_url, condense_results
+from common.search import (
+    SearchBackend,
+    SearchResult,
+    SearchResponse,
+    get_search_backend,
+)
+from common.search.utils import (
+    apply_quality_filters,
+    format_as_markdown,
+    deduplicate_by_url,
+    condense_results,
+)
 
 # Initialize MCP server with base class
 server = MCPServerBase("web-search")
@@ -81,66 +88,70 @@ ERROR_NEWS_UNSUPPORTED: str = "news_unsupported"
 # PYDANTIC SCHEMAS
 # ============================================================================
 
+
 class WebSearchInput(BaseModel):
     """Input schema for web_search tool."""
+
     query: str = Field(
         ...,
         description="Search query string",
         min_length=MIN_QUERY_LENGTH,
-        max_length=MAX_QUERY_LENGTH
+        max_length=MAX_QUERY_LENGTH,
     )
     count: int = Field(
         default=DEFAULT_RESULT_COUNT,
         description="Results per search query variation",
         ge=MIN_RESULT_COUNT,
-        le=MAX_RESULT_COUNT
+        le=MAX_RESULT_COUNT,
     )
     max_tokens: int = Field(
         default=DEFAULT_MAX_TOKENS,
         description="Maximum tokens for output",
         ge=MIN_MAX_TOKENS,
-        le=MAX_MAX_TOKENS
+        le=MAX_MAX_TOKENS,
     )
     freshness: Optional[str] = Field(
         default=None,
-        description="Time filter: 'pd' (past day), 'pw' (past week), 'pm' (past month), 'py' (past year)"
+        description="Time filter: 'pd' (past day), 'pw' (past week), 'pm' (past month), 'py' (past year)",
     )
 
 
 class NewsSearchInput(BaseModel):
     """Input schema for news_search tool."""
+
     query: str = Field(
         ...,
         description="News search query string",
         min_length=MIN_QUERY_LENGTH,
-        max_length=MAX_QUERY_LENGTH
+        max_length=MAX_QUERY_LENGTH,
     )
     count: int = Field(
         default=DEFAULT_RESULT_COUNT,
         description="Number of news articles to return",
         ge=MIN_RESULT_COUNT,
-        le=MAX_RESULT_COUNT
+        le=MAX_RESULT_COUNT,
     )
     max_tokens: int = Field(
         default=DEFAULT_MAX_TOKENS,
         description="Maximum tokens for output",
         ge=MIN_MAX_TOKENS,
-        le=MAX_MAX_TOKENS
+        le=MAX_MAX_TOKENS,
     )
     freshness: Optional[str] = Field(
         default=None,
-        description="Time filter: 'pd' (past day), 'pw' (past week), 'pm' (past month), 'py' (past year)"
+        description="Time filter: 'pd' (past day), 'pw' (past week), 'pm' (past month), 'py' (past year)",
     )
     country: str = Field(
         default="US",
         description="Country code for localized news",
         min_length=2,
-        max_length=2
+        max_length=2,
     )
 
 
 class SearchSourceMetadata(BaseModel):
     """Metadata for a single search result source."""
+
     title: str
     url: str
     snippet: str
@@ -148,6 +159,7 @@ class SearchSourceMetadata(BaseModel):
 
 class WebSearchOutput(BaseModel):
     """Output schema for web_search tool."""
+
     markdown: str = Field(description="Formatted markdown with citations")
     sources: list[SearchSourceMetadata] = Field(description="List of source metadata")
     metadata: dict[str, Any] = Field(description="Structured search metadata")
@@ -155,13 +167,19 @@ class WebSearchOutput(BaseModel):
 
 class NewsSearchOutput(BaseModel):
     """Output schema for news_search tool."""
-    markdown: str = Field(description="Formatted news markdown with breaking indicators")
-    sources: list[SearchSourceMetadata] = Field(description="List of news source metadata")
+
+    markdown: str = Field(
+        description="Formatted news markdown with breaking indicators"
+    )
+    sources: list[SearchSourceMetadata] = Field(
+        description="List of news source metadata"
+    )
     metadata: dict[str, Any] = Field(description="Structured news search metadata")
 
 
 class SearchInfoOutput(BaseModel):
     """Output schema for get_search_info tool."""
+
     capabilities: str = Field(description="Search capabilities and configuration text")
     metadata: dict[str, Any] = Field(description="Structured capabilities metadata")
 
@@ -177,6 +195,7 @@ _backend: Optional[SearchBackend] = None
 # ============================================================================
 # VALIDATION FUNCTIONS
 # ============================================================================
+
 
 def validate_query(query: str) -> tuple[bool, Optional[str]]:
     """Validate search query.
@@ -213,7 +232,10 @@ def validate_freshness(freshness: Optional[str]) -> tuple[bool, Optional[str]]:
 
     if freshness not in VALID_FRESHNESS_VALUES:
         valid_values = ", ".join(sorted(VALID_FRESHNESS_VALUES))
-        return False, f"Invalid freshness value '{freshness}'. Must be one of: {valid_values}"
+        return (
+            False,
+            f"Invalid freshness value '{freshness}'. Must be one of: {valid_values}",
+        )
 
     return True, None
 
@@ -258,6 +280,7 @@ def validate_max_tokens(max_tokens: int) -> tuple[bool, Optional[str]]:
 # BACKEND MANAGEMENT
 # ============================================================================
 
+
 def get_backend() -> SearchBackend:
     """Get or initialize the search backend.
 
@@ -280,6 +303,7 @@ def get_backend() -> SearchBackend:
 # QUERY EXPANSION AND SEARCH EXECUTION
 # ============================================================================
 
+
 async def generate_query_variants(query: str) -> list[str]:
     """Generate search query variations using LLM.
 
@@ -295,7 +319,7 @@ async def generate_query_variants(query: str) -> list[str]:
     try:
         llm_client = AsyncOpenAI(
             base_url=os.getenv("LLAMA_BASE_URL", "http://llama-server:8000"),
-            api_key="not-needed"
+            api_key="not-needed",
         )
 
         prompt = f"""Generate {QUERY_VARIANTS_COUNT} different search query variations for the topic below. Cover different angles or aspects. Return ONLY a JSON array of {QUERY_VARIANTS_COUNT} strings, no other text.
@@ -308,18 +332,20 @@ Format: ["variant 1", "variant 2"]"""
             model=os.getenv("MODEL_NAME", "gpt-oss-20b"),
             messages=[{"role": "user", "content": prompt}],
             temperature=QUERY_VARIANTS_TEMPERATURE,
-            max_tokens=QUERY_VARIANTS_MAX_TOKENS
+            max_tokens=QUERY_VARIANTS_MAX_TOKENS,
         )
 
         content = response.choices[0].message.content.strip()
 
         # Try to extract JSON even if there's extra text
         # Look for JSON array pattern
-        json_match = re.search(r'\[.*?\]', content, re.DOTALL)
+        json_match = re.search(r"\[.*?\]", content, re.DOTALL)
         if json_match:
             variants = json.loads(json_match.group())
             if isinstance(variants, list) and len(variants) >= QUERY_VARIANTS_COUNT:
-                logger.info(f"Generated query variants: {variants[:QUERY_VARIANTS_COUNT]}")
+                logger.info(
+                    f"Generated query variants: {variants[:QUERY_VARIANTS_COUNT]}"
+                )
                 return variants[:QUERY_VARIANTS_COUNT]
 
         # Fallback: use original query multiple times
@@ -332,10 +358,7 @@ Format: ["variant 1", "variant 2"]"""
 
 
 async def execute_parallel_searches(
-    backend: SearchBackend,
-    queries: list[str],
-    count: int,
-    freshness: Optional[str]
+    backend: SearchBackend, queries: list[str], count: int, freshness: Optional[str]
 ) -> list[SearchResult]:
     """Execute multiple searches in parallel and combine results.
 
@@ -348,13 +371,12 @@ async def execute_parallel_searches(
     Returns:
         Combined list of search results from all queries
     """
-    logger.debug(f"Executing {len(queries)} parallel searches with count={count}, freshness={freshness}")
+    logger.debug(
+        f"Executing {len(queries)} parallel searches with count={count}, freshness={freshness}"
+    )
 
     # Create search tasks
-    tasks = [
-        backend.search(q, count=count, freshness=freshness)
-        for q in queries
-    ]
+    tasks = [backend.search(q, count=count, freshness=freshness) for q in queries]
 
     # Execute in parallel
     responses = await asyncio.gather(*tasks, return_exceptions=True)
@@ -363,18 +385,21 @@ async def execute_parallel_searches(
     all_results = []
     for i, response in enumerate(responses):
         if isinstance(response, SearchResponse):
-            logger.debug(f"Search {i+1} returned {len(response.results)} results")
+            logger.debug(f"Search {i + 1} returned {len(response.results)} results")
             all_results.extend(response.results)
         elif isinstance(response, Exception):
-            logger.warning(f"Search {i+1} failed: {response}")
+            logger.warning(f"Search {i + 1} failed: {response}")
 
-    logger.info(f"Parallel searches: {len(queries)} queries → {len(all_results)} total results")
+    logger.info(
+        f"Parallel searches: {len(queries)} queries → {len(all_results)} total results"
+    )
     return all_results
 
 
 # ============================================================================
 # MCP TOOL IMPLEMENTATIONS
 # ============================================================================
+
 
 @mcp.tool()
 async def web_search(
@@ -383,7 +408,7 @@ async def web_search(
     max_tokens: int = DEFAULT_MAX_TOKENS,
     freshness: Optional[str] = None,
     expand_query: bool = True,
-    ctx: Context = None
+    ctx: Context = None,
 ) -> CallToolResult:
     """Search the web with optional query expansion and intelligent filtering.
 
@@ -415,7 +440,9 @@ async def web_search(
     Returns:
         CallToolResult with markdown content, sources metadata, and search metadata
     """
-    logger.info(f"Web search: query='{query}', count={count}, max_tokens={max_tokens}, freshness={freshness}")
+    logger.info(
+        f"Web search: query='{query}', count={count}, max_tokens={max_tokens}, freshness={freshness}"
+    )
 
     # ========================================================================
     # INPUT VALIDATION
@@ -428,9 +455,7 @@ async def web_search(
         if ctx:
             await ctx.error(f"Invalid query: {error_msg}")
         return create_validation_error(
-            field_name="query",
-            error_message=error_msg,
-            field_value=query
+            field_name="query", error_message=error_msg, field_value=query
         )
 
     # Validate count
@@ -440,9 +465,7 @@ async def web_search(
         if ctx:
             await ctx.error(f"Invalid count: {error_msg}")
         return create_validation_error(
-            field_name="count",
-            error_message=error_msg,
-            field_value=count
+            field_name="count", error_message=error_msg, field_value=count
         )
 
     # Validate max_tokens
@@ -452,9 +475,7 @@ async def web_search(
         if ctx:
             await ctx.error(f"Invalid max_tokens: {error_msg}")
         return create_validation_error(
-            field_name="max_tokens",
-            error_message=error_msg,
-            field_value=max_tokens
+            field_name="max_tokens", error_message=error_msg, field_value=max_tokens
         )
 
     # Validate freshness
@@ -464,9 +485,7 @@ async def web_search(
         if ctx:
             await ctx.error(f"Invalid freshness: {error_msg}")
         return create_validation_error(
-            field_name="freshness",
-            error_message=error_msg,
-            field_value=freshness
+            field_name="freshness", error_message=error_msg, field_value=freshness
         )
 
     # ========================================================================
@@ -483,7 +502,7 @@ async def web_search(
         return create_error_result(
             error_message=error_msg,
             error_code=ERROR_BACKEND_INIT,
-            error_type="backend_error"
+            error_type="backend_error",
         )
 
     # ========================================================================
@@ -507,38 +526,48 @@ async def web_search(
         # Step 2: Execute searches in parallel
         if ctx:
             if len(queries) > 1:
-                await ctx.report_progress(2, 5, f"Searching: '{queries[0]}' & '{queries[1]}'")
+                await ctx.report_progress(
+                    2, 5, f"Searching: '{queries[0]}' & '{queries[1]}'"
+                )
             else:
                 await ctx.report_progress(2, 5, f"Searching: '{queries[0]}'")
-        all_results = await execute_parallel_searches(backend, queries, count, freshness)
+        all_results = await execute_parallel_searches(
+            backend, queries, count, freshness
+        )
 
         if not all_results:
             logger.info("No search results returned")
             return CallToolResult(
-                content=[TextContent(type="text", text=f"No results found for: {query}")],
+                content=[
+                    TextContent(type="text", text=f"No results found for: {query}")
+                ],
                 metadata={
                     "search_backend": backend.name,
                     "query_used": query,
                     "query_variants": queries,
                     "results_count": 0,
-                    "freshness_filter_used": freshness
-                }
+                    "freshness_filter_used": freshness,
+                },
             )
 
         # Step 3: Combine and filter
         if ctx:
-            await ctx.report_progress(3, 5, f"Filtering {len(all_results)} combined results...")
+            await ctx.report_progress(
+                3, 5, f"Filtering {len(all_results)} combined results..."
+            )
         filtered = apply_quality_filters(
             all_results,
             min_snippet_length=MIN_SNIPPET_LENGTH_WEB,
-            max_per_domain=MAX_PER_DOMAIN_WEB
+            max_per_domain=MAX_PER_DOMAIN_WEB,
         )
         filtered = deduplicate_by_url(filtered)
         logger.debug(f"After filtering: {len(filtered)} results")
 
         # Step 4: Condense to fit token budget
         if ctx:
-            await ctx.report_progress(4, 5, f"Condensing {len(filtered)} results to ~{max_tokens} tokens...")
+            await ctx.report_progress(
+                4, 5, f"Condensing {len(filtered)} results to ~{max_tokens} tokens..."
+            )
         condensed = condense_results(filtered, max_tokens)
         logger.debug(f"After condensing: {len(condensed)} results")
 
@@ -551,8 +580,12 @@ async def web_search(
         final_tokens = len(markdown) // 4  # Rough estimate
 
         if ctx:
-            await ctx.report_progress(5, 5, f"Found {len(condensed)} results (~{final_tokens} tokens)")
-        logger.info(f"Web search completed: {len(condensed)} results, ~{final_tokens} tokens")
+            await ctx.report_progress(
+                5, 5, f"Found {len(condensed)} results (~{final_tokens} tokens)"
+            )
+        logger.info(
+            f"Web search completed: {len(condensed)} results, ~{final_tokens} tokens"
+        )
 
         # Build sources metadata with rich result information
         sources = []
@@ -560,7 +593,9 @@ async def web_search(
             source_entry = {
                 "title": result.title,
                 "url": result.url,
-                "snippet": result.snippet[:MAX_SNIPPET_METADATA_LENGTH] if result.snippet else "",
+                "snippet": result.snippet[:MAX_SNIPPET_METADATA_LENGTH]
+                if result.snippet
+                else "",
                 # Rich metadata for UI
                 "source_name": result.source_name,
                 "source_favicon": result.source_favicon,
@@ -569,7 +604,7 @@ async def web_search(
                 "thumbnail_is_logo": result.thumbnail_is_logo,
                 "language": result.language,
                 "page_timestamp": result.page_timestamp,
-                "is_live": result.is_live
+                "is_live": result.is_live,
             }
             sources.append(source_entry)
 
@@ -585,12 +620,12 @@ async def web_search(
             "freshness_filter_used": freshness,
             "estimated_tokens": final_tokens,
             "max_tokens_requested": max_tokens,
-            "sources": sources  # Include rich source metadata for UI consumption
+            "sources": sources,  # Include rich source metadata for UI consumption
         }
 
         return CallToolResult(
             content=[TextContent(type="text", text=markdown)],
-            structuredContent=structured_content
+            structuredContent=structured_content,
         )
 
     except Exception as e:
@@ -607,7 +642,7 @@ async def web_search(
             error_message=error_msg,
             error_code=ERROR_SEARCH_FAILED,
             error_type="search_error",
-            additional_metadata={"query": query}
+            additional_metadata={"query": query},
         )
 
 
@@ -618,7 +653,7 @@ async def news_search(
     max_tokens: int = DEFAULT_MAX_TOKENS,
     freshness: Optional[str] = None,
     country: str = "US",
-    ctx: Context = None
+    ctx: Context = None,
 ) -> CallToolResult:
     """Search for recent news articles with source attribution and breaking news indicators.
 
@@ -642,7 +677,9 @@ async def news_search(
     Returns:
         CallToolResult with markdown content, sources metadata, and news metadata
     """
-    logger.info(f"News search: query='{query}', count={count}, max_tokens={max_tokens}, freshness={freshness}, country={country}")
+    logger.info(
+        f"News search: query='{query}', count={count}, max_tokens={max_tokens}, freshness={freshness}, country={country}"
+    )
 
     # ========================================================================
     # INPUT VALIDATION
@@ -655,9 +692,7 @@ async def news_search(
         if ctx:
             await ctx.error(f"Invalid query: {error_msg}")
         return create_validation_error(
-            field_name="query",
-            error_message=error_msg,
-            field_value=query
+            field_name="query", error_message=error_msg, field_value=query
         )
 
     # Validate count
@@ -667,9 +702,7 @@ async def news_search(
         if ctx:
             await ctx.error(f"Invalid count: {error_msg}")
         return create_validation_error(
-            field_name="count",
-            error_message=error_msg,
-            field_value=count
+            field_name="count", error_message=error_msg, field_value=count
         )
 
     # Validate max_tokens
@@ -679,9 +712,7 @@ async def news_search(
         if ctx:
             await ctx.error(f"Invalid max_tokens: {error_msg}")
         return create_validation_error(
-            field_name="max_tokens",
-            error_message=error_msg,
-            field_value=max_tokens
+            field_name="max_tokens", error_message=error_msg, field_value=max_tokens
         )
 
     # Validate freshness
@@ -691,9 +722,7 @@ async def news_search(
         if ctx:
             await ctx.error(f"Invalid freshness: {error_msg}")
         return create_validation_error(
-            field_name="freshness",
-            error_message=error_msg,
-            field_value=freshness
+            field_name="freshness", error_message=error_msg, field_value=freshness
         )
 
     # ========================================================================
@@ -710,11 +739,11 @@ async def news_search(
         return create_error_result(
             error_message=error_msg,
             error_code=ERROR_BACKEND_INIT,
-            error_type="backend_error"
+            error_type="backend_error",
         )
 
     # Validate backend supports news search
-    if not hasattr(backend, 'search_news'):
+    if not hasattr(backend, "search_news"):
         error_msg = f"Backend '{backend.name}' does not support news search"
         logger.error(error_msg)
         if ctx:
@@ -723,7 +752,7 @@ async def news_search(
             error_message=error_msg,
             error_code=ERROR_NEWS_UNSUPPORTED,
             error_type="feature_error",
-            additional_metadata={"backend": backend.name}
+            additional_metadata={"backend": backend.name},
         )
 
     # ========================================================================
@@ -738,54 +767,65 @@ async def news_search(
         if ctx:
             await ctx.report_progress(1, 4, f"Searching news: '{query}'")
         response = await backend.search_news(
-            query=query,
-            count=count,
-            freshness=freshness,
-            country=country
+            query=query, count=count, freshness=freshness, country=country
         )
 
         if not response.results:
             logger.info("No news results returned")
             return CallToolResult(
-                content=[TextContent(type="text", text=f"No news articles found for: {query}")],
+                content=[
+                    TextContent(
+                        type="text", text=f"No news articles found for: {query}"
+                    )
+                ],
                 metadata={
                     "search_backend": backend.name,
                     "query_used": query,
                     "results_count": 0,
                     "freshness_filter_used": freshness,
                     "country": country,
-                    "breaking_count": 0
-                }
+                    "breaking_count": 0,
+                },
             )
 
         # Step 2: Filter results
         if ctx:
-            await ctx.report_progress(2, 4, f"Filtering {len(response.results)} news results...")
+            await ctx.report_progress(
+                2, 4, f"Filtering {len(response.results)} news results..."
+            )
         filtered = apply_quality_filters(
             response.results,
             min_snippet_length=MIN_SNIPPET_LENGTH_NEWS,
-            max_per_domain=MAX_PER_DOMAIN_NEWS
+            max_per_domain=MAX_PER_DOMAIN_NEWS,
         )
         filtered = deduplicate_by_url(filtered)
         logger.debug(f"After filtering: {len(filtered)} news results")
 
         # Step 3: Condense to fit token budget
         if ctx:
-            await ctx.report_progress(3, 4, f"Condensing {len(filtered)} results to ~{max_tokens} tokens...")
+            await ctx.report_progress(
+                3, 4, f"Condensing {len(filtered)} results to ~{max_tokens} tokens..."
+            )
         condensed = condense_results(filtered, max_tokens)
         logger.debug(f"After condensing: {len(condensed)} news results")
 
         # Step 4: Format with news-specific styling
         if ctx:
-            await ctx.report_progress(4, 4, "Formatting news results with source attribution...")
+            await ctx.report_progress(
+                4, 4, "Formatting news results with source attribution..."
+            )
         markdown, breaking_count = _format_news_markdown(condensed, query)
 
         # Estimate final size
         final_tokens = len(markdown) // 4  # Rough estimate
 
         if ctx:
-            await ctx.report_progress(4, 4, f"Found {len(condensed)} news articles (~{final_tokens} tokens)")
-        logger.info(f"News search completed: {len(condensed)} results, {breaking_count} breaking, ~{final_tokens} tokens")
+            await ctx.report_progress(
+                4, 4, f"Found {len(condensed)} news articles (~{final_tokens} tokens)"
+            )
+        logger.info(
+            f"News search completed: {len(condensed)} results, {breaking_count} breaking, ~{final_tokens} tokens"
+        )
 
         # Build sources metadata with rich news result information
         sources = []
@@ -793,16 +833,19 @@ async def news_search(
             source_entry = {
                 "title": result.title,
                 "url": result.url,
-                "snippet": result.snippet[:MAX_SNIPPET_METADATA_LENGTH] if result.snippet else "",
+                "snippet": result.snippet[:MAX_SNIPPET_METADATA_LENGTH]
+                if result.snippet
+                else "",
                 # News-specific metadata
                 "is_breaking": result.metadata.get("is_breaking", False),
-                "source": result.source_name or result.metadata.get("source", "Unknown source"),
+                "source": result.source_name
+                or result.metadata.get("source", "Unknown source"),
                 "published": result.date if result.date else "Recent",
                 # Rich metadata for UI
                 "source_name": result.source_name,
                 "thumbnail_url": result.thumbnail_url,
                 "language": result.language,
-                "page_timestamp": result.page_timestamp
+                "page_timestamp": result.page_timestamp,
             }
             sources.append(source_entry)
 
@@ -819,12 +862,12 @@ async def news_search(
             "breaking_count": breaking_count,
             "estimated_tokens": final_tokens,
             "max_tokens_requested": max_tokens,
-            "sources": sources  # Include rich source metadata for UI consumption
+            "sources": sources,  # Include rich source metadata for UI consumption
         }
 
         return CallToolResult(
             content=[TextContent(type="text", text=markdown)],
-            structuredContent=structured_content
+            structuredContent=structured_content,
         )
 
     except Exception as e:
@@ -841,13 +884,14 @@ async def news_search(
             error_message=error_msg,
             error_code=ERROR_SEARCH_FAILED,
             error_type="search_error",
-            additional_metadata={"query": query, "country": country}
+            additional_metadata={"query": query, "country": country},
         )
 
 
 # ============================================================================
 # NEWS FORMATTING
 # ============================================================================
+
 
 def _format_news_markdown(results: list[SearchResult], query: str) -> tuple[str, int]:
     """Format news results with source attribution.
@@ -902,6 +946,8 @@ if __name__ == "__main__":
         logger.info(f"Backend initialized successfully: {backend.name}")
     except Exception as e:
         logger.error(f"Failed to initialize backend: {e}")
-        logger.error("Server will start but searches will fail until backend is configured")
+        logger.error(
+            "Server will start but searches will fail until backend is configured"
+        )
 
     server.run(transport="streamable-http")

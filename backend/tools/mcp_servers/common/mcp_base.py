@@ -4,7 +4,6 @@ Uses the official MCP SDK (modelcontextprotocol/python-sdk) instead of community
 """
 
 import logging
-import os
 from typing import Any, Dict, Optional
 from mcp.server.fastmcp import FastMCP
 from mcp.types import CallToolResult, TextContent
@@ -85,9 +84,7 @@ class MCPServerBase:
         return self.mcp.streamable_http_app()
 
     def create_success_result(
-        self,
-        content: str,
-        metadata: Optional[Dict[str, Any]] = None
+        self, content: str, metadata: Optional[Dict[str, Any]] = None
     ) -> CallToolResult:
         """Create standardized success result.
 
@@ -142,11 +139,7 @@ class MCPServerBase:
             self.logger.info(f"{tool_name} completed")
 
     def log_tool_error(
-        self,
-        tool_name: str,
-        error_code: str,
-        error_message: str,
-        **context
+        self, tool_name: str, error_code: str, error_message: str, **context
     ) -> None:
         """Log tool error with context.
 
@@ -160,8 +153,12 @@ class MCPServerBase:
             >>> server.log_tool_error("search", "TIMEOUT", "Request timed out", timeout=30)
             >>> server.log_tool_error("fetch", "HTTP_404", "Page not found", url="https://example.com")
         """
-        context_str = ", ".join(f"{k}={v}" for k, v in context.items()) if context else ""
+        context_str = (
+            ", ".join(f"{k}={v}" for k, v in context.items()) if context else ""
+        )
         if context_str:
-            self.logger.error(f"{tool_name} error [{error_code}]: {error_message} ({context_str})")
+            self.logger.error(
+                f"{tool_name} error [{error_code}]: {error_message} ({context_str})"
+            )
         else:
             self.logger.error(f"{tool_name} error [{error_code}]: {error_message}")

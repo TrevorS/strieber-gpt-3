@@ -29,6 +29,7 @@ class SearchResult:
         page_timestamp: ISO 8601 timestamp for precise date sorting (optional)
         is_live: Whether content is live/streaming (optional)
     """
+
     title: str
     url: str
     snippet: str
@@ -75,6 +76,7 @@ class SearchResponse:
         total_results: Total number of results available (if known)
         metadata: Backend-specific metadata (e.g., search suggestions, related queries)
     """
+
     query: str
     results: list[SearchResult]
     total_results: Optional[int] = None
@@ -89,12 +91,7 @@ class SearchBackend(ABC):
     """
 
     @abstractmethod
-    async def search(
-        self,
-        query: str,
-        count: int = 10,
-        **kwargs
-    ) -> SearchResponse:
+    async def search(self, query: str, count: int = 10, **kwargs) -> SearchResponse:
         """Execute a web search query.
 
         Args:
