@@ -1837,3 +1837,831 @@ Assuming 1000 queries with this distribution:
 **Without orchestrator (all large):** 1000 × 12s = 12000s
 
 **Savings: 56% reduction in total inference time**
+
+---
+
+## Part 15: Complete Rust Implementation
+
+This section provides the full implementation for adding orchestrator routing to the existing `responses-api` codebase.
+
+### File Structure
+
+```
+backend/responses-api/src/
+├── orchestration/           # NEW MODULE
+│   ├── mod.rs              # Module exports
+│   ├── router.rs           # Orchestrator routing logic
+│   ├── config.rs           # Orchestrator configuration
+│   └── prompt.rs           # System prompt builder
+├── execution/
+│   ├── executor.rs         # MODIFIED: Add orchestration entry point
+│   └── ...
+├── config/
+│   └── mod.rs              # MODIFIED: Add orchestrator config
+└── ...
+```
+
+### Step 1: Create Orchestration Module
+
+**File: `src/orchestration/mod.rs`**
+
+```rust
+//! Orchestration module for intelligent request routing.
+//!
+//! Uses a small LLM (NVIDIA Orchestrator-8B) to route requests to the
+//! optimal backend model or direct tool call.
+
+mod config;
+mod prompt;
+mod router;
+
+pub use config::{OrchestratorConfig, ModelRole, UserPreference};
+pub use router::{OrchestratorRouter, RoutingDecision, RoutingAction};
+```
+
+**File: `src/orchestration/config.rs`**
+
+```rust
+use serde::{Deserialize, Serialize};
+
+/// Configuration for orchestrator routing.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct OrchestratorConfig {
+    /// Whether orchestration is enabled
+    #[serde(default)]
+    pub enabled: bool,
+
+    /// Model ID for the orchestrator (must match a model in MODELS_CONFIG)
+    #[serde(default = "default_orchestrator_model")]
+    pub model_id: String,
+
+    /// Default user preference
+    #[serde(default)]
+    pub default_preference: UserPreference,
+
+    /// Model role mappings (orchestrator's "small" -> actual "qwen3-vl-8b")
+    #[serde(default)]
+    pub role_mapping: RoleMapping,
+
+    /// Fallback model if orchestrator fails
+    #[serde(default = "default_fallback_model")]
+    pub fallback_model: String,
+
+    /// Max tokens for orchestrator response
+    #[serde(default = "default_max_tokens")]
+    pub max_tokens: u32,
+
+    /// Temperature for orchestrator (low = consistent routing)
+    #[serde(default = "default_temperature")]
+    pub temperature: f32,
+}
+
+fn default_orchestrator_model() -> String { "orchestrator".to_string() }
+fn default_fallback_model() -> String { "gpt-oss-120b".to_string() }
+fn default_max_tokens() -> u32 { 256 }
+fn default_temperature() -> f32 { 0.1 }
+
+impl Default for OrchestratorConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            model_id: default_orchestrator_model(),
+            default_preference: UserPreference::Balanced,
+            role_mapping: RoleMapping::default(),
+            fallback_model: default_fallback_model(),
+            max_tokens: default_max_tokens(),
+            temperature: default_temperature(),
+        }
+    }
+}
+
+/// User preference for routing trade-offs.
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum UserPreference {
+    /// Prefer fast responses (use small model more often)
+    Fast,
+    /// Balance between speed and quality
+    #[default]
+    Balanced,
+    /// Prefer quality (use large model more often)
+    Thorough,
+}
+
+/// Maps orchestrator role names to actual model IDs.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RoleMapping {
+    /// Model for "small" role
+    pub small: String,
+    /// Model for "large" role
+    pub large: String,
+    /// Model for "vision" role (if different from small)
+    pub vision: Option<String>,
+}
+
+impl Default for RoleMapping {
+    fn default() -> Self {
+        Self {
+            small: "qwen3-vl-8b-instruct".to_string(),
+            large: "gpt-oss-120b".to_string(),
+            vision: None, // Uses small if not specified
+        }
+    }
+}
+
+/// Role a model plays in the orchestrated system.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum ModelRole {
+    /// The orchestrator model itself
+    Orchestrator,
+    /// Small/fast model for simple queries
+    Small,
+    /// Large model for complex reasoning
+    Large,
+    /// Vision-capable model
+    Vision,
+    /// Specialist model (math, code, etc.)
+    Specialist,
+}
+```
+
+**File: `src/orchestration/prompt.rs`**
+
+```rust
+use super::config::UserPreference;
+use crate::models::{Input, InputItem, ContentPart, CreateResponseRequest};
+
+/// Build the system prompt for the orchestrator.
+pub fn build_system_prompt(
+    preference: UserPreference,
+    available_tools: &[String],
+) -> String {
+    let preference_str = match preference {
+        UserPreference::Fast => "fast",
+        UserPreference::Balanced => "balanced",
+        UserPreference::Thorough => "thorough",
+    };
+
+    let tools_list = if available_tools.is_empty() {
+        "No tools available".to_string()
+    } else {
+        available_tools.iter()
+            .map(|t| format!("- {}", t))
+            .collect::<Vec<_>>()
+            .join("\n")
+    };
+
+    format!(r#"You are a request router. Analyze the user's query and decide how to handle it.
+
+## Your Models
+
+### small (Qwen3-VL-8B-Instruct)
+- Latency: ~2 seconds
+- Strengths: Fast, vision-capable, multilingual, tool calling
+- Use for: Greetings, simple Q&A, translations, image descriptions, OCR
+- Limitations: Struggles with complex multi-step reasoning
+
+### large (gpt-oss-120b)
+- Latency: ~12 seconds
+- Strengths: Deep reasoning, long context (128K), nuanced writing
+- Use for: Complex analysis, research, creative writing, difficult problems
+- Limitations: No vision, slower
+
+### vision (Qwen3-VL-8B-Instruct)
+- Same as "small" but explicitly for image/video tasks
+- Use when: User provides an image or asks about visual content
+
+## Your Tools (can skip LLM entirely)
+{tools_list}
+
+## User Preference: {preference_str}
+- "fast": Strongly prefer small model and direct tools
+- "balanced": Use judgment based on complexity
+- "thorough": Prefer large model for non-trivial queries
+
+## Output Format
+
+Respond with exactly one JSON object (no markdown, no explanation):
+
+{{"action": "answer", "model": "small|large|vision", "reasoning": "..."}}
+OR
+{{"action": "use_tool", "tool": "tool_name", "tool_args": {{}}, "reasoning": "..."}}
+
+## Decision Rules
+
+1. If query includes an image → action=answer, model=vision
+2. If query explicitly requests weather/search/etc → action=use_tool
+3. If query is simple factual/chat → action=answer, model=small
+4. If query requires analysis/reasoning/creativity → action=answer, model=large
+5. When uncertain → default to model=large (better to over-deliver)
+6. Respect user preference
+"#, tools_list = tools_list, preference_str = preference_str)
+}
+
+/// Format the user's request for routing.
+pub fn format_user_query(req: &CreateResponseRequest) -> String {
+    let mut parts = Vec::new();
+
+    // Extract text content
+    let text = match &req.input {
+        Input::Text(s) => s.clone(),
+        Input::Items(items) => {
+            items.iter()
+                .filter_map(|item| match item {
+                    InputItem::Message(msg) => Some(format!("{:?}: {:?}", msg.role, msg.content)),
+                    _ => None,
+                })
+                .collect::<Vec<_>>()
+                .join("\n")
+        }
+        Input::Empty => String::new(),
+    };
+
+    if !text.is_empty() {
+        parts.push(format!("Query: {}", text));
+    }
+
+    // Check for images
+    let has_image = match &req.input {
+        Input::Items(items) => items.iter().any(|item| {
+            matches!(item, InputItem::Message(msg) => {
+                match &msg.content {
+                    crate::models::MessageContent::Parts(parts) => {
+                        parts.iter().any(|p| matches!(p, ContentPart::InputImage { .. }))
+                    }
+                    _ => false,
+                }
+            })
+        }),
+        _ => false,
+    };
+
+    if has_image {
+        parts.push("Attachments: [image]".to_string());
+    }
+
+    parts.join("\n")
+}
+```
+
+**File: `src/orchestration/router.rs`**
+
+```rust
+use serde::{Deserialize, Serialize};
+use serde_json::Value;
+
+use crate::config::ModelConfig;
+use crate::execution::ExecutionError;
+use crate::models::{ChatCompletionRequest, ChatMessage, ChatRole, ChatContent, CreateResponseRequest};
+
+use super::config::{OrchestratorConfig, UserPreference};
+use super::prompt::{build_system_prompt, format_user_query};
+
+/// The routing decision made by the orchestrator.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RoutingDecision {
+    pub action: RoutingAction,
+    pub reasoning: String,
+}
+
+/// The action to take based on routing.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(tag = "action", rename_all = "snake_case")]
+pub enum RoutingAction {
+    /// Route to a model
+    Answer {
+        model: String,
+    },
+    /// Call a tool directly
+    UseTool {
+        tool: String,
+        tool_args: Value,
+    },
+}
+
+/// Raw JSON response from orchestrator (for parsing).
+#[derive(Debug, Deserialize)]
+struct RawRoutingResponse {
+    action: String,
+    model: Option<String>,
+    tool: Option<String>,
+    tool_args: Option<Value>,
+    reasoning: String,
+}
+
+/// The orchestrator router.
+pub struct OrchestratorRouter {
+    config: OrchestratorConfig,
+}
+
+impl OrchestratorRouter {
+    pub fn new(config: OrchestratorConfig) -> Self {
+        Self { config }
+    }
+
+    /// Check if orchestration is enabled.
+    pub fn is_enabled(&self) -> bool {
+        self.config.enabled
+    }
+
+    /// Get the preference from request metadata or use default.
+    pub fn get_preference(&self, req: &CreateResponseRequest) -> UserPreference {
+        req.metadata
+            .as_ref()
+            .and_then(|m| m.get("preference"))
+            .and_then(|v| v.as_str())
+            .and_then(|s| match s {
+                "fast" => Some(UserPreference::Fast),
+                "balanced" => Some(UserPreference::Balanced),
+                "thorough" => Some(UserPreference::Thorough),
+                _ => None,
+            })
+            .unwrap_or(self.config.default_preference)
+    }
+
+    /// Build the chat completion request for the orchestrator.
+    pub fn build_routing_request(
+        &self,
+        req: &CreateResponseRequest,
+        available_tools: Vec<String>,
+    ) -> ChatCompletionRequest {
+        let preference = self.get_preference(req);
+        let system_prompt = build_system_prompt(preference, &available_tools);
+        let user_query = format_user_query(req);
+
+        ChatCompletionRequest {
+            model: self.config.model_id.clone(),
+            messages: vec![
+                ChatMessage {
+                    role: ChatRole::System,
+                    content: Some(ChatContent::Text(system_prompt)),
+                    reasoning_content: None,
+                    tool_calls: None,
+                    tool_call_id: None,
+                },
+                ChatMessage {
+                    role: ChatRole::User,
+                    content: Some(ChatContent::Text(user_query)),
+                    reasoning_content: None,
+                    tool_calls: None,
+                    tool_call_id: None,
+                },
+            ],
+            tools: None,
+            tool_choice: None,
+            max_tokens: Some(self.config.max_tokens),
+            temperature: Some(self.config.temperature),
+            top_p: None,
+            stream: false,
+        }
+    }
+
+    /// Parse the orchestrator's response into a routing decision.
+    pub fn parse_response(&self, content: &str) -> Result<RoutingDecision, ExecutionError> {
+        // Try to extract JSON from the response (handle markdown code blocks)
+        let json_str = if content.contains("```") {
+            content
+                .split("```")
+                .nth(1)
+                .map(|s| s.trim_start_matches("json").trim())
+                .unwrap_or(content)
+        } else {
+            content.trim()
+        };
+
+        let raw: RawRoutingResponse = serde_json::from_str(json_str)
+            .map_err(|e| ExecutionError::Llm(format!("Invalid routing JSON: {} in '{}'", e, json_str)))?;
+
+        let action = match raw.action.as_str() {
+            "answer" => {
+                let model = raw.model.unwrap_or_else(|| "large".to_string());
+                RoutingAction::Answer { model }
+            }
+            "use_tool" => {
+                let tool = raw.tool
+                    .ok_or_else(|| ExecutionError::Llm("use_tool action requires tool field".into()))?;
+                let tool_args = raw.tool_args.unwrap_or(Value::Object(Default::default()));
+                RoutingAction::UseTool { tool, tool_args }
+            }
+            other => {
+                return Err(ExecutionError::Llm(format!("Unknown routing action: {}", other)));
+            }
+        };
+
+        Ok(RoutingDecision {
+            action,
+            reasoning: raw.reasoning,
+        })
+    }
+
+    /// Map an orchestrator role to an actual model ID.
+    pub fn resolve_model(&self, role: &str) -> String {
+        match role {
+            "small" => self.config.role_mapping.small.clone(),
+            "large" => self.config.role_mapping.large.clone(),
+            "vision" => self.config.role_mapping.vision
+                .clone()
+                .unwrap_or_else(|| self.config.role_mapping.small.clone()),
+            _ => self.config.fallback_model.clone(),
+        }
+    }
+
+    /// Get the fallback model ID.
+    pub fn fallback_model(&self) -> &str {
+        &self.config.fallback_model
+    }
+}
+```
+
+### Step 2: Modify Executor
+
+**File: `src/execution/executor.rs`** (additions)
+
+```rust
+use crate::orchestration::{OrchestratorRouter, RoutingAction};
+
+impl Executor {
+    /// Execute a request with orchestrator routing.
+    ///
+    /// If orchestration is enabled, this:
+    /// 1. Asks the orchestrator which model/tool to use
+    /// 2. Routes to the appropriate backend
+    /// 3. Falls back to large model on error
+    pub async fn execute_orchestrated(
+        &self,
+        req: &CreateResponseRequest,
+        previous_messages: Vec<ChatMessage>,
+        orchestrator: &OrchestratorRouter,
+    ) -> Result<Response, ExecutionError> {
+        // If orchestrator is disabled, use normal execution
+        if !orchestrator.is_enabled() {
+            return self.execute(req, previous_messages).await;
+        }
+
+        // Get available tool names for the orchestrator prompt
+        let available_tools: Vec<String> = self.mcp
+            .list_all_tools()
+            .await
+            .iter()
+            .map(|t| t.name.to_string())
+            .collect();
+
+        // Ask orchestrator for routing decision
+        let routing_req = orchestrator.build_routing_request(req, available_tools);
+
+        tracing::info!(
+            model = %routing_req.model,
+            "Calling orchestrator for routing decision"
+        );
+
+        let routing_result = match self.call_llm(&routing_req).await {
+            Ok(resp) => {
+                let content = resp.choices.get(0)
+                    .and_then(|c| c.message.content.as_ref())
+                    .map(|c| match c {
+                        ChatContent::Text(t) => t.as_str(),
+                        _ => "",
+                    })
+                    .unwrap_or("");
+
+                orchestrator.parse_response(content)
+            }
+            Err(e) => {
+                tracing::warn!("Orchestrator call failed: {}, falling back", e);
+                Err(e)
+            }
+        };
+
+        // Handle routing decision
+        match routing_result {
+            Ok(decision) => {
+                tracing::info!(
+                    action = ?decision.action,
+                    reasoning = %decision.reasoning,
+                    "Orchestrator routing decision"
+                );
+
+                match decision.action {
+                    RoutingAction::Answer { model } => {
+                        // Route to the selected model
+                        let actual_model = orchestrator.resolve_model(&model);
+                        tracing::info!(
+                            role = %model,
+                            actual_model = %actual_model,
+                            "Routing to model"
+                        );
+
+                        let mut routed_req = req.clone();
+                        routed_req.model = actual_model;
+                        self.execute(&routed_req, previous_messages).await
+                    }
+                    RoutingAction::UseTool { tool, tool_args } => {
+                        // Direct tool call - skip LLM
+                        tracing::info!(
+                            tool = %tool,
+                            "Direct tool call, skipping LLM"
+                        );
+                        self.execute_direct_tool(&tool, tool_args, req).await
+                    }
+                }
+            }
+            Err(e) => {
+                // Fallback to large model
+                tracing::warn!(
+                    error = %e,
+                    fallback = %orchestrator.fallback_model(),
+                    "Routing failed, using fallback"
+                );
+                let mut fallback_req = req.clone();
+                fallback_req.model = orchestrator.fallback_model().to_string();
+                self.execute(&fallback_req, previous_messages).await
+            }
+        }
+    }
+
+    /// Execute a tool call directly without involving an LLM.
+    async fn execute_direct_tool(
+        &self,
+        tool_name: &str,
+        args: Value,
+        original_req: &CreateResponseRequest,
+    ) -> Result<Response, ExecutionError> {
+        tracing::info!(tool = %tool_name, "Executing direct tool call");
+
+        let result = self.mcp.call_tool(tool_name, args).await?;
+
+        // Build a response with the tool result
+        let mut text_parts = Vec::new();
+        for content in &result.content {
+            if let rmcp::model::RawContent::Text(tc) = &content.raw {
+                text_parts.push(tc.text.as_str());
+            }
+        }
+        let text = text_parts.join("\n");
+
+        // Create a synthetic response
+        Ok(crate::translation::build_tool_only_response(
+            original_req,
+            tool_name,
+            text,
+        ))
+    }
+}
+```
+
+### Step 3: Update Config Module
+
+**File: `src/config/mod.rs`** (additions)
+
+```rust
+use crate::orchestration::OrchestratorConfig;
+
+/// Main configuration for the Responses API service.
+#[derive(Debug, Clone)]
+pub struct Config {
+    // ... existing fields ...
+
+    /// Orchestrator configuration
+    pub orchestrator: OrchestratorConfig,
+}
+
+impl Config {
+    pub fn from_env() -> Self {
+        let mut config = Self::default();
+
+        // ... existing env parsing ...
+
+        // Parse orchestrator configuration
+        if let Ok(json) = env::var("ORCHESTRATOR_CONFIG") {
+            match serde_json::from_str::<OrchestratorConfig>(&json) {
+                Ok(orch_config) => config.orchestrator = orch_config,
+                Err(e) => tracing::error!("Failed to parse ORCHESTRATOR_CONFIG: {}", e),
+            }
+        }
+
+        config
+    }
+}
+```
+
+### Step 4: Environment Configuration
+
+**Docker Compose environment variables:**
+
+```yaml
+services:
+  responses-api:
+    environment:
+      MODELS_CONFIG: |
+        {
+          "models": [
+            {
+              "id": "orchestrator",
+              "url": "http://llama-server-orchestrator:8000",
+              "owned_by": "nvidia"
+            },
+            {
+              "id": "qwen3-vl-8b-instruct",
+              "url": "http://llama-server-qwen-vl:8000",
+              "owned_by": "local",
+              "supports_vision": true
+            },
+            {
+              "id": "gpt-oss-120b",
+              "url": "http://llama-server:8000",
+              "owned_by": "local",
+              "reasoning": {"effort": "high"}
+            }
+          ]
+        }
+
+      ORCHESTRATOR_CONFIG: |
+        {
+          "enabled": true,
+          "model_id": "orchestrator",
+          "default_preference": "balanced",
+          "role_mapping": {
+            "small": "qwen3-vl-8b-instruct",
+            "large": "gpt-oss-120b",
+            "vision": "qwen3-vl-8b-instruct"
+          },
+          "fallback_model": "gpt-oss-120b",
+          "max_tokens": 256,
+          "temperature": 0.1
+        }
+
+      # MCP tools config (unchanged)
+      MCP_CONFIG: |
+        {
+          "servers": [
+            {"name": "weather", "url": "http://mcp-weather:8000/mcp", "builtin_type": "weather"},
+            {"name": "web_search", "url": "http://mcp-web-search:8000/mcp", "builtin_type": "web_search"},
+            {"name": "code_interpreter", "url": "http://mcp-code-interpreter:8000/mcp", "builtin_type": "code_interpreter"}
+          ]
+        }
+```
+
+### Step 5: Download Models
+
+```bash
+# 1. NVIDIA Orchestrator-8B (Q4_K_M = 5GB)
+huggingface-cli download bartowski/nvidia_Orchestrator-8B-GGUF \
+  --include "nvidia_Orchestrator-8B-Q4_K_M.gguf" \
+  --local-dir ~/models/llama-cpp/
+
+# 2. Qwen3-VL-8B-Instruct (need both model and mmproj)
+huggingface-cli download Qwen/Qwen3-VL-8B-Instruct-GGUF \
+  --include "qwen3-vl-8b-instruct-q4_k_m.gguf" \
+  --include "qwen3-vl-8b-mmproj.gguf" \
+  --local-dir ~/models/llama-cpp/
+
+# 3. gpt-oss-120b (your existing model, already present)
+```
+
+### Step 6: Run the Stack
+
+```bash
+# Start all services
+docker compose up -d llama-server-orchestrator llama-server-qwen-vl llama-server responses-api
+
+# Check logs
+docker compose logs -f responses-api
+```
+
+### Complete Request Flow Diagram
+
+```
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                         ORCHESTRATED REQUEST FLOW                            │
+├─────────────────────────────────────────────────────────────────────────────┤
+│                                                                             │
+│  1. User Request                                                            │
+│     POST /v1/responses                                                      │
+│     {"model": "auto", "input": "What's 2+2?"}                              │
+│                                                                             │
+│  2. Handler (handlers.rs)                                                   │
+│     └─► execute_orchestrated(req, prev_msgs, orchestrator)                 │
+│                                                                             │
+│  3. Orchestrator Router (router.rs)                                         │
+│     ├─► build_routing_request(req, available_tools)                        │
+│     ├─► call_llm(orchestrator_req)  ──────────────────┐                    │
+│     │                                                  │                    │
+│     │   ┌──────────────────────────────────────────────▼──────────────┐   │
+│     │   │  llama-server-orchestrator:8000                             │   │
+│     │   │  NVIDIA Orchestrator-8B                                      │   │
+│     │   │  Input: "Query: What's 2+2?"                                │   │
+│     │   │  Output: {"action":"answer","model":"small","reasoning":..} │   │
+│     │   └──────────────────────────────────────────────┬──────────────┘   │
+│     │                                                  │                    │
+│     └─► parse_response(content)  ◄─────────────────────┘                   │
+│         └─► RoutingDecision { action: Answer { model: "small" }, ... }     │
+│                                                                             │
+│  4. Route to Model                                                          │
+│     └─► resolve_model("small") → "qwen3-vl-8b-instruct"                   │
+│     └─► execute(routed_req, prev_msgs)                                     │
+│                                                                             │
+│     ┌──────────────────────────────────────────────────────────────────┐   │
+│     │  llama-server-qwen-vl:8000                                       │   │
+│     │  Qwen3-VL-8B-Instruct                                            │   │
+│     │  Input: "What's 2+2?"                                            │   │
+│     │  Output: "2 + 2 = 4"                                             │   │
+│     └──────────────────────────────────────────────────────────────────┘   │
+│                                                                             │
+│  5. Return Response                                                         │
+│     {"id": "resp_...", "output": [{"type": "message", "content": "4"}]}   │
+│                                                                             │
+└─────────────────────────────────────────────────────────────────────────────┘
+```
+
+### Alternative Flow: Direct Tool Call
+
+```
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                      DIRECT TOOL CALL FLOW                                   │
+├─────────────────────────────────────────────────────────────────────────────┤
+│                                                                             │
+│  1. User: "What's the weather in NYC?"                                      │
+│                                                                             │
+│  2. Orchestrator decides:                                                   │
+│     {"action": "use_tool", "tool": "weather__get_forecast",                │
+│      "tool_args": {"location": "NYC"}}                                     │
+│                                                                             │
+│  3. Execute Direct Tool (NO LLM CALL!)                                      │
+│     └─► mcp.call_tool("weather__get_forecast", {"location": "NYC"})        │
+│                                                                             │
+│     ┌──────────────────────────────────────────────────────────────────┐   │
+│     │  mcp-weather:8000                                                │   │
+│     │  Returns: {"temp": 72, "conditions": "sunny", ...}               │   │
+│     └──────────────────────────────────────────────────────────────────┘   │
+│                                                                             │
+│  4. Return Response (built from tool result)                                │
+│     {"output": [{"type": "message", "content": "NYC: 72°F, sunny"}]}       │
+│                                                                             │
+│  ⚡ Total LLM calls: 1 (orchestrator only)                                  │
+│  ⚡ Latency: ~0.3s (orchestrator) + ~0.5s (tool) = ~0.8s                   │
+│     vs. ~12s if routed to gpt-oss-120b                                     │
+│                                                                             │
+└─────────────────────────────────────────────────────────────────────────────┘
+```
+
+### Testing the Integration
+
+```bash
+# Test routing to small model
+curl -X POST http://localhost:9150/v1/responses \
+  -H "Content-Type: application/json" \
+  -d '{
+    "model": "auto",
+    "input": "Hello! How are you?",
+    "metadata": {"preference": "fast"}
+  }'
+
+# Test routing to large model
+curl -X POST http://localhost:9150/v1/responses \
+  -H "Content-Type: application/json" \
+  -d '{
+    "model": "auto",
+    "input": "Explain the philosophical implications of Gödels incompleteness theorems",
+    "metadata": {"preference": "thorough"}
+  }'
+
+# Test direct tool call
+curl -X POST http://localhost:9150/v1/responses \
+  -H "Content-Type: application/json" \
+  -d '{
+    "model": "auto",
+    "input": "What is the weather in San Francisco?",
+    "tools": [{"type": "weather"}]
+  }'
+```
+
+### Monitoring & Debugging
+
+Add these log queries to monitor routing:
+
+```bash
+# Watch routing decisions
+docker compose logs -f responses-api | grep "Orchestrator routing"
+
+# Watch model selection
+docker compose logs -f responses-api | grep "Routing to model"
+
+# Watch direct tool calls
+docker compose logs -f responses-api | grep "Direct tool call"
+```
+
+### Summary: What Changes
+
+| File | Change |
+|------|--------|
+| `src/orchestration/mod.rs` | NEW - Module exports |
+| `src/orchestration/config.rs` | NEW - Config types |
+| `src/orchestration/prompt.rs` | NEW - Prompt builder |
+| `src/orchestration/router.rs` | NEW - Routing logic |
+| `src/execution/executor.rs` | ADD - `execute_orchestrated()` method |
+| `src/config/mod.rs` | ADD - `orchestrator` field, env parsing |
+| `src/server/handlers.rs` | MODIFY - Call `execute_orchestrated` |
+| `src/lib.rs` | ADD - `mod orchestration;` |
+| `compose.yml` | ADD - orchestrator service |
+| Environment | ADD - `ORCHESTRATOR_CONFIG` |
