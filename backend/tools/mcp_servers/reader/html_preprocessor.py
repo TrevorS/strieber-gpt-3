@@ -613,55 +613,6 @@ def html_to_markdown_fast(html: str) -> tuple[str, bool, dict]:
 # =============================================================================
 
 
-def preprocess_html(
-    html: str,
-    use_trafilatura: bool = True,
-    output_format: str = "html",
-    options: Optional[ExtractionOptions] = None,
-) -> tuple[str, dict]:
-    """Preprocess HTML for conversion (extraction step only)."""
-    metadata = {
-        "original_size_bytes": len(html.encode("utf-8")),
-        "trafilatura_used": False,
-        "scripts_stripped": False,
-    }
-
-    processed = html
-
-    if use_trafilatura:
-        extracted, success, extract_meta = extract_with_trafilatura(
-            processed, output_format=output_format, options=options
-        )
-        processed = extracted
-        metadata["trafilatura_used"] = success
-        metadata["extraction_metadata"] = extract_meta
-    else:
-        processed = strip_scripts_and_styles(processed)
-        metadata["scripts_stripped"] = True
-
-    metadata["final_size_bytes"] = len(
-        processed.encode("utf-8") if isinstance(processed, str) else processed
-    )
-
-    if metadata["original_size_bytes"] > 0:
-        compression = (
-            (metadata["original_size_bytes"] - metadata["final_size_bytes"])
-            / metadata["original_size_bytes"]
-            * 100
-        )
-        metadata["compression_percent"] = round(compression, 1)
-    else:
-        metadata["compression_percent"] = 0.0
-
-    if metadata["compression_percent"] > 10:
-        logger.info(
-            f"HTML preprocessed: {metadata['original_size_bytes']} → "
-            f"{metadata['final_size_bytes']} bytes ({metadata['compression_percent']:.1f}% reduction)"
-        )
-
-    return processed, metadata
-
-
 def extract_and_convert_to_markdown(
     html: str,
     use_trafilatura: bool = True,
