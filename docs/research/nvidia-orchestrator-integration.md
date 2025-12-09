@@ -1364,3 +1364,476 @@ Analyze the user query and respond with a JSON routing decision:
 ```json
 {"action": "use_model", "target": "large", "reasoning": "Complex multi-faceted analysis requiring deep reasoning", "confidence": 0.92}
 ```
+
+---
+
+## Part 14: Concrete Integration with Your Models
+
+This section provides the exact configuration to integrate NVIDIA Orchestrator-8B with your specific models: **gpt-oss-120b** and **Qwen3-VL-8B**.
+
+### Which Qwen3-VL-8B? Instruct vs Thinking
+
+**Recommendation: Use Qwen3-VL-8B-Instruct** for this orchestrated stack.
+
+| Factor | Instruct | Thinking | Winner for Routing |
+|--------|----------|----------|-------------------|
+| **Response time** | 15-25% faster | Slower (reasoning overhead) | **Instruct** |
+| **Throughput** | 1.5-2x more req/GPU | Lower | **Instruct** |
+| **Token budget** | 16K max | 40K max | **Instruct** (cheaper) |
+| **Simple tasks accuracy** | Equivalent | Equivalent | **Instruct** |
+| **Complex reasoning** | Good | 10-18% better | Thinking |
+| **Vision accuracy (MMMU)** | ~70% | ~72% | Marginal |
+
+**Why Instruct wins for your use case:**
+
+1. **The orchestrator handles routing** — complex reasoning goes to gpt-oss-120b anyway
+2. **Qwen3-VL handles vision + simple tasks** — Instruct is equivalent on these
+3. **Latency matters for routing** — faster small model = better UX
+4. **Cost efficiency** — Instruct uses fewer tokens per response
+
+**When to use Thinking mode instead:**
+- If you're NOT using the orchestrator (single model doing everything)
+- If most queries are complex reasoning without vision
+- If you need auditable reasoning chains for compliance
+
+### Exact tools.json Configuration
+
+This is the NVIDIA ToolOrchestra format adapted for your stack:
+
+```json
+{
+  "tools": [
+    {
+      "type": "function",
+      "function": {
+        "name": "answer",
+        "description": "Generate a response to the user query using an appropriate model",
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "model": {
+              "type": "string",
+              "description": "Select the model based on task complexity and user preference:\n\n| Model | Cost/1M tokens | Latency | Best For |\n|-------|----------------|---------|----------|\n| small | $0 (local) | ~2s | Simple Q&A, chat, summaries |\n| large | $0 (local) | ~12s | Complex reasoning, analysis |\n| vision | $0 (local) | ~3s | Image understanding, OCR |",
+              "enum": ["small", "large", "vision"]
+            },
+            "query": {
+              "type": "string",
+              "description": "The user's query to answer"
+            }
+          },
+          "required": ["model", "query"]
+        }
+      }
+    },
+    {
+      "type": "function",
+      "function": {
+        "name": "use_tool",
+        "description": "Call a tool directly without involving an LLM",
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "tool": {
+              "type": "string",
+              "description": "Available tools:\n- weather: Get weather forecast\n- web_search: Search the internet\n- code_interpreter: Execute Python code\n- reader: Fetch and parse web pages\n- zimage: Generate images from text",
+              "enum": ["weather", "web_search", "code_interpreter", "reader", "zimage"]
+            },
+            "args": {
+              "type": "object",
+              "description": "Arguments to pass to the tool"
+            }
+          },
+          "required": ["tool", "args"]
+        }
+      }
+    }
+  ]
+}
+```
+
+### Model Mapping (What the Orchestrator Sees → Actual Backend)
+
+```json
+{
+  "model_mapping": {
+    "small": {
+      "backend_url": "http://llama-server-qwen-vl:8000",
+      "model_id": "qwen3-vl-8b-instruct",
+      "context_size": 32768,
+      "supports_vision": true,
+      "avg_latency_ms": 2000,
+      "description": "Fast responses, vision capable, good for simple tasks"
+    },
+    "large": {
+      "backend_url": "http://llama-server:8000",
+      "model_id": "gpt-oss-120b",
+      "context_size": 131072,
+      "supports_vision": false,
+      "avg_latency_ms": 12000,
+      "description": "Deep reasoning, complex analysis, long context"
+    },
+    "vision": {
+      "backend_url": "http://llama-server-qwen-vl:8000",
+      "model_id": "qwen3-vl-8b-instruct",
+      "context_size": 32768,
+      "supports_vision": true,
+      "avg_latency_ms": 3000,
+      "description": "Image understanding, OCR, visual Q&A"
+    }
+  }
+}
+```
+
+### Concrete System Prompt for Your Stack
+
+```
+<|im_start|>system
+You are a request router. Analyze the user's query and decide how to handle it.
+
+## Your Models
+
+### small (Qwen3-VL-8B-Instruct)
+- Latency: ~2 seconds
+- Strengths: Fast, vision-capable, multilingual, tool calling
+- Use for: Greetings, simple Q&A, translations, image descriptions, OCR
+- Limitations: Struggles with complex multi-step reasoning
+
+### large (gpt-oss-120b)
+- Latency: ~12 seconds
+- Strengths: Deep reasoning, long context (128K), nuanced writing
+- Use for: Complex analysis, research, creative writing, difficult problems
+- Limitations: No vision, slower, higher resource usage
+
+### vision (Qwen3-VL-8B-Instruct)
+- Same as "small" but explicitly for image/video tasks
+- Use when: User provides an image or asks about visual content
+
+## Your Tools (can skip LLM entirely)
+
+| Tool | When to Use |
+|------|-------------|
+| weather | "What's the weather in X?" |
+| web_search | "Search for X", "Find information about X" |
+| code_interpreter | "Run this code", "Calculate X" |
+| reader | "Summarize this URL", "What does X website say?" |
+| zimage | "Generate an image of X", "Create a picture of X" |
+
+## User Preference: {preference}
+- "fast": Strongly prefer small model and direct tools
+- "balanced": Use judgment based on complexity
+- "thorough": Prefer large model for non-trivial queries
+
+## Output Format
+
+Respond with exactly one JSON object:
+
+```json
+{
+  "action": "answer" | "use_tool",
+  "model": "small" | "large" | "vision",  // if action=answer
+  "tool": "weather" | "web_search" | ...,  // if action=use_tool
+  "tool_args": {},                          // if action=use_tool
+  "reasoning": "Brief explanation"
+}
+```
+
+## Decision Rules
+
+1. If query includes an image → action=answer, model=vision
+2. If query is explicitly about weather/search/code → action=use_tool
+3. If query is simple factual/chat → action=answer, model=small
+4. If query requires analysis/reasoning/creativity → action=answer, model=large
+5. When uncertain → default to model=large (better to over-deliver)
+6. Respect user preference (fast→small, thorough→large)
+<|im_end|>
+```
+
+### Concrete Request/Response Flow
+
+**Step 1: User sends query**
+```json
+{
+  "model": "orchestrator",
+  "input": "What's in this image and should I be concerned?",
+  "attachments": [{"type": "image", "url": "data:image/png;base64,..."}],
+  "tools": [{"type": "weather"}, {"type": "web_search"}],
+  "metadata": {"preference": "balanced"}
+}
+```
+
+**Step 2: Orchestrator analyzes and routes**
+
+Orchestrator receives the query with image attachment:
+```
+<|im_start|>user
+Query: "What's in this image and should I be concerned?"
+Attachments: [1 image]
+<|im_end|>
+```
+
+Orchestrator responds:
+```json
+{
+  "action": "answer",
+  "model": "vision",
+  "reasoning": "Image analysis required, using vision-capable model"
+}
+```
+
+**Step 3: Responses API routes to Qwen3-VL**
+
+```
+POST http://llama-server-qwen-vl:8000/v1/chat/completions
+{
+  "model": "qwen3-vl-8b-instruct",
+  "messages": [
+    {"role": "user", "content": [
+      {"type": "text", "text": "What's in this image and should I be concerned?"},
+      {"type": "image_url", "image_url": {"url": "data:image/png;base64,..."}}
+    ]}
+  ]
+}
+```
+
+**Step 4: Qwen3-VL responds**
+```json
+{
+  "choices": [{
+    "message": {
+      "role": "assistant",
+      "content": "This image shows a mole on skin with irregular borders. The asymmetry and color variation suggest you should consult a dermatologist for evaluation..."
+    }
+  }]
+}
+```
+
+### Another Example: Complex Reasoning
+
+**User query:** "Compare the economic policies of Keynesianism vs Austrian economics and explain which would be better for addressing the current inflation situation"
+
+**Orchestrator decision:**
+```json
+{
+  "action": "answer",
+  "model": "large",
+  "reasoning": "Complex comparative analysis requiring deep economic understanding"
+}
+```
+
+→ Routes to gpt-oss-120b for thorough response.
+
+### Another Example: Direct Tool Call
+
+**User query:** "What's the weather in San Francisco?"
+
+**Orchestrator decision:**
+```json
+{
+  "action": "use_tool",
+  "tool": "weather",
+  "tool_args": {"location": "San Francisco", "days": 1},
+  "reasoning": "Direct weather request, no LLM needed"
+}
+```
+
+→ Skips LLM entirely, calls MCP weather tool directly.
+
+### Docker Compose for This Exact Setup
+
+```yaml
+services:
+  # ORCHESTRATOR (NVIDIA Orchestrator-8B)
+  llama-server-orchestrator:
+    image: ghcr.io/ggerganov/llama.cpp:server-cuda
+    command: >
+      --model /models/nvidia_Orchestrator-8B-Q4_K_M.gguf
+      --ctx-size 4096
+      --n-gpu-layers 99
+      --flash-attn
+      --port 8000
+      --host 0.0.0.0
+    volumes:
+      - ${MODELS_PATH:-~/models/llama-cpp}:/models:ro
+    ports:
+      - "9060:8000"
+    networks:
+      - strieber-net
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              capabilities: [gpu]
+              device_ids: ['0']
+
+  # SMALL + VISION MODEL (Qwen3-VL-8B-Instruct)
+  llama-server-qwen-vl:
+    image: ghcr.io/ggerganov/llama.cpp:server-cuda
+    command: >
+      --model /models/qwen3-vl-8b-instruct-q4_k_m.gguf
+      --ctx-size 32768
+      --n-gpu-layers 99
+      --flash-attn
+      --port 8000
+      --host 0.0.0.0
+      --mmproj /models/qwen3-vl-8b-mmproj.gguf
+    volumes:
+      - ${MODELS_PATH:-~/models/llama-cpp}:/models:ro
+    ports:
+      - "9020:8000"
+    networks:
+      - strieber-net
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              capabilities: [gpu]
+              device_ids: ['0']
+
+  # LARGE MODEL (gpt-oss-120b) - Your existing config
+  llama-server:
+    image: ghcr.io/ggerganov/llama.cpp:server-cuda
+    command: >
+      --model /models/gpt-oss-120b-q4_k_m.gguf
+      --ctx-size 131072
+      --n-gpu-layers 99
+      --flash-attn
+      --port 8000
+      --host 0.0.0.0
+    volumes:
+      - ${MODELS_PATH:-~/models/llama-cpp}:/models:ro
+    ports:
+      - "9010:8000"
+    networks:
+      - strieber-net
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              capabilities: [gpu]
+              device_ids: ['0']
+```
+
+### VRAM Budget for This Setup
+
+| Model | Quantization | VRAM |
+|-------|--------------|------|
+| Orchestrator-8B | Q4_K_M | ~5GB |
+| Qwen3-VL-8B-Instruct | Q4_K_M | ~6GB |
+| gpt-oss-120b | Q4_K_M | ~16GB |
+| **Total** | | **~27GB** |
+
+**Fits on:** Single RTX 4090 (24GB) if you time-share orchestrator with Qwen3-VL, or comfortably on 2x RTX 3090 (48GB total).
+
+### Rust Integration Point
+
+In `backend/responses-api/src/execution/executor.rs`, the orchestrator integration would look like:
+
+```rust
+impl Executor {
+    pub async fn execute_with_orchestrator(
+        &self,
+        req: &CreateResponseRequest,
+        previous_messages: Vec<ChatMessage>,
+    ) -> Result<Response, ExecutionError> {
+        // Step 1: Ask orchestrator how to route this request
+        let routing = self.get_routing_decision(req).await?;
+
+        match routing.action.as_str() {
+            "use_tool" => {
+                // Direct tool call - skip LLM entirely
+                let tool_name = routing.tool.unwrap();
+                let tool_args = routing.tool_args.unwrap_or_default();
+                self.execute_tool_directly(&tool_name, tool_args).await
+            }
+            "answer" => {
+                // Route to appropriate model
+                let model_id = match routing.model.as_deref() {
+                    Some("small") | Some("vision") => "qwen3-vl-8b-instruct",
+                    Some("large") => "gpt-oss-120b",
+                    _ => "gpt-oss-120b",  // fallback to large
+                };
+
+                // Modify request to use selected model
+                let mut routed_req = req.clone();
+                routed_req.model = model_id.to_string();
+
+                // Execute with the routed model
+                self.execute(&routed_req, previous_messages).await
+            }
+            _ => {
+                // Unknown action, fallback to large model
+                self.execute(req, previous_messages).await
+            }
+        }
+    }
+
+    async fn get_routing_decision(
+        &self,
+        req: &CreateResponseRequest,
+    ) -> Result<RoutingDecision, ExecutionError> {
+        let orchestrator_config = self.get_model("orchestrator")
+            .ok_or(ExecutionError::ModelNotFound("orchestrator".into()))?;
+
+        // Build orchestrator prompt
+        let system_prompt = self.build_orchestrator_system_prompt(req);
+        let user_content = self.format_query_for_routing(req);
+
+        let chat_req = ChatCompletionRequest {
+            model: "orchestrator".to_string(),
+            messages: vec![
+                ChatMessage::system(system_prompt),
+                ChatMessage::user(user_content),
+            ],
+            temperature: Some(0.1),  // Low temp for consistent routing
+            max_tokens: Some(256),   // Routing decisions are short
+            ..Default::default()
+        };
+
+        let response = self.call_llm(&chat_req).await?;
+        let content = response.choices[0].message.content.as_ref()
+            .ok_or(ExecutionError::Llm("Empty orchestrator response".into()))?;
+
+        // Parse JSON routing decision
+        serde_json::from_str(content)
+            .map_err(|e| ExecutionError::Llm(format!("Invalid routing JSON: {}", e)))
+    }
+}
+
+#[derive(Debug, Deserialize)]
+struct RoutingDecision {
+    action: String,           // "answer" or "use_tool"
+    model: Option<String>,    // "small", "large", "vision"
+    tool: Option<String>,     // tool name if action=use_tool
+    tool_args: Option<Value>, // tool arguments
+    reasoning: String,        // explanation
+}
+```
+
+### Expected Behavior
+
+| Query Type | Orchestrator Decision | Actual Backend |
+|------------|----------------------|----------------|
+| "Hello!" | small | Qwen3-VL-8B |
+| "What's in this image?" | vision | Qwen3-VL-8B |
+| "Explain quantum entanglement" | large | gpt-oss-120b |
+| "What's the weather in NYC?" | use_tool:weather | MCP (no LLM) |
+| "Search for latest AI news" | use_tool:web_search | MCP (no LLM) |
+| "Write me a novel opening" | large | gpt-oss-120b |
+| "Translate 'hello' to Spanish" | small | Qwen3-VL-8B |
+| "Analyze this contract" + image | vision | Qwen3-VL-8B |
+
+### Cost/Latency Savings Estimate
+
+Assuming 1000 queries with this distribution:
+- 40% simple (routed to small): 400 × 2s = 800s
+- 30% complex (routed to large): 300 × 12s = 3600s
+- 15% vision (routed to vision): 150 × 3s = 450s
+- 15% tools (direct call): 150 × 1s = 150s
+
+**With orchestrator:** 5000s total + 1000 × 0.3s routing = 5300s
+**Without orchestrator (all large):** 1000 × 12s = 12000s
+
+**Savings: 56% reduction in total inference time**
