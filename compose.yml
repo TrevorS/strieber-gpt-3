@@ -572,6 +572,27 @@ services:
       - strieber-net
 
   # ==========================================================================
+  # mcp-wikipedia: Fast world knowledge lookup via Wikipedia REST API
+  # ABOUTME: MCP server with Resources, Tools, and Prompts for Wikipedia access
+  # Uses: Wikipedia REST API (~100-200ms), Wikidata entity lookup
+  # ==========================================================================
+  mcp-wikipedia:
+    build:
+      context: ./backend/tools/mcp_servers
+      dockerfile: Dockerfile.mcp-server
+      args:
+        SERVER_MODULE: wikipedia
+    image: strieber-mcp-wikipedia:latest
+    container_name: strieber-mcp-wikipedia
+    restart: unless-stopped
+    ports:
+      - "9160:8000"
+    environment:
+      - PORT=8000
+    networks:
+      - strieber-net
+
+  # ==========================================================================
   # responses-api: OpenAI Responses API adapter
   # ABOUTME: Translates Responses API requests to Chat Completions format
   # Includes server-side tool calling via MCP servers
@@ -591,7 +612,7 @@ services:
       # Models: JSON format {"models":[{"id":"...","url":"...","api_key":"...","owned_by":"..."}]}
       - MODELS_CONFIG={"models":[{"id":"gpt-oss-120b","url":"http://llama-server:8000","reasoning":{"effort":"high"}},{"id":"qwen3-vl-2b","url":"http://llama-server-qwen-vl:8000","supports_vision":true,"supported_tools":[]}]}
       # MCP servers: JSON format {"servers":[{"name":"...","url":"..."}]}
-      - MCP_CONFIG={"servers":[{"name":"weather","url":"http://mcp-weather:8000/mcp","builtin_type":"weather"},{"name":"web_search","url":"http://mcp-web-search:8000/mcp","builtin_type":"web_search"},{"name":"code_interpreter","url":"http://mcp-code-interpreter:8000/mcp","builtin_type":"code_interpreter"},{"name":"reader","url":"http://mcp-reader:8000/mcp","builtin_type":"reader"},{"name":"zimage","url":"http://mcp-comfy-zimage:8000/mcp","builtin_type":"zimage_turbo"}]}
+      - MCP_CONFIG={"servers":[{"name":"weather","url":"http://mcp-weather:8000/mcp","builtin_type":"weather"},{"name":"web_search","url":"http://mcp-web-search:8000/mcp","builtin_type":"web_search"},{"name":"code_interpreter","url":"http://mcp-code-interpreter:8000/mcp","builtin_type":"code_interpreter"},{"name":"reader","url":"http://mcp-reader:8000/mcp","builtin_type":"reader"},{"name":"zimage","url":"http://mcp-comfy-zimage:8000/mcp","builtin_type":"zimage_turbo"},{"name":"wikipedia","url":"http://mcp-wikipedia:8000/mcp","builtin_type":"wikipedia"}]}
       - MAX_TOOL_ITERATIONS=10
       - TIMEOUT_SECS=300
       - RESPONSE_TTL_SECS=3600
@@ -613,6 +634,8 @@ services:
       mcp-reader:
         condition: service_started
       mcp-comfy-zimage:
+        condition: service_started
+      mcp-wikipedia:
         condition: service_started
     healthcheck:
       test: ["CMD", "curl", "-sf", "http://localhost:8000/health"]
