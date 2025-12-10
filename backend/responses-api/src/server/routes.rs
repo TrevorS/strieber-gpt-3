@@ -35,17 +35,17 @@ pub fn create_router(state: Arc<AppState>) -> Router {
         // Conversations API
         .route("/v1/conversations", post(create_conversation))
         .route(
-            "/v1/conversations/:conversation_id",
+            "/v1/conversations/{conversation_id}",
             get(get_conversation)
                 .post(update_conversation)
                 .delete(delete_conversation),
         )
         .route(
-            "/v1/conversations/:conversation_id/items",
+            "/v1/conversations/{conversation_id}/items",
             get(list_items).post(create_items),
         )
         .route(
-            "/v1/conversations/:conversation_id/items/:item_id",
+            "/v1/conversations/{conversation_id}/items/{item_id}",
             get(get_item).delete(delete_item),
         )
         // Container file endpoints
