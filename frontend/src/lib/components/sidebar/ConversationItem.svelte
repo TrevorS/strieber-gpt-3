@@ -86,6 +86,7 @@
 		{isActive ? 'bg-sidebar-accent text-sidebar-accent-foreground' : 'hover:bg-sidebar-accent/50'}"
 	onclick={onselect}
 	aria-current={isActive ? 'page' : undefined}
+	data-testid="conversation-item"
 >
 	{#if isEditing}
 		<input

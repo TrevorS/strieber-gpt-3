@@ -11,7 +11,7 @@ use tower_http::trace::TraceLayer;
 
 use super::conversation_handlers::{
     create_conversation, create_items, delete_conversation, delete_item, get_conversation,
-    get_item, list_items, update_conversation,
+    get_item, list_conversations, list_items, update_conversation,
 };
 use super::handlers::{self, AppState};
 use crate::containers;
@@ -33,7 +33,10 @@ pub fn create_router(state: Arc<AppState>) -> Router {
             delete(handlers::delete_response),
         )
         // Conversations API
-        .route("/v1/conversations", post(create_conversation))
+        .route(
+            "/v1/conversations",
+            get(list_conversations).post(create_conversation),
+        )
         .route(
             "/v1/conversations/{conversation_id}",
             get(get_conversation)

@@ -29,6 +29,27 @@ type ApiError = (StatusCode, Json<serde_json::Value>);
 // Conversation CRUD
 // ============================================================================
 
+/// GET /v1/conversations - List all conversations.
+pub async fn list_conversations(
+    State(state): State<Arc<AppState>>,
+    Query(query): Query<PaginationQuery>,
+) -> Result<Json<ListResponse<Conversation>>, ApiError> {
+    // Validate query parameters (pagination)
+    query
+        .validate()
+        .map_err(|e| validation_error(&e.to_string()))?;
+
+    let list = state.conversations.list(&query);
+
+    tracing::debug!(
+        conversation_count = list.data.len(),
+        has_more = list.has_more,
+        "Listed conversations"
+    );
+
+    Ok(Json(list))
+}
+
 /// POST /v1/conversations - Create a new conversation.
 pub async fn create_conversation(
     State(state): State<Arc<AppState>>,

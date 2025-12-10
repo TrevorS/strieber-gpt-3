@@ -8,7 +8,20 @@ import {
 	groupConversationsByDate,
 	type DateGroup
 } from '../dates';
-import { createConversation } from '$lib/stores/types';
+import type { Conversation } from '$lib/stores/types';
+
+// Helper to create test conversations
+function createTestConversation(overrides: Partial<Conversation> = {}): Conversation {
+	const now = Date.now();
+	return {
+		id: `conv_test_${Math.random().toString(36).slice(2)}`,
+		title: 'Test Chat',
+		createdAt: now,
+		updatedAt: now,
+		messages: [],
+		...overrides
+	};
+}
 
 describe('date utilities', () => {
 	// Fix "now" to a specific date for predictable tests
@@ -77,19 +90,19 @@ describe('date utilities', () => {
 
 	describe('groupConversationsByDate', () => {
 		it('should group conversations by date', () => {
-			const todayConv = createConversation({
+			const todayConv = createTestConversation({
 				title: 'Today Chat',
 				updatedAt: NOW - 1000
 			});
-			const yesterdayConv = createConversation({
+			const yesterdayConv = createTestConversation({
 				title: 'Yesterday Chat',
 				updatedAt: NOW - 24 * 60 * 60 * 1000
 			});
-			const weekConv = createConversation({
+			const weekConv = createTestConversation({
 				title: 'Week Chat',
 				updatedAt: NOW - 3 * 24 * 60 * 60 * 1000
 			});
-			const oldConv = createConversation({
+			const oldConv = createTestConversation({
 				title: 'Old Chat',
 				updatedAt: NOW - 14 * 24 * 60 * 60 * 1000
 			});
@@ -119,15 +132,15 @@ describe('date utilities', () => {
 		});
 
 		it('should handle multiple conversations in same group', () => {
-			const conv1 = createConversation({
+			const conv1 = createTestConversation({
 				title: 'Chat 1',
 				updatedAt: NOW - 1000
 			});
-			const conv2 = createConversation({
+			const conv2 = createTestConversation({
 				title: 'Chat 2',
 				updatedAt: NOW - 2000
 			});
-			const conv3 = createConversation({
+			const conv3 = createTestConversation({
 				title: 'Chat 3',
 				updatedAt: NOW - 3000
 			});
@@ -138,11 +151,11 @@ describe('date utilities', () => {
 		});
 
 		it('should maintain insertion order within groups', () => {
-			const conv1 = createConversation({
+			const conv1 = createTestConversation({
 				title: 'First',
 				updatedAt: NOW - 1000
 			});
-			const conv2 = createConversation({
+			const conv2 = createTestConversation({
 				title: 'Second',
 				updatedAt: NOW - 2000
 			});
@@ -155,7 +168,7 @@ describe('date utilities', () => {
 		});
 
 		it('should only include non-empty groups', () => {
-			const todayConv = createConversation({
+			const todayConv = createTestConversation({
 				title: 'Today',
 				updatedAt: NOW
 			});

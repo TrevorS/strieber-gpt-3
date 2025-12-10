@@ -7,13 +7,13 @@
 	import { ChatInput, MessageList } from '$lib/components/chat';
 	import { ModelSelector, SettingsPanel } from '$lib/components/settings';
 	import { Button } from '$lib/components/ui/button';
-	import { sendMessageStreaming, createConversation as createServerConversation } from '$lib/api';
+	import { sendMessageStreaming } from '$lib/api';
 	import { conversationStore, settingsStore, toastStore } from '$lib/stores';
 	import { logger } from '$lib/utils/logger';
 	import type { Attachment } from '$lib/utils/files';
 
 	// Get conversation from store based on URL param
-	// The id param is always defined since this is a [id] route
+	// The id param is the server conversation ID (conv_xxx format)
 	let conversation = $derived(page.params.id ? conversationStore.get(page.params.id) : undefined);
 	let messages = $derived(conversation?.messages ?? []);
 	let isStreaming = $state(false);
@@ -31,15 +31,38 @@
 		isNavigatingAway = true;
 	});
 
-	// Set active and redirect if not found
+	// Track if we're loading items
+	let isLoadingItems = $state(false);
+
+	// Set active and load items if needed
 	$effect(() => {
 		if (browser && !isNavigatingAway) {
+			const convId = page.params.id;
+
+			// Wait for store to finish initial loading before checking if conversation exists
+			if (conversationStore.isLoading) {
+				logger.debug('ui', 'Waiting for conversations to load', { id: convId });
+				return;
+			}
+
 			if (!conversation) {
+				// Conversation not found - might have expired or server restarted
+				logger.warn('ui', 'Conversation not found', { id: convId });
+				toastStore.warning('Conversation not found');
 				goto('/');
 			} else {
 				const currentActiveId = untrack(() => conversationStore.activeId);
 				if (currentActiveId !== conversation.id) {
 					conversationStore.setActive(conversation.id);
+				}
+
+				// Load items from server if conversation has no messages
+				// (This happens after page refresh - metadata is loaded but not items)
+				if (convId && conversation.messages.length === 0 && !isLoadingItems) {
+					isLoadingItems = true;
+					conversationStore.loadItems(convId).finally(() => {
+						isLoadingItems = false;
+					});
 				}
 			}
 		}
@@ -58,41 +81,27 @@
 			messageCount: conversation.messages.length
 		});
 
-		// Create server-side conversation if needed
-		let serverConvId = conversation.serverConversationId;
-		if (!serverConvId) {
-			try {
-				const serverConv = await createServerConversation();
-				serverConvId = serverConv.id;
-				conversationStore.setServerConversationId(conversation.id, serverConv.id);
-				logger.info('api', 'Server conversation created', { localId: conversation.id, serverId: serverConvId });
-			} catch (error) {
-				logger.error('api', 'Failed to create server conversation', { error });
-				toastStore.error('Failed to create conversation on server');
-				return;
-			}
-		}
+		// conversation.id is now the server ID directly
+		const conversationId = conversation.id;
 
 		// Add user message with attachments
-		conversationStore.addMessage(conversation.id, 'user', text, attachments);
+		conversationStore.addMessage(conversationId, 'user', text, attachments);
 
 		// Create placeholder for assistant message
-		const assistantMessage = conversationStore.addMessage(conversation.id, 'assistant', '');
-		conversationStore.setMessageStreaming(conversation.id, assistantMessage.id, true);
+		const assistantMessage = conversationStore.addMessage(conversationId, 'assistant', '');
+		conversationStore.setMessageStreaming(conversationId, assistantMessage.id, true);
 
 		isStreaming = true;
 		abortController = new AbortController();
 
 		// Stream the response
-		logger.api.request('POST', '/responses', {
-			conversationId: serverConvId
-		});
+		logger.api.request('POST', '/responses', { conversationId });
 
 		await sendMessageStreaming(
 			text,
 			{
 				model: settingsStore.selectedModel,
-				conversationId: serverConvId,
+				conversationId,
 				tools: settingsStore.filterTools([
 					{ type: 'web_search' },
 					{ type: 'code_interpreter' },
@@ -106,14 +115,14 @@
 			},
 			{
 				onDelta: (content) => {
-					conversationStore.updateMessageContent(conversation!.id, assistantMessage.id, content);
+					conversationStore.updateMessageContent(conversationId, assistantMessage.id, content);
 				},
 				onOutputItem: (item) => {
-					conversationStore.setOutputItem(conversation!.id, assistantMessage.id, item);
+					conversationStore.setOutputItem(conversationId, assistantMessage.id, item);
 				},
 				onFunctionCallArgumentsDelta: (itemId, delta) => {
 					conversationStore.updateFunctionCallArguments(
-						conversation!.id,
+						conversationId,
 						assistantMessage.id,
 						itemId,
 						delta
@@ -121,35 +130,35 @@
 				},
 				onComplete: () => {
 					logger.api.streamComplete(
-						conversation!.id,
-						conversationStore.get(conversation!.id)?.messages.find((m) => m.id === assistantMessage.id)
+						conversationId,
+						conversationStore.get(conversationId)?.messages.find((m) => m.id === assistantMessage.id)
 							?.content.length ?? 0
 					);
-					conversationStore.setMessageStreaming(conversation!.id, assistantMessage.id, false);
+					conversationStore.setMessageStreaming(conversationId, assistantMessage.id, false);
 					isStreaming = false;
 					abortController = null;
 				},
 				onError: (error) => {
 					// Don't show error toast for user-initiated cancellation
 					if (error.message === 'Request was cancelled') {
-						logger.info('api', 'Stream cancelled by user', { conversationId: conversation!.id });
-						conversationStore.setMessageStreaming(conversation!.id, assistantMessage.id, false);
+						logger.info('api', 'Stream cancelled by user', { conversationId });
+						conversationStore.setMessageStreaming(conversationId, assistantMessage.id, false);
 						isStreaming = false;
 						abortController = null;
 						return;
 					}
 
 					logger.error('api', 'Stream error', {
-						conversationId: conversation!.id,
+						conversationId,
 						error: error.message
 					});
 					toastStore.error(error.message);
 					conversationStore.updateMessageContent(
-						conversation!.id,
+						conversationId,
 						assistantMessage.id,
 						'Sorry, something went wrong. Please try again.'
 					);
-					conversationStore.setMessageStreaming(conversation!.id, assistantMessage.id, false);
+					conversationStore.setMessageStreaming(conversationId, assistantMessage.id, false);
 					isStreaming = false;
 					abortController = null;
 				}
@@ -169,30 +178,18 @@
 
 		logger.ui.event('ConversationPage', 'Regenerate response', { conversationId: conversation.id });
 
+		const conversationId = conversation.id;
+
 		// Remove the last assistant message and get the user prompt
-		const userText = conversationStore.removeLastAssistantMessage(conversation.id);
+		const userText = conversationStore.removeLastAssistantMessage(conversationId);
 		if (!userText) {
 			toastStore.error('Cannot regenerate: no message to regenerate');
 			return;
 		}
 
-		// Ensure we have a server conversation
-		let serverConvId = conversation.serverConversationId;
-		if (!serverConvId) {
-			try {
-				const serverConv = await createServerConversation();
-				serverConvId = serverConv.id;
-				conversationStore.setServerConversationId(conversation.id, serverConv.id);
-			} catch (error) {
-				logger.error('api', 'Failed to create server conversation', { error });
-				toastStore.error('Failed to create conversation on server');
-				return;
-			}
-		}
-
 		// Re-send the message (don't add user message again, just create new assistant message)
-		const assistantMessage = conversationStore.addMessage(conversation.id, 'assistant', '');
-		conversationStore.setMessageStreaming(conversation.id, assistantMessage.id, true);
+		const assistantMessage = conversationStore.addMessage(conversationId, 'assistant', '');
+		conversationStore.setMessageStreaming(conversationId, assistantMessage.id, true);
 
 		isStreaming = true;
 		abortController = new AbortController();
@@ -201,7 +198,7 @@
 			userText,
 			{
 				model: settingsStore.selectedModel,
-				conversationId: serverConvId,
+				conversationId,
 				tools: settingsStore.filterTools([
 					{ type: 'web_search' },
 					{ type: 'code_interpreter' },
@@ -214,14 +211,14 @@
 			},
 			{
 				onDelta: (content) => {
-					conversationStore.updateMessageContent(conversation!.id, assistantMessage.id, content);
+					conversationStore.updateMessageContent(conversationId, assistantMessage.id, content);
 				},
 				onOutputItem: (item) => {
-					conversationStore.setOutputItem(conversation!.id, assistantMessage.id, item);
+					conversationStore.setOutputItem(conversationId, assistantMessage.id, item);
 				},
 				onFunctionCallArgumentsDelta: (itemId, delta) => {
 					conversationStore.updateFunctionCallArguments(
-						conversation!.id,
+						conversationId,
 						assistantMessage.id,
 						itemId,
 						delta
@@ -229,34 +226,34 @@
 				},
 				onComplete: () => {
 					logger.api.streamComplete(
-						conversation!.id,
-						conversationStore.get(conversation!.id)?.messages.find((m) => m.id === assistantMessage.id)
+						conversationId,
+						conversationStore.get(conversationId)?.messages.find((m) => m.id === assistantMessage.id)
 							?.content.length ?? 0
 					);
-					conversationStore.setMessageStreaming(conversation!.id, assistantMessage.id, false);
+					conversationStore.setMessageStreaming(conversationId, assistantMessage.id, false);
 					isStreaming = false;
 					abortController = null;
 				},
 				onError: (error) => {
 					if (error.message === 'Request was cancelled') {
-						logger.info('api', 'Regenerate cancelled by user', { conversationId: conversation!.id });
-						conversationStore.setMessageStreaming(conversation!.id, assistantMessage.id, false);
+						logger.info('api', 'Regenerate cancelled by user', { conversationId });
+						conversationStore.setMessageStreaming(conversationId, assistantMessage.id, false);
 						isStreaming = false;
 						abortController = null;
 						return;
 					}
 
 					logger.error('api', 'Regenerate error', {
-						conversationId: conversation!.id,
+						conversationId,
 						error: error.message
 					});
 					toastStore.error(error.message);
 					conversationStore.updateMessageContent(
-						conversation!.id,
+						conversationId,
 						assistantMessage.id,
 						'Sorry, something went wrong. Please try again.'
 					);
-					conversationStore.setMessageStreaming(conversation!.id, assistantMessage.id, false);
+					conversationStore.setMessageStreaming(conversationId, assistantMessage.id, false);
 					isStreaming = false;
 					abortController = null;
 				}
@@ -273,29 +270,17 @@
 			newContentLength: newContent.length
 		});
 
-		// Ensure we have a server conversation
-		let serverConvId = conversation.serverConversationId;
-		if (!serverConvId) {
-			try {
-				const serverConv = await createServerConversation();
-				serverConvId = serverConv.id;
-				conversationStore.setServerConversationId(conversation.id, serverConv.id);
-			} catch (error) {
-				logger.error('api', 'Failed to create server conversation', { error });
-				toastStore.error('Failed to create conversation on server');
-				return;
-			}
-		}
+		const conversationId = conversation.id;
 
 		// Update the message content and mark as edited
-		conversationStore.updateMessage(conversation.id, messageId, newContent);
+		conversationStore.updateMessage(conversationId, messageId, newContent);
 
 		// Remove all messages after the edited one
-		conversationStore.removeMessagesAfter(conversation.id, messageId);
+		conversationStore.removeMessagesAfter(conversationId, messageId);
 
 		// Create a new assistant response
-		const assistantMessage = conversationStore.addMessage(conversation.id, 'assistant', '');
-		conversationStore.setMessageStreaming(conversation.id, assistantMessage.id, true);
+		const assistantMessage = conversationStore.addMessage(conversationId, 'assistant', '');
+		conversationStore.setMessageStreaming(conversationId, assistantMessage.id, true);
 
 		isStreaming = true;
 		abortController = new AbortController();
@@ -305,7 +290,7 @@
 			newContent,
 			{
 				model: settingsStore.selectedModel,
-				conversationId: serverConvId,
+				conversationId,
 				tools: settingsStore.filterTools([
 					{ type: 'web_search' },
 					{ type: 'code_interpreter' },
@@ -318,14 +303,14 @@
 			},
 			{
 				onDelta: (content) => {
-					conversationStore.updateMessageContent(conversation!.id, assistantMessage.id, content);
+					conversationStore.updateMessageContent(conversationId, assistantMessage.id, content);
 				},
 				onOutputItem: (item) => {
-					conversationStore.setOutputItem(conversation!.id, assistantMessage.id, item);
+					conversationStore.setOutputItem(conversationId, assistantMessage.id, item);
 				},
 				onFunctionCallArgumentsDelta: (itemId, delta) => {
 					conversationStore.updateFunctionCallArguments(
-						conversation!.id,
+						conversationId,
 						assistantMessage.id,
 						itemId,
 						delta
@@ -333,34 +318,34 @@
 				},
 				onComplete: () => {
 					logger.api.streamComplete(
-						conversation!.id,
-						conversationStore.get(conversation!.id)?.messages.find((m) => m.id === assistantMessage.id)
+						conversationId,
+						conversationStore.get(conversationId)?.messages.find((m) => m.id === assistantMessage.id)
 							?.content.length ?? 0
 					);
-					conversationStore.setMessageStreaming(conversation!.id, assistantMessage.id, false);
+					conversationStore.setMessageStreaming(conversationId, assistantMessage.id, false);
 					isStreaming = false;
 					abortController = null;
 				},
 				onError: (error) => {
 					if (error.message === 'Request was cancelled') {
-						logger.info('api', 'Edit regenerate cancelled by user', { conversationId: conversation!.id });
-						conversationStore.setMessageStreaming(conversation!.id, assistantMessage.id, false);
+						logger.info('api', 'Edit regenerate cancelled by user', { conversationId });
+						conversationStore.setMessageStreaming(conversationId, assistantMessage.id, false);
 						isStreaming = false;
 						abortController = null;
 						return;
 					}
 
 					logger.error('api', 'Edit regenerate error', {
-						conversationId: conversation!.id,
+						conversationId,
 						error: error.message
 					});
 					toastStore.error(error.message);
 					conversationStore.updateMessageContent(
-						conversation!.id,
+						conversationId,
 						assistantMessage.id,
 						'Sorry, something went wrong. Please try again.'
 					);
-					conversationStore.setMessageStreaming(conversation!.id, assistantMessage.id, false);
+					conversationStore.setMessageStreaming(conversationId, assistantMessage.id, false);
 					isStreaming = false;
 					abortController = null;
 				}

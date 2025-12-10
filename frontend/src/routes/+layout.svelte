@@ -6,7 +6,6 @@
 	import { tick } from 'svelte';
 	import { fade } from 'svelte/transition';
 	import { conversationStore, settingsStore } from '$lib/stores';
-	import { loadConversations, saveConversations } from '$lib/utils/storage';
 	import { createShortcutHandler, type ShortcutAction } from '$lib/utils/shortcuts';
 	import { ConversationList } from '$lib/components/sidebar';
 	import { Button } from '$lib/components/ui/button';
@@ -18,7 +17,6 @@
 
 	// Mobile sidebar state
 	let sidebarOpen = $state(false);
-	let loaded = $state(false);
 
 	function toggleSidebar() {
 		sidebarOpen = !sidebarOpen;
@@ -37,37 +35,15 @@
 		logger.ui.event('Sidebar', 'Toggle Collapse', { collapsed: settingsStore.sidebarCollapsed });
 	}
 
-	// Load conversations from localStorage on mount (browser only)
-	// Always start with New Chat state on refresh (activeId = null)
+	// Load conversations from server API on mount (browser only)
 	if (browser) {
 		logger.lifecycle.mount('Layout', { browser: true });
-		const saved = loadConversations();
-		if (saved) {
-			logger.info('persistence', 'Loading from localStorage', {
-				conversationCount: saved.conversations.length,
-				savedActiveId: saved.activeId,
-				settingActiveIdTo: null
+		conversationStore.fetchAll().catch((e) => {
+			logger.error('persistence', 'Failed to load conversations from server', {
+				error: e instanceof Error ? e.message : 'Unknown error'
 			});
-			conversationStore.load(saved.conversations, null);
-		} else {
-			logger.info('persistence', 'No saved conversations found');
-		}
-		// Minimum loading time to prevent skeleton flash
-		setTimeout(() => {
-			loaded = true;
-		}, 350);
+		});
 	}
-
-	// Persist on every change
-	$effect(() => {
-		if (browser) {
-			logger.debug('persistence', 'Saving to localStorage', {
-				conversationCount: conversationStore.conversations.length,
-				activeId: conversationStore.activeId
-			});
-			saveConversations(conversationStore.conversations, conversationStore.activeId);
-		}
-	});
 
 	// Apply theme to document
 	$effect(() => {
@@ -123,10 +99,10 @@
 		await goto('/');
 	}
 
-	function handleDelete(id: string) {
+	async function handleDelete(id: string) {
 		logger.ui.event('Sidebar', 'Delete clicked', { id, wasActive: conversationStore.activeId === id });
 		const wasActive = conversationStore.activeId === id;
-		conversationStore.delete(id);
+		await conversationStore.delete(id);
 
 		// If we deleted the active conversation, navigate appropriately
 		if (wasActive) {
@@ -142,9 +118,16 @@
 		}
 	}
 
-	function handleRename(id: string, title: string) {
+	async function handleRename(id: string, title: string) {
 		logger.ui.event('Sidebar', 'Rename', { id, title });
-		conversationStore.updateTitle(id, title);
+		try {
+			await conversationStore.updateTitle(id, title);
+		} catch (e) {
+			logger.error('ui', 'Failed to rename conversation', {
+				id,
+				error: e instanceof Error ? e.message : 'Unknown error'
+			});
+		}
 	}
 
 	function handleExport(id: string) {
@@ -301,7 +284,7 @@
 		{:else}
 			<!-- Expanded: Full conversation list -->
 			<ConversationList
-				loading={!loaded}
+				loading={conversationStore.isLoading}
 				conversations={conversationStore.sorted}
 				activeId={conversationStore.activeId}
 				onselect={handleSelect}

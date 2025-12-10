@@ -79,9 +79,59 @@ export interface InputItem {
 	[key: string]: unknown;
 }
 
+/**
+ * List response for conversations
+ */
+export interface ConversationListResponse {
+	object: 'list';
+	data: ServerConversation[];
+	first_id?: string;
+	last_id?: string;
+	has_more: boolean;
+}
+
 // ============================================================================
 // API Functions
 // ============================================================================
+
+/**
+ * List all conversations on the server.
+ *
+ * @param options - Pagination options
+ * @returns Paginated list of conversations
+ */
+export async function listConversations(
+	options: { limit?: number; order?: 'asc' | 'desc'; after?: string } = {}
+): Promise<ConversationListResponse> {
+	const baseUrl = getApiBaseUrl();
+
+	const params = new URLSearchParams();
+	if (options.limit) params.set('limit', String(options.limit));
+	if (options.order) params.set('order', options.order);
+	if (options.after) params.set('after', options.after);
+
+	const queryString = params.toString();
+	const url = `${baseUrl}/conversations${queryString ? `?${queryString}` : ''}`;
+
+	logger.api.request('GET', url, options);
+
+	const response = await fetch(url);
+
+	logger.api.response('GET', url, response.status, {});
+
+	if (!response.ok) {
+		const errorText = await response.text();
+		throw new Error(`Failed to list conversations: ${response.status} ${errorText}`);
+	}
+
+	const list = (await response.json()) as ConversationListResponse;
+	logger.info('api', 'Conversations listed', {
+		count: list.data.length,
+		hasMore: list.has_more
+	});
+
+	return list;
+}
 
 /**
  * Create a new conversation on the server.
@@ -128,7 +178,7 @@ export async function getConversation(
 	includeItems = false
 ): Promise<ServerConversation> {
 	const baseUrl = getApiBaseUrl();
-	const params = includeItems ? '?include=conversation.items' : '';
+	const params = includeItems ? '?include[]=conversation.items' : '';
 	const url = `${baseUrl}/conversations/${id}${params}`;
 
 	logger.api.request('GET', url, { id, includeItems });

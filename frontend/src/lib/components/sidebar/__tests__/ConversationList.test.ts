@@ -4,7 +4,20 @@
 import { fireEvent, render, screen } from '@testing-library/svelte';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import ConversationList from '../ConversationList.svelte';
-import { createConversation } from '$lib/stores/types';
+import type { Conversation } from '$lib/stores/types';
+
+// Helper to create test conversations
+function createTestConversation(overrides: Partial<Conversation> = {}): Conversation {
+	const now = Date.now();
+	return {
+		id: `conv_test_${Math.random().toString(36).slice(2)}`,
+		title: 'New Chat',
+		createdAt: now,
+		updatedAt: now,
+		messages: [],
+		...overrides
+	};
+}
 
 describe('ConversationList', () => {
 	let mockOnSelect: (id: string) => void;
@@ -71,8 +84,8 @@ describe('ConversationList', () => {
 
 	it('should render all conversations', () => {
 		const conversations = [
-			createConversation({ title: 'Chat 1', updatedAt: NOW - 1000 }),
-			createConversation({ title: 'Chat 2', updatedAt: NOW - 2000 })
+			createTestConversation({ title: 'Chat 1', updatedAt: NOW - 1000 }),
+			createTestConversation({ title: 'Chat 2', updatedAt: NOW - 2000 })
 		];
 
 		render(ConversationList, {
@@ -91,8 +104,8 @@ describe('ConversationList', () => {
 
 	it('should group conversations by date', () => {
 		const conversations = [
-			createConversation({ title: 'Today Chat', updatedAt: NOW - 1000 }),
-			createConversation({
+			createTestConversation({ title: 'Today Chat', updatedAt: NOW - 1000 }),
+			createTestConversation({
 				title: 'Old Chat',
 				updatedAt: NOW - 14 * 24 * 60 * 60 * 1000
 			})
@@ -114,7 +127,7 @@ describe('ConversationList', () => {
 	});
 
 	it('should call onselect with conversation id when clicked', async () => {
-		const conversation = createConversation({
+		const conversation = createTestConversation({
 			id: 'test-123',
 			title: 'Click Me',
 			updatedAt: NOW
@@ -135,7 +148,7 @@ describe('ConversationList', () => {
 	});
 
 	it('should call ondelete with conversation id when delete clicked', async () => {
-		const conversation = createConversation({
+		const conversation = createTestConversation({
 			id: 'delete-123',
 			title: 'Delete Me',
 			updatedAt: NOW
@@ -158,8 +171,8 @@ describe('ConversationList', () => {
 
 	it('should pass isActive to conversation items', () => {
 		const conversations = [
-			createConversation({ id: 'active-id', title: 'Active', updatedAt: NOW }),
-			createConversation({ id: 'other-id', title: 'Other', updatedAt: NOW - 1000 })
+			createTestConversation({ id: 'active-id', title: 'Active', updatedAt: NOW }),
+			createTestConversation({ id: 'other-id', title: 'Other', updatedAt: NOW - 1000 })
 		];
 
 		render(ConversationList, {
@@ -199,9 +212,9 @@ describe('ConversationList', () => {
 
 		it('should filter conversations by title', async () => {
 			const conversations = [
-				createConversation({ title: 'Python tutorial', updatedAt: NOW - 1000 }),
-				createConversation({ title: 'JavaScript guide', updatedAt: NOW - 2000 }),
-				createConversation({ title: 'Python advanced', updatedAt: NOW - 3000 })
+				createTestConversation({ title: 'Python tutorial', updatedAt: NOW - 1000 }),
+				createTestConversation({ title: 'JavaScript guide', updatedAt: NOW - 2000 }),
+				createTestConversation({ title: 'Python advanced', updatedAt: NOW - 3000 })
 			];
 
 			render(ConversationList, {
@@ -224,8 +237,8 @@ describe('ConversationList', () => {
 
 		it('should be case-insensitive', async () => {
 			const conversations = [
-				createConversation({ title: 'UPPERCASE CHAT', updatedAt: NOW - 1000 }),
-				createConversation({ title: 'lowercase chat', updatedAt: NOW - 2000 })
+				createTestConversation({ title: 'UPPERCASE CHAT', updatedAt: NOW - 1000 }),
+				createTestConversation({ title: 'lowercase chat', updatedAt: NOW - 2000 })
 			];
 
 			render(ConversationList, {
@@ -247,8 +260,8 @@ describe('ConversationList', () => {
 
 		it('should show all conversations when search is empty', async () => {
 			const conversations = [
-				createConversation({ title: 'Chat 1', updatedAt: NOW - 1000 }),
-				createConversation({ title: 'Chat 2', updatedAt: NOW - 2000 })
+				createTestConversation({ title: 'Chat 1', updatedAt: NOW - 1000 }),
+				createTestConversation({ title: 'Chat 2', updatedAt: NOW - 2000 })
 			];
 
 			render(ConversationList, {
@@ -275,8 +288,8 @@ describe('ConversationList', () => {
 
 		it('should maintain date grouping on filtered results', async () => {
 			const conversations = [
-				createConversation({ title: 'Today Python', updatedAt: NOW - 1000 }),
-				createConversation({
+				createTestConversation({ title: 'Today Python', updatedAt: NOW - 1000 }),
+				createTestConversation({
 					title: 'Old Python',
 					updatedAt: NOW - 14 * 24 * 60 * 60 * 1000
 				})
@@ -303,7 +316,9 @@ describe('ConversationList', () => {
 		});
 
 		it('should show empty state when search has no matches', async () => {
-			const conversations = [createConversation({ title: 'Python chat', updatedAt: NOW - 1000 })];
+			const conversations = [
+				createTestConversation({ title: 'Python chat', updatedAt: NOW - 1000 })
+			];
 
 			render(ConversationList, {
 				props: {

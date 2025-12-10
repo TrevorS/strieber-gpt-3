@@ -30,7 +30,7 @@ impl StoredConversation {
             conversation,
             items,
             created_at: Instant::now(),
-            ttl: Duration::from_secs(3600), // 1 hour default
+            ttl: Duration::MAX, // Infinite by default (no expiration)
         }
     }
 
@@ -51,6 +51,9 @@ impl StoredConversation {
 /// Trait for conversation storage backends.
 /// Designed to allow swapping DashMap for database-backed storage later.
 pub trait ConversationStore: Send + Sync + 'static {
+    /// List all conversations with pagination.
+    fn list(&self, query: &PaginationQuery) -> ListResponse<Conversation>;
+
     /// Create a new conversation with optional metadata and initial items.
     fn create(&self, metadata: Option<Metadata>, items: Option<Vec<InputItem>>) -> Conversation;
 
@@ -104,7 +107,7 @@ impl InMemoryConversationStore {
     pub fn new() -> Self {
         Self {
             conversations: Arc::new(DashMap::new()),
-            default_ttl: Duration::from_secs(3600),
+            default_ttl: Duration::MAX, // Infinite by default
         }
     }
 
@@ -129,6 +132,47 @@ impl Default for InMemoryConversationStore {
 }
 
 impl ConversationStore for InMemoryConversationStore {
+    fn list(&self, query: &PaginationQuery) -> ListResponse<Conversation> {
+        // Collect all conversations, sorted by created_at
+        let mut conversations: Vec<Conversation> = self
+            .conversations
+            .iter()
+            .map(|entry| entry.value().conversation.clone())
+            .collect();
+
+        // Sort by created_at (desc by default, asc if requested)
+        match query.order {
+            SortOrder::Desc => conversations.sort_by(|a, b| b.created_at.cmp(&a.created_at)),
+            SortOrder::Asc => conversations.sort_by(|a, b| a.created_at.cmp(&b.created_at)),
+        }
+
+        if conversations.is_empty() {
+            return ListResponse::empty();
+        }
+
+        // Find start position based on cursor
+        let start_idx = if let Some(ref after) = query.after {
+            conversations
+                .iter()
+                .position(|c| c.id == *after)
+                .map(|p| p + 1)
+                .unwrap_or(0)
+        } else {
+            0
+        };
+
+        // Apply limit
+        let limit = query.limit as usize;
+        let end_idx = (start_idx + limit).min(conversations.len());
+        let data: Vec<Conversation> = conversations[start_idx..end_idx].to_vec();
+        let has_more = end_idx < conversations.len();
+
+        let first_id = data.first().map(|c| c.id.clone());
+        let last_id = data.last().map(|c| c.id.clone());
+
+        ListResponse::new(data, has_more).with_ids(first_id, last_id)
+    }
+
     fn create(&self, metadata: Option<Metadata>, items: Option<Vec<InputItem>>) -> Conversation {
         let id = conversation_id();
         let conversation = Conversation::new(id.clone(), metadata);

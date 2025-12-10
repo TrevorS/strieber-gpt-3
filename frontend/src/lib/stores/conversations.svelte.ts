@@ -3,20 +3,30 @@
  *
  * Svelte 5 runes-based store for managing chat conversations.
  * Uses $state for reactive state and $derived for computed values.
+ * Syncs with server Conversations API - server is source of truth.
  */
 
 import {
 	type Conversation,
-	createConversation,
+	serverToLocalConversation,
 	createMessage,
 	type Message,
 	type ResponseOutputItem
 } from './types';
 import type { Attachment } from '$lib/utils/files';
 import { logger } from '$lib/utils/logger';
+import {
+	listConversations,
+	createConversation as apiCreateConversation,
+	deleteConversation as apiDeleteConversation,
+	updateConversation as apiUpdateConversation,
+	listItems,
+	type ConversationItem
+} from '$lib/api/conversations';
 
 /**
  * Conversation store class using Svelte 5 runes.
+ * Now backed by server Conversations API.
  *
  * @example
  * ```svelte
@@ -30,11 +40,17 @@ import { logger } from '$lib/utils/logger';
  * ```
  */
 class ConversationStore {
-	/** All conversations */
+	/** All conversations (cached from server) */
 	conversations = $state<Conversation[]>([]);
 
 	/** ID of the currently active conversation */
 	activeId = $state<string | null>(null);
+
+	/** Loading state for initial fetch */
+	isLoading = $state(false);
+
+	/** Error from last operation */
+	error = $state<string | null>(null);
 
 	/** The currently active conversation (derived) */
 	get active(): Conversation | undefined {
@@ -47,25 +63,209 @@ class ConversationStore {
 	}
 
 	/**
-	 * Create a new conversation and set it as active.
+	 * Fetch all conversations from the server.
+	 * Called on app startup to populate the store.
+	 * Note: This only loads metadata (no items/messages) for sidebar display.
+	 * Use loadItems() to fetch messages when navigating to a conversation.
 	 */
-	create(title?: string): Conversation {
-		const conv = createConversation(title ? { title } : undefined);
+	async fetchAll(): Promise<void> {
+		this.isLoading = true;
+		this.error = null;
+
+		try {
+			const response = await listConversations({ limit: 100, order: 'desc' });
+			this.conversations = response.data.map((server) => serverToLocalConversation(server));
+			logger.info('persistence', 'Conversations loaded from server', {
+				conversationCount: this.conversations.length,
+				conversationIds: this.conversations.map((c) => c.id)
+			});
+		} catch (e) {
+			const message = e instanceof Error ? e.message : 'Failed to fetch conversations';
+			this.error = message;
+			logger.error('persistence', 'Failed to load conversations from server', { error: message });
+		} finally {
+			this.isLoading = false;
+		}
+	}
+
+	/**
+	 * Load items (messages) for a specific conversation from the server.
+	 * Calls the /conversations/{id}/items endpoint and converts to local messages.
+	 */
+	async loadItems(conversationId: string): Promise<void> {
+		const conv = this.conversations.find((c) => c.id === conversationId);
+		if (!conv) {
+			logger.warn('store', 'loadItems: conversation not found locally', { conversationId });
+			return;
+		}
+
+		// Skip if we already have messages (they were added locally during this session)
+		if (conv.messages.length > 0) {
+			logger.debug('store', 'loadItems: conversation already has messages', {
+				conversationId,
+				messageCount: conv.messages.length
+			});
+			return;
+		}
+
+		try {
+			// Use the /items endpoint directly instead of include param
+			const itemList = await listItems(conversationId, { limit: 100, order: 'asc' });
+			if (itemList.data && itemList.data.length > 0) {
+				const messages = this.itemsToMessages(itemList.data);
+				conv.messages = messages;
+				logger.info('persistence', 'Items loaded for conversation', {
+					conversationId,
+					itemCount: itemList.data.length,
+					messageCount: messages.length
+				});
+			}
+		} catch (e) {
+			const message = e instanceof Error ? e.message : 'Failed to load items';
+			logger.error('persistence', 'Failed to load items for conversation', {
+				conversationId,
+				error: message
+			});
+			// If 404, the conversation may have been deleted on server
+			if (message.includes('not found')) {
+				this.removeLocal(conversationId);
+			}
+			throw e;
+		}
+	}
+
+	/**
+	 * Convert server conversation items to local Message objects.
+	 * Groups related items (message + output items) into single messages.
+	 */
+	private itemsToMessages(items: ConversationItem[]): Message[] {
+		const messages: Message[] = [];
+		let currentAssistantMessage: Message | null = null;
+
+		for (const item of items) {
+			const itemType = item.type;
+
+			// User message
+			if (itemType === 'message' && item.role === 'user') {
+				// If we have a pending assistant message, push it
+				if (currentAssistantMessage) {
+					messages.push(currentAssistantMessage);
+					currentAssistantMessage = null;
+				}
+
+				// Extract text content from the message
+				const content = this.extractMessageText(item);
+				messages.push(createMessage('user', content, { id: item.id }));
+			}
+			// Assistant message
+			else if (itemType === 'message' && item.role === 'assistant') {
+				// If we have a pending assistant message, push it first
+				if (currentAssistantMessage) {
+					messages.push(currentAssistantMessage);
+				}
+
+				const content = this.extractMessageText(item);
+				currentAssistantMessage = createMessage('assistant', content, {
+					id: item.id,
+					rawOutput: []
+				});
+			}
+			// Tool calls, reasoning, etc. - attach to current assistant message
+			else if (
+				itemType === 'function_call' ||
+				itemType === 'web_search_call' ||
+				itemType === 'code_interpreter_call' ||
+				itemType === 'reasoning' ||
+				itemType === 'file_search_call' ||
+				itemType === 'computer_call'
+			) {
+				// Start a new assistant message if we don't have one
+				if (!currentAssistantMessage) {
+					currentAssistantMessage = createMessage('assistant', '', { rawOutput: [] });
+				}
+				// Add to rawOutput - cast item to ResponseOutputItem (close enough for display)
+				currentAssistantMessage.rawOutput?.push(item as unknown as ResponseOutputItem);
+			}
+			// Function call output - attach to current assistant message
+			else if (itemType === 'function_call_output') {
+				if (currentAssistantMessage?.rawOutput) {
+					// Find the matching function_call and attach output
+					const funcCall = currentAssistantMessage.rawOutput.find(
+						(o) => o.type === 'function_call' && 'call_id' in o && o.call_id === item.call_id
+					);
+					if (funcCall && 'output' in funcCall) {
+						// The output is already in the function_call item from server
+					}
+				}
+			}
+		}
+
+		// Push any remaining assistant message
+		if (currentAssistantMessage) {
+			messages.push(currentAssistantMessage);
+		}
+
+		return messages;
+	}
+
+	/**
+	 * Extract text content from a message item.
+	 */
+	private extractMessageText(item: ConversationItem): string {
+		// Content can be an array of content parts or a string
+		const content = item.content;
+		if (typeof content === 'string') {
+			return content;
+		}
+		if (Array.isArray(content)) {
+			// Extract text from content parts
+			return content
+				.filter(
+					(part: { type?: string }) =>
+						part.type === 'input_text' || part.type === 'output_text' || part.type === 'text'
+				)
+				.map((part: { text?: string }) => part.text || '')
+				.join('');
+		}
+		return '';
+	}
+
+	/**
+	 * Create a new conversation on the server and add to local state.
+	 * @param title - Optional title (stored in metadata)
+	 * @returns The created conversation
+	 */
+	async create(title?: string): Promise<Conversation> {
+		const metadata = title ? { title } : undefined;
+		const serverConv = await apiCreateConversation(metadata);
+		const conv = serverToLocalConversation(serverConv);
+
 		this.conversations.push(conv);
 		this.activeId = conv.id;
+
 		logger.store.action('create', { id: conv.id, title: conv.title, activeId: this.activeId });
 		return conv;
 	}
 
 	/**
-	 * Delete a conversation by ID.
+	 * Delete a conversation from server and local state.
 	 * If deleting the active conversation, switches to the most recent one.
 	 */
-	delete(id: string): void {
+	async delete(id: string): Promise<void> {
 		const index = this.conversations.findIndex((c) => c.id === id);
 		if (index === -1) {
-			logger.warn('store', 'Delete failed: conversation not found', { id });
+			logger.warn('store', 'Delete failed: conversation not found locally', { id });
 			return;
+		}
+
+		try {
+			await apiDeleteConversation(id);
+		} catch (e) {
+			// If 404, it's already deleted on server - that's fine
+			const message = e instanceof Error ? e.message : 'Unknown error';
+			if (!message.includes('not found')) {
+				throw e;
+			}
 		}
 
 		const wasActive = this.activeId === id;
@@ -80,6 +280,24 @@ class ConversationStore {
 	}
 
 	/**
+	 * Remove a conversation from local state only (e.g., when server returns 404).
+	 * Does not call API.
+	 */
+	removeLocal(id: string): void {
+		const index = this.conversations.findIndex((c) => c.id === id);
+		if (index === -1) return;
+
+		const wasActive = this.activeId === id;
+		this.conversations.splice(index, 1);
+
+		if (wasActive) {
+			this.activeId = this.sorted[0]?.id ?? null;
+		}
+
+		logger.store.action('removeLocal', { id, wasActive, newActiveId: this.activeId });
+	}
+
+	/**
 	 * Set the active conversation by ID.
 	 */
 	setActive(id: string | null): void {
@@ -89,22 +307,46 @@ class ConversationStore {
 	}
 
 	/**
-	 * Update a conversation's title.
+	 * Update a conversation's title (syncs to server metadata).
 	 */
-	updateTitle(id: string, title: string): void {
+	async updateTitle(id: string, title: string): Promise<void> {
 		const conv = this.conversations.find((c) => c.id === id);
-		if (conv) {
-			const oldTitle = conv.title;
+		if (!conv) {
+			logger.warn('store', 'updateTitle failed: conversation not found', { id });
+			return;
+		}
+
+		const oldTitle = conv.title;
+
+		try {
+			await apiUpdateConversation(id, { title });
 			conv.title = title;
 			conv.updatedAt = Date.now();
 			logger.store.action('updateTitle', { id, oldTitle, newTitle: title });
-		} else {
-			logger.warn('store', 'updateTitle failed: conversation not found', { id });
+		} catch (e) {
+			logger.error('store', 'updateTitle failed', {
+				id,
+				error: e instanceof Error ? e.message : 'Unknown error'
+			});
+			throw e;
 		}
 	}
 
 	/**
-	 * Add a message to a conversation.
+	 * Update title locally only (for optimistic updates during streaming).
+	 * Use updateTitle() for persisted updates.
+	 */
+	updateTitleLocal(id: string, title: string): void {
+		const conv = this.conversations.find((c) => c.id === id);
+		if (conv) {
+			conv.title = title;
+			conv.updatedAt = Date.now();
+		}
+	}
+
+	/**
+	 * Add a message to a conversation (local state only).
+	 * Server sync happens via streaming response.
 	 */
 	addMessage(
 		conversationId: string,
@@ -199,31 +441,6 @@ class ConversationStore {
 				messageId
 			});
 		}
-	}
-
-	/**
-	 * Set the server-side conversation ID for API context chaining.
-	 */
-	setServerConversationId(conversationId: string, serverConversationId: string): void {
-		const conv = this.conversations.find((c) => c.id === conversationId);
-		if (conv) {
-			const oldId = conv.serverConversationId;
-			conv.serverConversationId = serverConversationId;
-			conv.updatedAt = Date.now();
-			logger.info('store', 'Server conversation ID set', {
-				conversationId,
-				oldServerConversationId: oldId,
-				newServerConversationId: serverConversationId
-			});
-		}
-	}
-
-	/**
-	 * Get the server conversation ID for a local conversation.
-	 */
-	getServerConversationId(conversationId: string): string | null {
-		const conv = this.conversations.find((c) => c.id === conversationId);
-		return conv?.serverConversationId ?? null;
 	}
 
 	/**
@@ -406,7 +623,7 @@ class ConversationStore {
 	}
 
 	/**
-	 * Clear all conversations.
+	 * Clear all conversations from local state.
 	 */
 	clear(): void {
 		const count = this.conversations.length;
@@ -416,19 +633,15 @@ class ConversationStore {
 	}
 
 	/**
-	 * Load conversations from external source (e.g., localStorage).
-	 * If activeId is not provided, defaults to the first conversation.
-	 * Pass null for activeId to explicitly have no active conversation.
+	 * Add a conversation to local state (used after creating via API).
 	 */
-	load(conversations: Conversation[], activeId?: string | null): void {
-		this.conversations = conversations;
-		// Default to first conversation if activeId not explicitly provided
-		this.activeId = activeId !== undefined ? activeId : (conversations[0]?.id ?? null);
-		logger.info('persistence', 'Conversations loaded from storage', {
-			conversationCount: conversations.length,
-			activeId: this.activeId,
-			conversationIds: conversations.map((c) => c.id)
-		});
+	addLocal(conv: Conversation): void {
+		// Check if already exists
+		if (this.conversations.some((c) => c.id === conv.id)) {
+			return;
+		}
+		this.conversations.push(conv);
+		logger.store.action('addLocal', { id: conv.id, title: conv.title });
 	}
 }
 

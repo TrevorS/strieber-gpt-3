@@ -4,7 +4,7 @@
 	import { ChatInput, MessageList } from '$lib/components/chat';
 	import { ModelSelector, SettingsPanel } from '$lib/components/settings';
 	import { Button } from '$lib/components/ui/button';
-	import { sendMessageStreaming, createConversation as createServerConversation } from '$lib/api';
+	import { sendMessageStreaming } from '$lib/api';
 	import { conversationStore, settingsStore, toastStore } from '$lib/stores';
 	import { logger } from '$lib/utils/logger';
 	import type { Attachment } from '$lib/utils/files';
@@ -30,24 +30,16 @@
 			hasActiveConversation: !!activeConversation
 		});
 
-		// Create conversation if needed
+		// Create conversation on server if needed (store.create() now calls API)
 		let conv = activeConversation;
 		if (!conv) {
 			logger.info('ui', 'Creating new conversation for message');
-			conv = conversationStore.create();
-		}
-
-		// Create server-side conversation if needed
-		let serverConvId = conv.serverConversationId;
-		if (!serverConvId) {
 			try {
-				const serverConv = await createServerConversation();
-				serverConvId = serverConv.id;
-				conversationStore.setServerConversationId(conv.id, serverConv.id);
-				logger.info('api', 'Server conversation created', { localId: conv.id, serverId: serverConvId });
+				conv = await conversationStore.create();
+				logger.info('api', 'Conversation created', { id: conv.id });
 			} catch (error) {
-				logger.error('api', 'Failed to create server conversation', { error });
-				toastStore.error('Failed to create conversation on server');
+				logger.error('api', 'Failed to create conversation', { error });
+				toastStore.error('Failed to create conversation');
 				return;
 			}
 		}
@@ -67,16 +59,16 @@
 		logger.nav.navigate('/', `/c/${conv.id}`, { conversationId: conv.id });
 
 		// Store conversation id for navigation after streaming
-		const localConversationId = conv.id;
+		const conversationId = conv.id;
 
-		// Stream the response
-		logger.api.request('POST', '/responses', { conversationId: serverConvId });
+		// Stream the response (conv.id is now the server ID directly)
+		logger.api.request('POST', '/responses', { conversationId });
 
 		await sendMessageStreaming(
 			text,
 			{
 				model: settingsStore.selectedModel,
-				conversationId: serverConvId,
+				conversationId,
 				tools: settingsStore.filterTools([
 					{ type: 'web_search' },
 					{ type: 'code_interpreter' },
@@ -104,7 +96,7 @@
 					isStreaming = false;
 					abortController = null;
 					// Navigate after streaming completes to ensure all callbacks have run
-					goto(`/c/${localConversationId}`);
+					goto(`/c/${conversationId}`);
 				},
 				onError: (error) => {
 					// Don't show error toast for user-initiated cancellation
@@ -114,7 +106,7 @@
 						isStreaming = false;
 						abortController = null;
 						// Navigate after cancellation
-						goto(`/c/${localConversationId}`);
+						goto(`/c/${conversationId}`);
 						return;
 					}
 
@@ -129,7 +121,7 @@
 					isStreaming = false;
 					abortController = null;
 					// Navigate after error
-					goto(`/c/${localConversationId}`);
+					goto(`/c/${conversationId}`);
 				}
 			}
 		);
