@@ -54,6 +54,8 @@ export interface StreamingCallbacks {
 	onReasoning?: (text: string) => void;
 	/** Called when function call arguments delta is received (for streaming tool inputs) */
 	onFunctionCallArgumentsDelta?: (itemId: string, argumentsDelta: string) => void;
+	/** Called when a conversation title is generated (for new conversations) */
+	onTitleGenerated?: (conversationId: string, title: string) => void;
 }
 
 /**
@@ -145,8 +147,15 @@ export async function sendMessageStreaming(
 		attachments = [],
 		instructions
 	} = options;
-	const { onDelta, onComplete, onError, onOutputItem, onReasoning, onFunctionCallArgumentsDelta } =
-		callbacks;
+	const {
+		onDelta,
+		onComplete,
+		onError,
+		onOutputItem,
+		onReasoning,
+		onFunctionCallArgumentsDelta,
+		onTitleGenerated
+	} = callbacks;
 
 	const baseUrl = getApiBaseUrl();
 	const url = `${baseUrl}/responses`;
@@ -255,6 +264,18 @@ export async function sendMessageStreaming(
 			if (event.type === 'response.function_call_arguments.delta' && onFunctionCallArgumentsDelta) {
 				const deltaEvent = event as { item_id: string; delta: string };
 				onFunctionCallArgumentsDelta(deltaEvent.item_id, deltaEvent.delta);
+			}
+
+			// Handle conversation title generated events (for new conversations)
+			// This is a custom event type not in the SDK, so we cast to unknown first
+			if ((event as { type: string }).type === 'conversation.title_generated' && onTitleGenerated) {
+				const titleEvent = event as unknown as { conversation_id: string; title: string };
+				logger.info('streaming', 'Conversation title generated', {
+					requestId,
+					conversationId: titleEvent.conversation_id,
+					title: titleEvent.title
+				});
+				onTitleGenerated(titleEvent.conversation_id, titleEvent.title);
 			}
 
 			// Track response ID from created event

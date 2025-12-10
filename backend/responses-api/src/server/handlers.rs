@@ -318,7 +318,8 @@ pub async fn list_models(State(state): State<Arc<AppState>>) -> impl IntoRespons
                 "created": 1234567890,
                 "owned_by": m.owned_by,
                 "supports_vision": m.supports_vision,
-                "supported_tools": m.supported_tools
+                "supported_tools": m.supported_tools,
+                "capabilities": m.capabilities
             })
         })
         .collect();

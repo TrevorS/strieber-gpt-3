@@ -128,6 +128,9 @@
 						delta
 					);
 				},
+				onTitleGenerated: (convId, title) => {
+					conversationStore.updateTitleLocal(convId, title);
+				},
 				onComplete: () => {
 					logger.api.streamComplete(
 						conversationId,
@@ -224,6 +227,9 @@
 						delta
 					);
 				},
+				onTitleGenerated: (convId, title) => {
+					conversationStore.updateTitleLocal(convId, title);
+				},
 				onComplete: () => {
 					logger.api.streamComplete(
 						conversationId,
@@ -315,6 +321,9 @@
 						itemId,
 						delta
 					);
+				},
+				onTitleGenerated: (convId, title) => {
+					conversationStore.updateTitleLocal(convId, title);
 				},
 				onComplete: () => {
 					logger.api.streamComplete(

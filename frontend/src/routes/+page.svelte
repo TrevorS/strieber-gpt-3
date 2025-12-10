@@ -90,6 +90,9 @@
 				onFunctionCallArgumentsDelta: (itemId, delta) => {
 					conversationStore.updateFunctionCallArguments(conv!.id, assistantMessage.id, itemId, delta);
 				},
+				onTitleGenerated: (convId, title) => {
+					conversationStore.updateTitleLocal(convId, title);
+				},
 				onComplete: () => {
 					logger.api.streamComplete(conv!.id, conversationStore.get(conv!.id)?.messages.find(m => m.id === assistantMessage.id)?.content.length ?? 0);
 					conversationStore.setMessageStreaming(conv!.id, assistantMessage.id, false);

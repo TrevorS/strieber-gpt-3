@@ -90,6 +90,9 @@ pub trait ConversationStore: Send + Sync + 'static {
 
     /// Clean up expired conversations.
     fn cleanup_expired(&self);
+
+    /// Update the conversation title.
+    fn update_title(&self, id: &str, title: &str) -> Result<(), String>;
 }
 
 // ============================================================================
@@ -298,6 +301,23 @@ impl ConversationStore for InMemoryConversationStore {
 
     fn cleanup_expired(&self) {
         self.conversations.retain(|_, v| !v.is_expired());
+    }
+
+    fn update_title(&self, id: &str, title: &str) -> Result<(), String> {
+        if let Some(mut stored) = self.conversations.get_mut(id) {
+            let metadata = stored
+                .conversation
+                .metadata
+                .get_or_insert_with(Metadata::new);
+            // Get the inner HashMap and insert the title
+            // We need to replace the whole metadata since Metadata is a newtype
+            let mut map = metadata.inner().clone();
+            map.insert("title".to_string(), title.to_string());
+            stored.conversation.metadata = Some(Metadata::from(map));
+            Ok(())
+        } else {
+            Err(format!("Conversation not found: {}", id))
+        }
     }
 }
 

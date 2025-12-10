@@ -847,6 +847,50 @@ async fn run_streaming_loop(
         // Append input and output to conversation if using conversation API
         if let (Some(conv_store), Some(conv_id)) = (&conversation_store, &conversation_id) {
             append_to_conversation(conv_store, conv_id, &req, &final_response.output);
+
+            // Generate title for new conversations (first exchange only)
+            if super::title_generator::should_generate_title(conv_store, conv_id) {
+                if let Some(task_model) = super::title_generator::find_task_model(&config.models) {
+                    let user_msg = super::title_generator::extract_first_user_message(&req.input);
+                    let assistant_resp =
+                        super::title_generator::extract_assistant_response(&final_response.output);
+
+                    match super::title_generator::generate_title(
+                        task_model,
+                        &http,
+                        &user_msg,
+                        &assistant_resp,
+                    )
+                    .await
+                    {
+                        Ok(title) => {
+                            // Update conversation title in store
+                            if let Err(e) = conv_store.update_title(conv_id, &title) {
+                                tracing::warn!(
+                                    conversation_id = %conv_id,
+                                    error = %e,
+                                    "Failed to update conversation title in store"
+                                );
+                            }
+                            // Emit title event to frontend
+                            send(
+                                &tx,
+                                SseEvent::conversation_title_generated(conv_id.clone(), title),
+                            )
+                            .await?;
+                        }
+                        Err(e) => {
+                            tracing::warn!(
+                                conversation_id = %conv_id,
+                                error = %e,
+                                "Failed to generate conversation title"
+                            );
+                        }
+                    }
+                } else {
+                    tracing::debug!("No task model configured, skipping title generation");
+                }
+            }
         }
 
         send(&tx, SseEvent::response_completed(final_response.clone())).await?;
