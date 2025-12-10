@@ -8,6 +8,7 @@ mod chat;
 mod common;
 mod conversation;
 mod events;
+pub mod item_expansion;
 mod request;
 mod response;
 mod tools;

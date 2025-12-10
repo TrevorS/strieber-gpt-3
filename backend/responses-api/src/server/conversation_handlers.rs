@@ -16,6 +16,7 @@ use crate::models::{
     CreateConversationRequest, CreateItemsQuery, CreateItemsRequest, GetConversationQuery,
     GetItemQuery, ItemsListQuery, ListResponse, PaginationQuery, SortOrder,
     UpdateConversationRequest,
+    item_expansion::{ExpansionOptions, expand_item, expand_items},
 };
 use crate::state::ConversationStore;
 
@@ -159,16 +160,17 @@ pub async fn list_items(
         .list_items(&conversation_id, &pagination)
         .ok_or_else(|| not_found_error("Conversation", &conversation_id))?;
 
-    // Note: The include parameter is parsed and validated, but actual expansion
-    // of nested content will depend on the item types stored. Currently we return
-    // items as-is; expansion logic will be added as we implement the corresponding
-    // content types (input_image, logprobs, etc.)
-
+    // Expand items based on include parameter
+    let mut list = list;
     if query.include.is_some() {
+        let options = ExpansionOptions::from(&query);
+        let base_url = get_base_url();
+        expand_items(&mut list.data, &options, &state.containers, &base_url);
+
         tracing::debug!(
             conversation_id = %conversation_id,
             include = ?query.include,
-            "Items list requested with include parameter"
+            "Items list expanded with include parameter"
         );
     }
 
@@ -202,14 +204,17 @@ pub async fn create_items(
         .add_items(&conversation_id, req.items)
         .ok_or_else(|| not_found_error("Conversation", &conversation_id))?;
 
-    // Note: The include parameter is parsed and validated, but actual expansion
-    // of nested content will depend on the item types stored.
-
+    // Expand items based on include parameter
+    let mut list = list;
     if query.include.is_some() {
+        let options = ExpansionOptions::from_create_items_query(&query);
+        let base_url = get_base_url();
+        expand_items(&mut list.data, &options, &state.containers, &base_url);
+
         tracing::debug!(
             conversation_id = %conversation_id,
             include = ?query.include,
-            "Items created with include parameter"
+            "Items created with include parameter expansion"
         );
     }
 
@@ -249,15 +254,18 @@ pub async fn get_item(
         .get_item(&conversation_id, &item_id)
         .ok_or_else(|| not_found_error("Item", &item_id))?;
 
-    // Note: The include parameter is parsed and validated, but actual expansion
-    // of nested content will depend on the item type.
-
+    // Expand item based on include parameter
+    let mut item = item;
     if query.include.is_some() {
+        let options = ExpansionOptions::from_get_item_query(&query);
+        let base_url = get_base_url();
+        expand_item(&mut item, &options, &state.containers, &base_url);
+
         tracing::debug!(
             conversation_id = %conversation_id,
             item_id = %item_id,
             include = ?query.include,
-            "Item retrieved with include parameter"
+            "Item retrieved with include parameter expansion"
         );
     }
 
@@ -314,4 +322,10 @@ fn not_found_error(resource: &str, id: &str) -> ApiError {
             }
         })),
     )
+}
+
+/// Get the base URL for expanding file references.
+/// In production, this should come from configuration.
+fn get_base_url() -> String {
+    std::env::var("RESPONSES_API_BASE_URL").unwrap_or_else(|_| "http://localhost:8000".to_string())
 }
