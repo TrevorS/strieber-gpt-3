@@ -86,7 +86,7 @@ describe('sendMessageStreaming', () => {
 
 			await sendMessageStreaming(
 				'Hello',
-				{ model: 'test-model', previousResponseId: 'prev_123' },
+				{ model: 'test-model', conversationId: 'conv_123' },
 				{ onDelta: vi.fn(), onComplete: vi.fn(), onError: vi.fn() }
 			);
 
@@ -98,7 +98,7 @@ describe('sendMessageStreaming', () => {
 					body: JSON.stringify({
 						model: 'test-model',
 						input: 'Hello',
-						previous_response_id: 'prev_123',
+						conversation: { id: 'conv_123' },
 						stream: true,
 						store: true,
 						tools: []

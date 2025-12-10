@@ -24,3 +24,4 @@ export {
 	StreamParseError
 } from './streaming';
 export * from './types';
+export * from './conversations';

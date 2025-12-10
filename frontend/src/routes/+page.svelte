@@ -4,7 +4,7 @@
 	import { ChatInput, MessageList } from '$lib/components/chat';
 	import { ModelSelector, SettingsPanel } from '$lib/components/settings';
 	import { Button } from '$lib/components/ui/button';
-	import { sendMessageStreaming } from '$lib/api';
+	import { sendMessageStreaming, createConversation as createServerConversation } from '$lib/api';
 	import { conversationStore, settingsStore, toastStore } from '$lib/stores';
 	import { logger } from '$lib/utils/logger';
 	import type { Attachment } from '$lib/utils/files';
@@ -37,6 +37,21 @@
 			conv = conversationStore.create();
 		}
 
+		// Create server-side conversation if needed
+		let serverConvId = conv.serverConversationId;
+		if (!serverConvId) {
+			try {
+				const serverConv = await createServerConversation();
+				serverConvId = serverConv.id;
+				conversationStore.setServerConversationId(conv.id, serverConv.id);
+				logger.info('api', 'Server conversation created', { localId: conv.id, serverId: serverConvId });
+			} catch (error) {
+				logger.error('api', 'Failed to create server conversation', { error });
+				toastStore.error('Failed to create conversation on server');
+				return;
+			}
+		}
+
 		// Add user message with attachments
 		conversationStore.addMessage(conv.id, 'user', text, attachments);
 
@@ -52,16 +67,16 @@
 		logger.nav.navigate('/', `/c/${conv.id}`, { conversationId: conv.id });
 
 		// Store conversation id for navigation after streaming
-		const conversationId = conv.id;
+		const localConversationId = conv.id;
 
 		// Stream the response
-		logger.api.request('POST', '/responses', { previousResponseId: conv.lastResponseId });
+		logger.api.request('POST', '/responses', { conversationId: serverConvId });
 
 		await sendMessageStreaming(
 			text,
 			{
 				model: settingsStore.selectedModel,
-				previousResponseId: conv.lastResponseId,
+				conversationId: serverConvId,
 				tools: settingsStore.filterTools([
 					{ type: 'web_search' },
 					{ type: 'code_interpreter' },
@@ -83,14 +98,13 @@
 				onFunctionCallArgumentsDelta: (itemId, delta) => {
 					conversationStore.updateFunctionCallArguments(conv!.id, assistantMessage.id, itemId, delta);
 				},
-				onComplete: (responseId) => {
+				onComplete: () => {
 					logger.api.streamComplete(conv!.id, conversationStore.get(conv!.id)?.messages.find(m => m.id === assistantMessage.id)?.content.length ?? 0);
-					conversationStore.updateLastResponseId(conv!.id, responseId);
 					conversationStore.setMessageStreaming(conv!.id, assistantMessage.id, false);
 					isStreaming = false;
 					abortController = null;
 					// Navigate after streaming completes to ensure all callbacks have run
-					goto(`/c/${conversationId}`);
+					goto(`/c/${localConversationId}`);
 				},
 				onError: (error) => {
 					// Don't show error toast for user-initiated cancellation
@@ -100,7 +114,7 @@
 						isStreaming = false;
 						abortController = null;
 						// Navigate after cancellation
-						goto(`/c/${conversationId}`);
+						goto(`/c/${localConversationId}`);
 						return;
 					}
 
@@ -115,7 +129,7 @@
 					isStreaming = false;
 					abortController = null;
 					// Navigate after error
-					goto(`/c/${conversationId}`);
+					goto(`/c/${localConversationId}`);
 				}
 			}
 		);

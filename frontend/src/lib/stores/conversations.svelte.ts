@@ -202,20 +202,28 @@ class ConversationStore {
 	}
 
 	/**
-	 * Update the lastResponseId for context chaining.
+	 * Set the server-side conversation ID for API context chaining.
 	 */
-	updateLastResponseId(conversationId: string, responseId: string): void {
+	setServerConversationId(conversationId: string, serverConversationId: string): void {
 		const conv = this.conversations.find((c) => c.id === conversationId);
 		if (conv) {
-			const oldResponseId = conv.lastResponseId;
-			conv.lastResponseId = responseId;
+			const oldId = conv.serverConversationId;
+			conv.serverConversationId = serverConversationId;
 			conv.updatedAt = Date.now();
-			logger.info('store', 'Context chain updated', {
+			logger.info('store', 'Server conversation ID set', {
 				conversationId,
-				oldResponseId,
-				newResponseId: responseId
+				oldServerConversationId: oldId,
+				newServerConversationId: serverConversationId
 			});
 		}
+	}
+
+	/**
+	 * Get the server conversation ID for a local conversation.
+	 */
+	getServerConversationId(conversationId: string): string | null {
+		const conv = this.conversations.find((c) => c.id === conversationId);
+		return conv?.serverConversationId ?? null;
 	}
 
 	/**

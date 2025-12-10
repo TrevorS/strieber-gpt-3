@@ -5,7 +5,7 @@
  * - CRUD operations (create, read, update, delete)
  * - Active conversation tracking
  * - Message operations
- * - lastResponseId tracking
+ * - serverConversationId tracking
  * - Edge cases
  */
 
@@ -30,7 +30,7 @@ describe('conversationStore', () => {
 			expect(conv.id).toBeDefined();
 			expect(conv.title).toBe('New Chat');
 			expect(conv.messages).toEqual([]);
-			expect(conv.lastResponseId).toBeNull();
+			expect(conv.serverConversationId).toBeNull();
 			expect(conversationStore.conversations).toHaveLength(1);
 		});
 
@@ -342,27 +342,46 @@ describe('conversationStore', () => {
 	});
 
 	// ============================================================================
-	// Response ID Tracking
+	// Server Conversation ID Tracking
 	// ============================================================================
 
-	describe('updateLastResponseId', () => {
-		it('should update lastResponseId for context chaining', () => {
+	describe('setServerConversationId', () => {
+		it('should set serverConversationId for API context chaining', () => {
 			const conv = conversationStore.create();
 
-			conversationStore.updateLastResponseId(conv.id, 'resp_12345');
+			conversationStore.setServerConversationId(conv.id, 'conv_12345');
 
 			// Fetch current state from store
 			const current = conversationStore.get(conv.id)!;
-			expect(current.lastResponseId).toBe('resp_12345');
+			expect(current.serverConversationId).toBe('conv_12345');
 		});
 
 		it('should update updatedAt timestamp', () => {
 			const conv = conversationStore.create();
 			const originalUpdatedAt = conv.updatedAt;
 
-			conversationStore.updateLastResponseId(conv.id, 'resp_12345');
+			conversationStore.setServerConversationId(conv.id, 'conv_12345');
 
 			expect(conv.updatedAt).toBeGreaterThanOrEqual(originalUpdatedAt);
+		});
+	});
+
+	describe('getServerConversationId', () => {
+		it('should return the server conversation ID', () => {
+			const conv = conversationStore.create();
+			conversationStore.setServerConversationId(conv.id, 'conv_67890');
+
+			expect(conversationStore.getServerConversationId(conv.id)).toBe('conv_67890');
+		});
+
+		it('should return null if no server conversation ID set', () => {
+			const conv = conversationStore.create();
+
+			expect(conversationStore.getServerConversationId(conv.id)).toBeNull();
+		});
+
+		it('should return null for non-existent conversation', () => {
+			expect(conversationStore.getServerConversationId('non-existent')).toBeNull();
 		});
 	});
 
@@ -453,7 +472,7 @@ describe('createConversation helper', () => {
 		expect(conv.id).toBeDefined();
 		expect(conv.title).toBe('New Chat');
 		expect(conv.messages).toEqual([]);
-		expect(conv.lastResponseId).toBeNull();
+		expect(conv.serverConversationId).toBeNull();
 		expect(conv.createdAt).toBeDefined();
 		expect(conv.updatedAt).toBeDefined();
 	});
@@ -461,11 +480,11 @@ describe('createConversation helper', () => {
 	it('should allow overrides', () => {
 		const conv = createConversation({
 			title: 'Custom',
-			lastResponseId: 'resp_123'
+			serverConversationId: 'conv_123'
 		});
 
 		expect(conv.title).toBe('Custom');
-		expect(conv.lastResponseId).toBe('resp_123');
+		expect(conv.serverConversationId).toBe('conv_123');
 	});
 });
 

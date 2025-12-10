@@ -7,7 +7,7 @@
 import type { Conversation } from '$lib/stores/types';
 
 const STORAGE_KEY = 'strieber-conversations';
-const CURRENT_VERSION = 1;
+const CURRENT_VERSION = 2;
 
 /**
  * Schema for stored data

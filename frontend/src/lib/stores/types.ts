@@ -47,8 +47,11 @@ export function generateUUID(): string {
  * A chat conversation containing messages and metadata.
  */
 export interface Conversation {
-	/** Unique identifier (UUID) */
+	/** Unique identifier (UUID) - local ID for client-side */
 	id: string;
+
+	/** Server-side conversation ID (conv_xxx) for Conversations API */
+	serverConversationId: string | null;
 
 	/** Display title (auto-generated or user-edited) */
 	title: string;
@@ -58,9 +61,6 @@ export interface Conversation {
 
 	/** Timestamp when conversation was last updated */
 	updatedAt: number;
-
-	/** Last response ID for context chaining with Responses API */
-	lastResponseId: string | null;
 
 	/** Messages in chronological order */
 	messages: Message[];
@@ -167,10 +167,10 @@ export function createConversation(overrides?: Partial<Conversation>): Conversat
 	const now = Date.now();
 	return {
 		id: generateUUID(),
+		serverConversationId: null,
 		title: 'New Chat',
 		createdAt: now,
 		updatedAt: now,
-		lastResponseId: null,
 		messages: [],
 		...overrides
 	};

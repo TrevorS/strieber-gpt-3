@@ -7,7 +7,7 @@
 	import { ChatInput, MessageList } from '$lib/components/chat';
 	import { ModelSelector, SettingsPanel } from '$lib/components/settings';
 	import { Button } from '$lib/components/ui/button';
-	import { sendMessageStreaming } from '$lib/api';
+	import { sendMessageStreaming, createConversation as createServerConversation } from '$lib/api';
 	import { conversationStore, settingsStore, toastStore } from '$lib/stores';
 	import { logger } from '$lib/utils/logger';
 	import type { Attachment } from '$lib/utils/files';
@@ -58,6 +58,21 @@
 			messageCount: conversation.messages.length
 		});
 
+		// Create server-side conversation if needed
+		let serverConvId = conversation.serverConversationId;
+		if (!serverConvId) {
+			try {
+				const serverConv = await createServerConversation();
+				serverConvId = serverConv.id;
+				conversationStore.setServerConversationId(conversation.id, serverConv.id);
+				logger.info('api', 'Server conversation created', { localId: conversation.id, serverId: serverConvId });
+			} catch (error) {
+				logger.error('api', 'Failed to create server conversation', { error });
+				toastStore.error('Failed to create conversation on server');
+				return;
+			}
+		}
+
 		// Add user message with attachments
 		conversationStore.addMessage(conversation.id, 'user', text, attachments);
 
@@ -70,15 +85,14 @@
 
 		// Stream the response
 		logger.api.request('POST', '/responses', {
-			conversationId: conversation.id,
-			previousResponseId: conversation.lastResponseId
+			conversationId: serverConvId
 		});
 
 		await sendMessageStreaming(
 			text,
 			{
 				model: settingsStore.selectedModel,
-				previousResponseId: conversation.lastResponseId,
+				conversationId: serverConvId,
 				tools: settingsStore.filterTools([
 					{ type: 'web_search' },
 					{ type: 'code_interpreter' },
@@ -105,13 +119,12 @@
 						delta
 					);
 				},
-				onComplete: (responseId) => {
+				onComplete: () => {
 					logger.api.streamComplete(
 						conversation!.id,
 						conversationStore.get(conversation!.id)?.messages.find((m) => m.id === assistantMessage.id)
 							?.content.length ?? 0
 					);
-					conversationStore.updateLastResponseId(conversation!.id, responseId);
 					conversationStore.setMessageStreaming(conversation!.id, assistantMessage.id, false);
 					isStreaming = false;
 					abortController = null;
@@ -151,7 +164,7 @@
 		}
 	}
 
-	function handleRegenerate() {
+	async function handleRegenerate() {
 		if (!conversation || isStreaming) return;
 
 		logger.ui.event('ConversationPage', 'Regenerate response', { conversationId: conversation.id });
@@ -161,6 +174,20 @@
 		if (!userText) {
 			toastStore.error('Cannot regenerate: no message to regenerate');
 			return;
+		}
+
+		// Ensure we have a server conversation
+		let serverConvId = conversation.serverConversationId;
+		if (!serverConvId) {
+			try {
+				const serverConv = await createServerConversation();
+				serverConvId = serverConv.id;
+				conversationStore.setServerConversationId(conversation.id, serverConv.id);
+			} catch (error) {
+				logger.error('api', 'Failed to create server conversation', { error });
+				toastStore.error('Failed to create conversation on server');
+				return;
+			}
 		}
 
 		// Re-send the message (don't add user message again, just create new assistant message)
@@ -174,7 +201,7 @@
 			userText,
 			{
 				model: settingsStore.selectedModel,
-				previousResponseId: conversation.lastResponseId,
+				conversationId: serverConvId,
 				tools: settingsStore.filterTools([
 					{ type: 'web_search' },
 					{ type: 'code_interpreter' },
@@ -200,13 +227,12 @@
 						delta
 					);
 				},
-				onComplete: (responseId) => {
+				onComplete: () => {
 					logger.api.streamComplete(
 						conversation!.id,
 						conversationStore.get(conversation!.id)?.messages.find((m) => m.id === assistantMessage.id)
 							?.content.length ?? 0
 					);
-					conversationStore.updateLastResponseId(conversation!.id, responseId);
 					conversationStore.setMessageStreaming(conversation!.id, assistantMessage.id, false);
 					isStreaming = false;
 					abortController = null;
@@ -238,7 +264,7 @@
 		);
 	}
 
-	function handleEdit(messageId: string, newContent: string) {
+	async function handleEdit(messageId: string, newContent: string) {
 		if (!conversation || isStreaming) return;
 
 		logger.ui.event('ConversationPage', 'Edit message', {
@@ -246,6 +272,20 @@
 			messageId,
 			newContentLength: newContent.length
 		});
+
+		// Ensure we have a server conversation
+		let serverConvId = conversation.serverConversationId;
+		if (!serverConvId) {
+			try {
+				const serverConv = await createServerConversation();
+				serverConvId = serverConv.id;
+				conversationStore.setServerConversationId(conversation.id, serverConv.id);
+			} catch (error) {
+				logger.error('api', 'Failed to create server conversation', { error });
+				toastStore.error('Failed to create conversation on server');
+				return;
+			}
+		}
 
 		// Update the message content and mark as edited
 		conversationStore.updateMessage(conversation.id, messageId, newContent);
@@ -265,7 +305,7 @@
 			newContent,
 			{
 				model: settingsStore.selectedModel,
-				previousResponseId: conversation.lastResponseId,
+				conversationId: serverConvId,
 				tools: settingsStore.filterTools([
 					{ type: 'web_search' },
 					{ type: 'code_interpreter' },
@@ -291,13 +331,12 @@
 						delta
 					);
 				},
-				onComplete: (responseId) => {
+				onComplete: () => {
 					logger.api.streamComplete(
 						conversation!.id,
 						conversationStore.get(conversation!.id)?.messages.find((m) => m.id === assistantMessage.id)
 							?.content.length ?? 0
 					);
-					conversationStore.updateLastResponseId(conversation!.id, responseId);
 					conversationStore.setMessageStreaming(conversation!.id, assistantMessage.id, false);
 					isStreaming = false;
 					abortController = null;

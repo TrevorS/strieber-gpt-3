@@ -26,8 +26,8 @@ export interface ToolDefinition {
 export interface StreamingOptions {
 	/** Model to use for generation */
 	model?: string;
-	/** Previous response ID for context chaining */
-	previousResponseId?: string | null;
+	/** Server-side conversation ID (conv_xxx) for context chaining */
+	conversationId?: string | null;
 	/** AbortSignal for request cancellation */
 	signal?: AbortSignal;
 	/** Tools to enable for this request */
@@ -139,7 +139,7 @@ export async function sendMessageStreaming(
 ): Promise<void> {
 	const {
 		model = 'gpt-oss-120b',
-		previousResponseId = null,
+		conversationId = null,
 		signal,
 		tools = [],
 		attachments = [],
@@ -161,7 +161,7 @@ export async function sendMessageStreaming(
 		requestId,
 		model,
 		inputLength: input.length,
-		previousResponseId,
+		conversationId,
 		tools: tools.length,
 		attachments: attachments.length,
 		hasImages,
@@ -171,7 +171,7 @@ export async function sendMessageStreaming(
 	// Extra debug logging for context chain investigation
 	logger.info('api', '=== CONTEXT CHAIN DEBUG ===', {
 		requestId,
-		previousResponseId: previousResponseId ?? 'null (new conversation)',
+		conversationId: conversationId ?? 'null (new conversation)',
 		inputPreview: input.length > 50 ? `${input.slice(0, 50)}...` : input,
 		attachments: attachments.map((a) => ({ name: a.name, type: a.type }))
 	});
@@ -185,7 +185,7 @@ export async function sendMessageStreaming(
 			body: JSON.stringify({
 				model,
 				input: formattedInput,
-				previous_response_id: previousResponseId,
+				...(conversationId && { conversation: { id: conversationId } }),
 				stream: true,
 				store: true,
 				tools,
@@ -264,8 +264,8 @@ export async function sendMessageStreaming(
 				logger.info('api', '=== RESPONSE ID RECEIVED ===', {
 					requestId,
 					responseId,
-					previousResponseId: previousResponseId ?? 'null',
-					note: 'This responseId will become previousResponseId for next message'
+					conversationId: conversationId ?? 'null',
+					note: 'Response appended to server-side conversation'
 				});
 			}
 
@@ -383,7 +383,7 @@ export async function sendMessage(
 	input: string,
 	options: StreamingOptions = {}
 ): Promise<{ text: string; responseId: string }> {
-	const { model = 'gpt-oss-120b', previousResponseId = null, signal } = options;
+	const { model = 'gpt-oss-120b', conversationId = null, signal } = options;
 
 	const baseUrl = getApiBaseUrl();
 	const url = `${baseUrl}/responses`;
@@ -394,7 +394,7 @@ export async function sendMessage(
 		requestId,
 		model,
 		inputLength: input.length,
-		previousResponseId,
+		conversationId,
 		stream: false
 	});
 
@@ -406,7 +406,7 @@ export async function sendMessage(
 		body: JSON.stringify({
 			model,
 			input,
-			previous_response_id: previousResponseId,
+			...(conversationId && { conversation: { id: conversationId } }),
 			stream: false,
 			store: true
 		}),

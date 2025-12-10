@@ -20,7 +20,7 @@ describe('storage utilities', () => {
 			saveConversations(conversations, null);
 
 			const stored = JSON.parse(localStorage.getItem('strieber-conversations')!);
-			expect(stored.version).toBe(1);
+			expect(stored.version).toBe(2);
 			expect(stored.conversations).toHaveLength(1);
 			expect(stored.conversations[0].title).toBe('Test Chat');
 		});
@@ -115,13 +115,13 @@ describe('storage utilities', () => {
 			expect(result?.conversations[0].messages[1].content).toBe('Hi there!');
 		});
 
-		it('should preserve lastResponseId', () => {
+		it('should preserve serverConversationId', () => {
 			const conv = createConversation();
-			conv.lastResponseId = 'resp_abc123';
+			conv.serverConversationId = 'conv_abc123';
 			saveConversations([conv], conv.id);
 
 			const result = loadConversations();
-			expect(result?.conversations[0].lastResponseId).toBe('resp_abc123');
+			expect(result?.conversations[0].serverConversationId).toBe('conv_abc123');
 		});
 
 		it('should preserve timestamps', () => {
