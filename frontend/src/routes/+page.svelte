@@ -18,30 +18,26 @@
 		hasScrolled = scrollTop > 0;
 	}
 
-	// Explicitly track activeId to ensure reactivity when it changes to null
-	let activeId = $derived(conversationStore.activeId);
-	let activeConversation = $derived(activeId ? conversationStore.get(activeId) : undefined);
-	let messages = $derived(activeConversation?.messages ?? []);
+	// Home page always shows a blank chat - no active conversation
+	// When user submits, we create a new conversation and navigate to /c/[id]
+	let messages: typeof conversationStore.conversations[0]['messages'] = [];
 
 	async function handleSubmit(text: string, attachments: Attachment[]) {
 		logger.ui.event('HomePage', 'handleSubmit called', {
 			textLength: text.length,
-			attachmentCount: attachments.length,
-			hasActiveConversation: !!activeConversation
+			attachmentCount: attachments.length
 		});
 
-		// Create conversation on server if needed (store.create() now calls API)
-		let conv = activeConversation;
-		if (!conv) {
-			logger.info('ui', 'Creating new conversation for message');
-			try {
-				conv = await conversationStore.create();
-				logger.info('api', 'Conversation created', { id: conv.id });
-			} catch (error) {
-				logger.error('api', 'Failed to create conversation', { error });
-				toastStore.error('Failed to create conversation');
-				return;
-			}
+		// Always create a new conversation on the home page
+		let conv;
+		logger.info('ui', 'Creating new conversation for message');
+		try {
+			conv = await conversationStore.create();
+			logger.info('api', 'Conversation created', { id: conv.id });
+		} catch (error) {
+			logger.error('api', 'Failed to create conversation', { error });
+			toastStore.error('Failed to create conversation');
+			return;
 		}
 
 		// Add user message with attachments
@@ -57,6 +53,7 @@
 		// Navigate to the conversation URL immediately so user sees the URL change
 		// The streaming callbacks will update the conversation store, which is shared
 		logger.nav.navigate('/', `/c/${conv.id}`, { conversationId: conv.id });
+		goto(`/c/${conv.id}`);
 
 		// Store conversation id for navigation after streaming
 		const conversationId = conv.id;

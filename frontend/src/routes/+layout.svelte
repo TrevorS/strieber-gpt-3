@@ -10,6 +10,7 @@
 	import { ConversationList } from '$lib/components/sidebar';
 	import { Button } from '$lib/components/ui/button';
 	import { ToastContainer } from '$lib/components/ui/toast';
+	import * as Tooltip from '$lib/components/ui/tooltip';
 	import { Menu, PanelLeftClose, PanelLeft, Plus, MessageSquare } from 'lucide-svelte';
 	import { logger } from '$lib/utils/logger';
 
@@ -88,6 +89,7 @@
 	function handleSelect(id: string) {
 		logger.ui.event('Sidebar', 'Conversation selected', { id });
 		closeSidebar();
+		conversationStore.setActive(id);
 		goto(`/c/${id}`);
 	}
 
@@ -185,6 +187,9 @@
 <!-- Global keyboard shortcuts -->
 <svelte:window onkeydown={handleKeydown} />
 
+<!-- Tooltip Provider for bits-ui tooltips -->
+<Tooltip.Provider>
+
 <!-- Skip to main content link for keyboard users -->
 <a
 	href="#main-content"
@@ -258,27 +263,43 @@
 		<!-- Collapsed: Icon rail -->
 		{#if settingsStore.sidebarCollapsed}
 			<div class="flex-1 flex flex-col items-center py-3 gap-2 overflow-hidden">
-				<Button
-					variant="ghost"
-					size="icon"
-					onclick={handleNew}
-					aria-label="New chat"
-					class="w-10 h-10"
-					data-testid="new-chat-icon"
-				>
-					<Plus class="h-5 w-5" />
-				</Button>
+				<Tooltip.Root delayDuration={300}>
+					<Tooltip.Trigger>
+						{#snippet child({ props })}
+							<Button
+								{...props}
+								variant="ghost"
+								size="icon"
+								onclick={handleNew}
+								class="w-10 h-10"
+								data-testid="new-chat-icon"
+							>
+								<Plus class="h-5 w-5" />
+							</Button>
+						{/snippet}
+					</Tooltip.Trigger>
+					<Tooltip.Content side="right">New chat</Tooltip.Content>
+				</Tooltip.Root>
 				<!-- Recent conversation indicators -->
 				{#each conversationStore.sorted.slice(0, 5) as conv (conv.id)}
-					<Button
-						variant={conversationStore.activeId === conv.id ? 'secondary' : 'ghost'}
-						size="icon"
-						onclick={() => handleSelect(conv.id)}
-						aria-label={conv.title}
-						class="w-10 h-10"
-					>
-						<MessageSquare class="h-4 w-4" />
-					</Button>
+					<Tooltip.Root delayDuration={300}>
+						<Tooltip.Trigger>
+							{#snippet child({ props })}
+								<Button
+									{...props}
+									variant={conversationStore.activeId === conv.id ? 'secondary' : 'ghost'}
+									size="icon"
+									onclick={() => handleSelect(conv.id)}
+									class="w-10 h-10"
+								>
+									<MessageSquare class="h-4 w-4" />
+								</Button>
+							{/snippet}
+						</Tooltip.Trigger>
+						<Tooltip.Content side="right" class="max-w-xs">
+							{conv.title}
+						</Tooltip.Content>
+					</Tooltip.Root>
 				{/each}
 			</div>
 		{:else}
@@ -303,3 +324,5 @@
 </div>
 
 <ToastContainer />
+
+</Tooltip.Provider>

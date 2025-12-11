@@ -1,5 +1,4 @@
 <script lang="ts">
-	import { untrack } from 'svelte';
 	import { goto, beforeNavigate } from '$app/navigation';
 	import { page } from '$app/state';
 	import { browser } from '$app/environment';
@@ -27,44 +26,87 @@
 
 	// Track navigation to prevent effect from re-setting activeId during navigation away
 	let isNavigatingAway = $state(false);
+	// Track if conversation existed on initial load (to distinguish "not found" from "deleted")
+	let conversationExistedOnLoad = false;
+	// Track if we've already initiated a redirect to prevent infinite loop
+	let hasRedirected = false;
 	beforeNavigate(() => {
 		isNavigatingAway = true;
 	});
 
 	// Track if we're loading items
 	let isLoadingItems = $state(false);
+	// Track if we've attempted to load items
+	let loadItemsAttempted = $state(false);
 
-	// Set active and load items if needed
+	// Effect to load items when navigating to a conversation after page refresh.
+	// Uses polling to check for store loading completion since class-based $state
+	// may not trigger effects reliably across module boundaries.
 	$effect(() => {
-		if (browser && !isNavigatingAway) {
-			const convId = page.params.id;
+		const convId = page.params.id;
 
-			// Wait for store to finish initial loading before checking if conversation exists
-			if (conversationStore.isLoading) {
-				logger.debug('ui', 'Waiting for conversations to load', { id: convId });
-				return;
+		if (!browser || isNavigatingAway || hasRedirected || !convId) return;
+
+		// Start polling for store to finish loading
+		const checkAndLoad = () => {
+			const isLoading = conversationStore.isLoading;
+			const convCount = conversationStore.conversations.length;
+
+			logger.info('ui', 'Poll check', { id: convId, isLoading, convCount });
+
+			if (isLoading) {
+				return false; // Keep polling
 			}
 
-			if (!conversation) {
-				// Conversation not found - might have expired or server restarted
-				logger.warn('ui', 'Conversation not found', { id: convId });
-				toastStore.warning('Conversation not found');
-				goto('/');
-			} else {
-				const currentActiveId = untrack(() => conversationStore.activeId);
-				if (currentActiveId !== conversation.id) {
-					conversationStore.setActive(conversation.id);
-				}
+			const conv = conversationStore.get(convId);
 
-				// Load items from server if conversation has no messages
-				// (This happens after page refresh - metadata is loaded but not items)
-				if (convId && conversation.messages.length === 0 && !isLoadingItems) {
-					isLoadingItems = true;
-					conversationStore.loadItems(convId).finally(() => {
-						isLoadingItems = false;
-					});
+			if (!conv) {
+				if (!conversationExistedOnLoad) {
+					logger.warn('ui', 'Conversation not found on initial load', { id: convId });
+					toastStore.warning('Conversation not found');
+					hasRedirected = true;
+					goto('/');
 				}
+				return true; // Stop polling
 			}
+
+			conversationExistedOnLoad = true;
+
+			if (conversationStore.activeId !== conv.id) {
+				conversationStore.setActive(conv.id);
+			}
+
+			// Load items from server if conversation has no messages
+			logger.debug('ui', 'Checking if items need loading', {
+				id: convId,
+				messageCount: conv.messages.length,
+				isLoadingItems,
+				loadItemsAttempted
+			});
+
+			if (convId && conv.messages.length === 0 && !isLoadingItems && !loadItemsAttempted) {
+				logger.info('ui', 'Loading items for conversation', { id: convId });
+				isLoadingItems = true;
+				loadItemsAttempted = true;
+				conversationStore.loadItems(convId).finally(() => {
+					isLoadingItems = false;
+				});
+			}
+
+			return true; // Stop polling
+		};
+
+		// Try immediately
+		if (!checkAndLoad()) {
+			// If store is still loading, poll until it's ready
+			const interval = setInterval(() => {
+				if (checkAndLoad()) {
+					clearInterval(interval);
+				}
+			}, 50);
+
+			// Cleanup on effect re-run or component unmount
+			return () => clearInterval(interval);
 		}
 	});
 

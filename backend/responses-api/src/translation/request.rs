@@ -35,6 +35,20 @@ pub fn to_chat_completion(
         messages.extend(input_to_messages(&req.input));
     }
 
+    // 3. GUARD: Ensure at least one message exists for LLM template
+    // Some models crash when messages array is empty (template accesses messages[0])
+    if messages.is_empty() {
+        messages.push(ChatMessage {
+            role: ChatRole::System,
+            content: Some(ChatContent::Text(
+                "You are a helpful assistant.".to_string(),
+            )),
+            reasoning_content: None,
+            tool_calls: None,
+            tool_call_id: None,
+        });
+    }
+
     // 4. Convert tools
     let tools = if req.tools.is_empty() {
         None

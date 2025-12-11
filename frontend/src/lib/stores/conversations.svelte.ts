@@ -113,7 +113,14 @@ class ConversationStore {
 			const itemList = await listItems(conversationId, { limit: 100, order: 'asc' });
 			if (itemList.data && itemList.data.length > 0) {
 				const messages = this.itemsToMessages(itemList.data);
-				conv.messages = messages;
+				// Replace the conversation object in the array to trigger Svelte 5 reactivity
+				// (mutating conv.messages in place doesn't trigger $derived updates)
+				const index = this.conversations.findIndex((c) => c.id === conversationId);
+				if (index !== -1) {
+					this.conversations[index] = { ...conv, messages };
+					// Force Svelte 5 reactivity for $derived values across modules
+					this.conversations = [...this.conversations];
+				}
 				logger.info('persistence', 'Items loaded for conversation', {
 					conversationId,
 					itemCount: itemList.data.length,
@@ -303,6 +310,8 @@ class ConversationStore {
 	setActive(id: string | null): void {
 		const oldId = this.activeId;
 		this.activeId = id;
+		// Force Svelte 5 reactivity for $derived values across modules
+		this.conversations = [...this.conversations];
 		logger.store.action('setActive', { oldActiveId: oldId, newActiveId: id });
 	}
 
@@ -376,25 +385,38 @@ class ConversationStore {
 
 	/**
 	 * Update a message's content (used for streaming).
+	 * Uses array replacement to trigger Svelte 5 reactivity for $derived values.
 	 */
 	updateMessageContent(conversationId: string, messageId: string, content: string): void {
-		const conv = this.conversations.find((c) => c.id === conversationId);
-		if (!conv) {
+		const convIndex = this.conversations.findIndex((c) => c.id === conversationId);
+		if (convIndex === -1) {
 			logger.warn('store', 'updateMessageContent: conversation not found', { conversationId });
 			return;
 		}
 
-		const message = conv.messages.find((m) => m.id === messageId);
-		if (message) {
-			message.content = content;
-			conv.updatedAt = Date.now();
-			// Debug level since this is called frequently during streaming
-			logger.debug('streaming', 'Message content updated', {
+		const conv = this.conversations[convIndex];
+		const msgIndex = conv.messages.findIndex((m) => m.id === messageId);
+		if (msgIndex === -1) {
+			logger.warn('store', 'updateMessageContent: message not found', {
 				conversationId,
-				messageId,
-				contentLength: content.length
+				messageId
 			});
+			return;
 		}
+
+		// Create new message with updated content to trigger Svelte 5 reactivity
+		const updatedMessages = [...conv.messages];
+		updatedMessages[msgIndex] = { ...conv.messages[msgIndex], content };
+
+		// Replace the conversation object to trigger $derived re-computation
+		this.conversations[convIndex] = { ...conv, messages: updatedMessages, updatedAt: Date.now() };
+
+		// Debug level since this is called frequently during streaming
+		logger.debug('streaming', 'Message content updated', {
+			conversationId,
+			messageId,
+			contentLength: content.length
+		});
 	}
 
 	/**
@@ -428,72 +450,99 @@ class ConversationStore {
 
 	/**
 	 * Set a message's streaming status.
+	 * Uses array replacement to trigger Svelte 5 reactivity for $derived values.
 	 */
 	setMessageStreaming(conversationId: string, messageId: string, isStreaming: boolean): void {
-		const conv = this.conversations.find((c) => c.id === conversationId);
-		if (!conv) return;
+		const convIndex = this.conversations.findIndex((c) => c.id === conversationId);
+		if (convIndex === -1) return;
 
-		const message = conv.messages.find((m) => m.id === messageId);
-		if (message) {
-			message.isStreaming = isStreaming;
-			logger.info('streaming', isStreaming ? 'Streaming started' : 'Streaming ended', {
-				conversationId,
-				messageId
-			});
-		}
+		const conv = this.conversations[convIndex];
+		const msgIndex = conv.messages.findIndex((m) => m.id === messageId);
+		if (msgIndex === -1) return;
+
+		// Create new message with updated streaming status to trigger Svelte 5 reactivity
+		const updatedMessages = [...conv.messages];
+		updatedMessages[msgIndex] = { ...conv.messages[msgIndex], isStreaming };
+
+		// Replace the conversation object to trigger $derived re-computation
+		this.conversations[convIndex] = { ...conv, messages: updatedMessages };
+
+		logger.info('streaming', isStreaming ? 'Streaming started' : 'Streaming ended', {
+			conversationId,
+			messageId
+		});
 	}
 
 	/**
 	 * Add or update an output item on a message (used during streaming for tool calls).
 	 * If an item with the same ID exists, it will be updated; otherwise, it will be added.
+	 * Uses array replacement to trigger Svelte 5 reactivity for $derived values.
 	 */
 	setOutputItem(conversationId: string, messageId: string, item: ResponseOutputItem): void {
-		const conv = this.conversations.find((c) => c.id === conversationId);
-		if (!conv) {
+		const convIndex = this.conversations.findIndex((c) => c.id === conversationId);
+		if (convIndex === -1) {
 			logger.warn('store', 'setOutputItem: conversation not found', { conversationId });
 			return;
 		}
 
-		const message = conv.messages.find((m) => m.id === messageId);
-		if (!message) {
+		const conv = this.conversations[convIndex];
+		const msgIndex = conv.messages.findIndex((m) => m.id === messageId);
+		if (msgIndex === -1) {
 			logger.warn('store', 'setOutputItem: message not found', { conversationId, messageId });
 			return;
 		}
 
-		// Initialize rawOutput if not present
-		if (!message.rawOutput) {
-			message.rawOutput = [];
-		}
+		const message = conv.messages[msgIndex];
+		const currentRawOutput = message.rawOutput ?? [];
+		const itemId = 'id' in item ? item.id : undefined;
+
+		let updatedRawOutput: ResponseOutputItem[];
 
 		// Check if item already exists by ID
-		const itemId = 'id' in item ? item.id : undefined;
 		if (itemId) {
-			const existingIndex = message.rawOutput.findIndex(
+			const existingIndex = currentRawOutput.findIndex(
 				(existing) => 'id' in existing && existing.id === itemId
 			);
 
 			if (existingIndex !== -1) {
 				// Update existing item
-				message.rawOutput[existingIndex] = item;
+				updatedRawOutput = [...currentRawOutput];
+				updatedRawOutput[existingIndex] = item;
 				logger.debug('store', 'Output item updated', {
 					conversationId,
 					messageId,
 					itemId,
 					itemType: item.type
 				});
-				return;
+			} else {
+				// Add new item
+				updatedRawOutput = [...currentRawOutput, item];
+				logger.debug('store', 'Output item added', {
+					conversationId,
+					messageId,
+					itemId,
+					itemType: item.type,
+					totalItems: updatedRawOutput.length
+				});
 			}
+		} else {
+			// Add new item (no ID to match)
+			updatedRawOutput = [...currentRawOutput, item];
+			logger.debug('store', 'Output item added', {
+				conversationId,
+				messageId,
+				itemId,
+				itemType: item.type,
+				totalItems: updatedRawOutput.length
+			});
 		}
 
-		// Add new item
-		message.rawOutput.push(item);
-		logger.debug('store', 'Output item added', {
-			conversationId,
-			messageId,
-			itemId,
-			itemType: item.type,
-			totalItems: message.rawOutput.length
-		});
+		// Create new message with updated rawOutput to trigger Svelte 5 reactivity
+		const updatedMessages = [...conv.messages];
+		updatedMessages[msgIndex] = { ...message, rawOutput: updatedRawOutput };
+
+		// Replace the conversation object to trigger $derived re-computation
+		this.conversations[convIndex] = { ...conv, messages: updatedMessages };
 	}
 
 	/**
@@ -513,6 +562,7 @@ class ConversationStore {
 	/**
 	 * Update function call arguments during streaming.
 	 * Finds the function_call item by item_id (the item's id field) and appends to its arguments.
+	 * Uses array replacement to trigger Svelte 5 reactivity for $derived values.
 	 */
 	updateFunctionCallArguments(
 		conversationId: string,
@@ -520,27 +570,49 @@ class ConversationStore {
 		itemId: string,
 		argumentsDelta: string
 	): void {
-		const conv = this.conversations.find((c) => c.id === conversationId);
-		if (!conv) return;
+		const convIndex = this.conversations.findIndex((c) => c.id === conversationId);
+		if (convIndex === -1) return;
 
-		const message = conv.messages.find((m) => m.id === messageId);
-		if (!message?.rawOutput) return;
+		const conv = this.conversations[convIndex];
+		const msgIndex = conv.messages.findIndex((m) => m.id === messageId);
+		if (msgIndex === -1) return;
+
+		const message = conv.messages[msgIndex];
+		if (!message.rawOutput) return;
 
 		// Find the function_call item by its id (item_id in delta events)
-		const item = message.rawOutput.find(
+		const itemIndex = message.rawOutput.findIndex(
 			(i) => i.type === 'function_call' && 'id' in i && i.id === itemId
 		);
 
-		if (item && 'arguments' in item) {
-			// Append delta to existing arguments
-			(item as { arguments: string }).arguments += argumentsDelta;
-			logger.debug('store', 'Function call arguments updated', {
-				conversationId,
-				messageId,
-				itemId,
-				deltaLength: argumentsDelta.length
-			});
-		}
+		if (itemIndex === -1) return;
+
+		const item = message.rawOutput[itemIndex];
+		if (!('arguments' in item)) return;
+
+		// Create updated item with appended arguments
+		const updatedItem = {
+			...item,
+			arguments: (item as { arguments: string }).arguments + argumentsDelta
+		};
+
+		// Create new rawOutput array with updated item
+		const updatedRawOutput = [...message.rawOutput];
+		updatedRawOutput[itemIndex] = updatedItem as ResponseOutputItem;
+
+		// Create new message with updated rawOutput to trigger Svelte 5 reactivity
+		const updatedMessages = [...conv.messages];
+		updatedMessages[msgIndex] = { ...message, rawOutput: updatedRawOutput };
+
+		// Replace the conversation object to trigger $derived re-computation
+		this.conversations[convIndex] = { ...conv, messages: updatedMessages };
+
+		logger.debug('store', 'Function call arguments updated', {
+			conversationId,
+			messageId,
+			itemId,
+			deltaLength: argumentsDelta.length
+		});
 	}
 
 	/**

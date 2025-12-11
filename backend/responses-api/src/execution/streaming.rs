@@ -210,6 +210,13 @@ async fn run_streaming_loop(
     send(&tx, SseEvent::response_created(initial_response.clone())).await?;
     send(&tx, SseEvent::response_in_progress(initial_response)).await?;
 
+    // Store input items IMMEDIATELY to ensure they persist even if stream is interrupted.
+    // This fixes the issue where client disconnects cause items to be lost because
+    // append_output_items_to_conversation() is only called at the end of successful streaming.
+    if let (Some(conv_store), Some(conv_id)) = (&conversation_store, &conversation_id) {
+        store_input_items(conv_store, conv_id, &req);
+    }
+
     // Web search sources must persist across loop iterations (tool call cycles)
     // because sources are extracted during tool execution but used for annotations
     // in the final message after all tool calls complete.
@@ -256,9 +263,9 @@ async fn run_streaming_loop(
                 );
             }
 
-            // Append input and output to conversation if using conversation API
+            // Append output items to conversation (input items already stored at start)
             if let (Some(conv_store), Some(conv_id)) = (&conversation_store, &conversation_id) {
-                append_to_conversation(conv_store, conv_id, &req, &final_response.output);
+                append_output_items_to_conversation(conv_store, conv_id, &final_response.output);
             }
 
             send(&tx, SseEvent::response_completed(final_response.clone())).await?;
@@ -844,9 +851,9 @@ async fn run_streaming_loop(
             tracing::debug!(response_id = %resp_id, "Response not stored (store=false)");
         }
 
-        // Append input and output to conversation if using conversation API
+        // Append output items to conversation (input items already stored at start)
         if let (Some(conv_store), Some(conv_id)) = (&conversation_store, &conversation_id) {
-            append_to_conversation(conv_store, conv_id, &req, &final_response.output);
+            append_output_items_to_conversation(conv_store, conv_id, &final_response.output);
 
             // Generate title for new conversations (first exchange only)
             if super::title_generator::should_generate_title(conv_store, conv_id) {
@@ -1307,21 +1314,19 @@ fn mcp_tool_to_function_tool(mcp_tool: rmcp::model::Tool) -> Tool {
     })
 }
 
-/// Append request input and response output items to a conversation.
+/// Store input items from a request to a conversation at the START of streaming.
 ///
-/// Converts the request input and each `OutputItem` to `ConversationItem` and appends to the store.
-fn append_to_conversation(
+/// This ensures user messages are persisted even if the stream is interrupted.
+/// Should be called before the streaming loop begins.
+fn store_input_items(
     store: &InMemoryConversationStore,
     conversation_id: &str,
     req: &CreateResponseRequest,
-    output: &[OutputItem],
 ) {
     use crate::models::{Input, InputItem, MessageContent, MessageInput, Role};
     use crate::translation::{function_call_id, item_id, message_id, reasoning_id};
 
-    let mut all_items: Vec<ConversationItem> = Vec::new();
-
-    // First, append input items from the request
+    // Convert input to items
     let input_items: Vec<InputItem> = match &req.input {
         Input::Empty => vec![],
         Input::Text(text) => {
@@ -1334,6 +1339,11 @@ fn append_to_conversation(
         Input::Items(items) => items.clone(),
     };
 
+    if input_items.is_empty() {
+        return;
+    }
+
+    let mut items: Vec<ConversationItem> = Vec::new();
     for input_item in input_items {
         let id = match &input_item {
             InputItem::Message(_) => message_id(),
@@ -1341,14 +1351,37 @@ fn append_to_conversation(
             InputItem::FunctionCall(_) => function_call_id(),
             _ => item_id(),
         };
-        all_items.push(ConversationItem {
+        items.push(ConversationItem {
             id,
             status: OutputStatus::Completed,
             content: ConversationItemContent::Input(input_item),
         });
     }
 
-    // Then, append output items from the response
+    store.append_output_items(conversation_id, items.clone());
+    tracing::info!(
+        conversation_id = %conversation_id,
+        input_items_stored = items.len(),
+        "Stored input items at start of streaming"
+    );
+}
+
+/// Append output items from a response to a conversation.
+///
+/// Called at the end of streaming to store the assistant's response.
+/// Input items should already have been stored via `store_input_items()`.
+fn append_output_items_to_conversation(
+    store: &InMemoryConversationStore,
+    conversation_id: &str,
+    output: &[OutputItem],
+) {
+    use crate::translation::item_id;
+
+    if output.is_empty() {
+        return;
+    }
+
+    let mut items: Vec<ConversationItem> = Vec::new();
     for output_item in output {
         let id = match output_item {
             OutputItem::Message(m) => m.id.clone(),
@@ -1357,7 +1390,7 @@ fn append_to_conversation(
             OutputItem::WebSearchCall(w) => w.id.clone(),
             _ => item_id(),
         };
-        all_items.push(ConversationItem {
+        items.push(ConversationItem {
             id,
             status: OutputStatus::Completed,
             content: ConversationItemContent::Output(
@@ -1366,19 +1399,10 @@ fn append_to_conversation(
         });
     }
 
-    if !all_items.is_empty() {
-        let input_count = all_items
-            .iter()
-            .filter(|i| matches!(i.content, ConversationItemContent::Input(_)))
-            .count();
-        let output_count = all_items.len() - input_count;
-
-        store.append_output_items(conversation_id, all_items);
-        tracing::debug!(
-            conversation_id = %conversation_id,
-            input_items_appended = input_count,
-            output_items_appended = output_count,
-            "Appended streaming request and response to conversation"
-        );
-    }
+    store.append_output_items(conversation_id, items.clone());
+    tracing::info!(
+        conversation_id = %conversation_id,
+        output_items_appended = items.len(),
+        "Appended output items to conversation"
+    );
 }
