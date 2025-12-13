@@ -32,9 +32,11 @@ RUN apt-get update && \
 WORKDIR /app
 
 # Clone llama.cpp repository
-# Pin to tag b7122 (Nov 20, 2025) - latest with all security fixes and DGX UMA improvements
+# Pin to tag b7376
+# Patch: Bump MAX_REPETITION_THRESHOLD 2000→10000 for Open WebUI tool grammars
+#        See 075584e for context (security fix in b7118 broke MCP tool calling)
 RUN git clone https://github.com/ggml-org/llama.cpp.git . && \
-    git checkout b7122 && \
+    git checkout b7376 && \
     sed -i 's/#define MAX_REPETITION_THRESHOLD 2000/#define MAX_REPETITION_THRESHOLD 10000/' src/llama-grammar.cpp
 
 # Build llama.cpp with DGX Spark optimizations
