@@ -32,7 +32,6 @@ This enables:
 | 9110 | mcp-web-search | Brave Search | Web search integration |
 | 9120 | mcp-code-interpreter | Python | Sandboxed code execution |
 | 9130 | mcp-reader | Playwright + ReaderLM | Privacy-first web reader |
-| 9140 | mcp-comfy-qwen | ComfyUI | Image generation MCP tool |
 | 9200 | open-webui | Open WebUI | Chat interface |
 
 ### **EmbeddingGemma Embeddings Service** ✅ (NEW)
