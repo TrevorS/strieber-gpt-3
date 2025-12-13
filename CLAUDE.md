@@ -1,86 +1,119 @@
-## Project Validation Tools
+# CLAUDE.md
 
-Run validation in order: Format → Lint → Type Check → Test
+This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+
+## Project Overview
+
+strieber-gpt-3 is a self-hosted AI inference stack running on DGX Spark Blackwell (128GB GPU). It includes:
+- **LLM inference** via llama.cpp (gpt-oss-120b, 63GB model)
+- **Chat UI** built with Svelte 5 + SvelteKit 2
+- **Responses API** - Rust backend that orchestrates inference and tool execution
+- **MCP tool servers** - Python services for web search, code execution, weather, web reading, and image generation
+
+## Architecture
+
+```
+Chat UI (Svelte 5)  ──HTTP──►  responses-api (Rust)  ──HTTP──►  llama-server (llama.cpp)
+         :9300                        :9150                           :9010
+                                        │
+                                        ├──►  MCP servers (Python)
+                                        │       - web_search :9110
+                                        │       - code_interpreter :9120
+                                        │       - reader :9130
+                                        │       - weather :9100
+                                        │       - comfy_zimage :9141
+                                        │
+                                        └──►  llama-server-qwen-vl :9020 (vision)
+```
+
+**Key architectural decisions:**
+- Server-side tool execution: `responses-api` invokes MCP servers directly (not client-side tool calling)
+- Conversation chaining via `previous_response_id` (not simple message arrays)
+- All services communicate via HTTP on Docker network `strieber-net`
+
+## Project Validation
+
+Run validation in order: **Format → Lint → Type Check → Test**
 
 ### Rust Backend (backend/responses-api/)
-- **Format**: `docker compose run --rm backend-dev cargo fmt`
-- **Lint**: `docker compose run --rm backend-dev cargo clippy -- -D warnings`
-- **Test**: `docker compose run --rm backend-dev cargo test`
+```bash
+docker compose run --rm backend-dev cargo fmt
+docker compose run --rm backend-dev cargo clippy -- -D warnings
+docker compose run --rm backend-dev cargo test
+```
 
 ### Frontend (frontend/)
-- **Format**: `docker compose run --rm frontend-dev npm run format`
-- **Lint**: `docker compose run --rm frontend-dev npm run lint`
-- **Type Check**: `docker compose run --rm frontend-dev npm run check`
+```bash
+docker compose run --rm frontend-dev npm run format
+docker compose run --rm frontend-dev npm run lint
+docker compose run --rm frontend-dev npm run check
+```
 
 ### Python MCP Servers (backend/tools/mcp_servers/)
-- **Format**: `source .venv/bin/activate && ruff format .`
-- **Lint**: `source .venv/bin/activate && ruff check --fix .`
-- **Test**: `source .venv/bin/activate && pytest -v`
-
-### Project Permissions
-- **Project Type**: personal
-- **Direct Commits Allowed**: yes
-- **Last Checked**: 2025-12-07
+```bash
+source .venv/bin/activate && ruff format .
+source .venv/bin/activate && ruff check --fix .
+source .venv/bin/activate && pytest -v
+```
 
 ## Docker Development
 
-Tools and commands should run inside Docker containers, not on the host system.
+All tools run inside containers. Never install Node, Rust, or Python dependencies on the host.
 
-### Frontend Development
-
-Use the `frontend-dev` service for all npm/node commands to avoid permission issues:
-
+### Common Commands
 ```bash
-# Install dependencies
-docker compose run --rm frontend-dev npm install
-
-# Add a package
-docker compose run --rm frontend-dev npm install <package>
-
-# Run dev server (use chat-ui service instead for this)
-docker compose up chat-ui
-
-# Run any npm script
-docker compose run --rm frontend-dev npm run <script>
+make up                    # Start all services
+make down                  # Stop all services
+make logs                  # Follow logs
+make status                # Container status
+make health                # Check llama-server health
+make test                  # Run responses-api integration tests
 ```
 
-The `frontend-dev` service:
-- Runs as UID/GID 1000 (matches host user)
-- Mounts `./frontend` to `/app`
-- Uses `node:22-alpine` image
-- Part of `dev` profile (won't start with regular `docker compose up`)
-
-### Other Services
-
-For other project tools, check if there's a corresponding container in compose.yml before running commands on the host.
+### Frontend Development
+```bash
+docker compose run --rm frontend-dev npm install
+docker compose run --rm frontend-dev npm install <package>
+docker compose run --rm frontend-dev npm run <script>
+docker compose up chat-ui  # Run dev server
+```
 
 ### E2E Visual Testing
-
-A `playwright-e2e` skill exists for visual testing workflow. After UI changes:
-
 ```bash
 docker compose run --rm playwright-test
 ```
+Screenshots saved to `frontend/test-results/screenshots/`
 
-Then read screenshots from `frontend/test-results/screenshots/` to verify the UI.
+## Tech Stack Reference
 
-### Shell Compatibility (zsh)
+| Component | Technology | Key Files |
+|-----------|------------|-----------|
+| Frontend | Svelte 5, SvelteKit 2, Tailwind CSS 4, shadcn-svelte | `frontend/src/` |
+| Backend API | Rust + Axum | `backend/responses-api/src/` |
+| MCP Servers | Python + FastAPI | `backend/tools/mcp_servers/` |
+| Container orchestration | Docker Compose | `compose.yml` |
 
-The host shell is zsh, which parses commands differently than bash. To avoid parse errors:
+### Frontend Patterns (Svelte 5)
+- Use runes: `$state()`, `$derived()`, `$effect()`, `$props()`
+- Class-based stores in `src/lib/stores/*.svelte.ts`
+- shadcn-svelte components in `src/lib/components/ui/`
 
-- **Avoid nested `$(...)`** with complex quotes or parentheses inside
-- **Run commands in separate steps** instead of chaining with command substitution
-- **Use simple tools**: prefer `jq` over `python3 -c` for JSON parsing
-- **Write to temp files** instead of inline parsing when extracting values
+### Backend Patterns (Rust)
+- Axum handlers in `src/server/handlers.rs`
+- Tool execution loop in `src/execution/executor.rs`
+- MCP client in `src/mcp/client.rs`
 
-Bad (causes zsh parse errors):
+## Shell Compatibility (zsh)
+
+The host shell is zsh. Avoid nested `$(...)` with complex quotes. Prefer:
 ```bash
-PREV_ID=$(python3 -c "import json; print(json.load(open('/tmp/resp.json'))['id'])")
+jq -r '.id' /tmp/resp.json  # Good
+```
+Over:
+```bash
+PREV_ID=$(python3 -c "import json; print(json.load(open('/tmp/resp.json'))['id'])")  # Breaks in zsh
 ```
 
-Good:
-```bash
-python3 -c "import json; print(json.load(open('/tmp/resp.json'))['id'])" > /tmp/prev_id.txt
-# or just use jq
-jq -r '.id' /tmp/resp.json
-```
+## Project Permissions
+- **Project Type**: personal
+- **Direct Commits Allowed**: yes

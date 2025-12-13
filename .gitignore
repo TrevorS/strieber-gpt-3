@@ -69,6 +69,4 @@ temp/
 *.tmp
 
 # mounted data
-open-webui-data/
-open-webui-data.backup/
 comfyui-data/

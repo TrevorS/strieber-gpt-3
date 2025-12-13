@@ -1,6 +1,6 @@
 # MCP (Model Context Protocol) Server Setup for Strieber-GPT-3
 
-This document describes the Model Context Protocol (MCP) servers integrated into strieber-gpt-3 and how to configure them with Open WebUI.
+This document describes the Model Context Protocol (MCP) servers integrated into strieber-gpt-3 and how to configure them with Chat UI.
 
 ## Overview
 
@@ -17,7 +17,7 @@ All servers use **Streamable HTTP** transport for web-friendly, non-blocking com
 
 ```
 ┌─────────────────────────────────────────────────────────────────┐
-│                       Open WebUI (port 3000)                     │
+│                        Chat UI (port 9030)                        │
 │                                                                   │
 │  Admin Settings → External Tools → Add MCP Server (HTTP)         │
 └──────────────┬──────────────────────────────────────────────────┘
@@ -55,11 +55,11 @@ docker exec strieber-mcp-code-interpreter curl http://localhost:8000/health
 
 Expected response: `{"status":"ok"}`
 
-## Configuring Open WebUI
+## Configuring Chat UI
 
 ### Step 1: Access Admin Settings
 
-1. Open Open WebUI at `http://localhost:3000`
+1. Open Chat UI at `http://localhost:9030`
 2. Log in with admin credentials
 3. Click the **⚙️ Settings** icon (top right)
 4. Select **Admin Settings** (requires admin role)
@@ -98,7 +98,6 @@ BRAVE_API_KEY=your_brave_search_api_key
 
 # MCP server ports (if running on different host)
 LLAMA_HOST=0.0.0.0
-OPENWEBUI_PORT=3000
 ```
 
 Note: The Web Reader service is fully local - no API keys or external services required.
@@ -375,7 +374,7 @@ docker exec strieber-mcp-reader curl -s http://localhost:8000/health
 docker exec strieber-mcp-code-interpreter curl -s http://localhost:8000/health
 ```
 
-## Integration with Open WebUI
+## Integration with Chat UI
 
 Once configured, tools will be available in the LLM context:
 
@@ -413,7 +412,6 @@ Memory and CPU limits can be set in Docker compose if needed.
 
 ## Related Documentation
 
-- [Open WebUI MCP Integration Docs](https://docs.openwebui.com/features/mcp/)
 - [FastMCP Framework](https://github.com/janus-llm/fastmcp)
 - [Model Context Protocol Specification](https://spec.modelcontextprotocol.io/)
 - [Brave Search API](https://api.search.brave.com/)

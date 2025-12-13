@@ -1,18 +1,18 @@
 # ============================================================================
-# strieber-gpt-3: LLama-Server + Open WebUI Docker Compose
+# strieber-gpt-3: LLama-Server + Chat UI Docker Compose
 # ============================================================================
-# Docker compose file for running llama.cpp inference engine with Open WebUI
+# Docker compose file for running llama.cpp inference engine with Chat UI
 # on a GPU machine (e.g., DGX Spark)
 #
 # Usage:
-#   docker compose up -d          # Start both services
-#   docker compose up -d llama-server   # Start only llama-server
+#   docker compose up -d                  # Start services
+#   docker compose up -d llama-server     # Start only llama-server
 #
 # Access:
 #   - llama-server OpenAI API: http://localhost:8000
-#   - Open WebUI: http://localhost:3000
+#   - Chat UI: http://localhost:9030
 #
-# Services: llama-server (inference) + open-webui (web interface)
+# Services: llama-server (inference) + chat-ui (web interface)
 
 services:
   # ==========================================================================
@@ -340,45 +340,6 @@ services:
       retries: 10
 
     # Network configuration
-    networks:
-      - strieber-net
-
-  # ==========================================================================
-  # open-webui: Web interface for llama-server
-  # ==========================================================================
-  open-webui:
-    image: ghcr.io/open-webui/open-webui:dev
-    container_name: strieber-open-webui
-
-    # Restart policy
-    restart: unless-stopped
-
-    # Port mapping: host:container (9200 = Web UI range)
-    ports:
-      - "${OPENWEBUI_PORT:-9200}:8080"
-
-    # Volume for persistent data
-    volumes:
-      # Host bind mount for direct filesystem access and backups
-      - ./open-webui-data:/app/backend/data
-
-    # Environment variables
-    environment:
-      # Connect directly to llama-server for gpt-oss-120b
-      - OPENAI_API_BASE_URL=http://strieber-llama-server:8000/v1
-      - OPENAI_API_KEY=none
-      # Enable direct MCP server connections (native tool discovery)
-      - ENABLE_DIRECT_CONNECTIONS=true
-
-    # Depends on llama-server and MCP servers being started
-    depends_on:
-      - llama-server
-      - mcp-weather
-      - mcp-web-search
-      - mcp-code-interpreter
-      - mcp-reader
-
-    # Network configuration for inter-service communication
     networks:
       - strieber-net
 
