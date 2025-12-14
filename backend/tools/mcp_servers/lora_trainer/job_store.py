@@ -26,7 +26,7 @@ def create_job_store(data_path: Path) -> JobStoreBase:
         from lora_trainer.job_store_http import HttpJobStore
 
         return HttpJobStore(
-            os.environ.get("STORAGE_API_URL", "http://responses-api:9150")
+            os.environ.get("STORAGE_API_URL", "http://responses-api:8000")
         )
     else:
         from lora_trainer.job_store_json import JsonJobStore

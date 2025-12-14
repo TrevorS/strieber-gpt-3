@@ -33,8 +33,11 @@ rank-bm25>=0.2.2
 # lxml for XPath pruning (may already be installed via trafilatura)
 lxml>=5.0.0
 
-# Image processing (for ComfyUI Qwen server)
+# Image processing (for ComfyUI Qwen server and LoRA training)
 Pillow>=10.0.0
+
+# Face detection for smart cropping (LoRA training)
+mediapipe>=0.10.0
 
 # Data validation
 pydantic>=2.0.0

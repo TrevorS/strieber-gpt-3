@@ -528,6 +528,11 @@ services:
     environment:
       - PORT=8000
       - TRAINING_DATA_PATH=/data
+      # Job store: use HTTP backend for distributed persistence
+      - JOB_STORE_BACKEND=http
+      - STORAGE_API_URL=http://responses-api:8000
+      # Vision model for auto-captioning
+      - QWEN_VL_URL=http://llama-server-qwen-vl:8000
     volumes:
       # Docker socket for spawning training containers
       - /var/run/docker.sock:/var/run/docker.sock

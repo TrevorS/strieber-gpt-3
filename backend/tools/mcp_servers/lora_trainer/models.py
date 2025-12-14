@@ -1,7 +1,7 @@
 # ABOUTME: Pydantic models for LoRA training data structures.
 # Defines schemas for datasets, training configs, and job state.
 
-from datetime import datetime
+from datetime import UTC, datetime
 from enum import Enum
 from typing import List, Optional
 
@@ -33,7 +33,7 @@ class DatasetMetadata(BaseModel):
     trigger_token: str
     lora_type: LoRAType
     description: Optional[str] = None
-    created_at: datetime = Field(default_factory=datetime.utcnow)
+    created_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
     image_count: int = 0
     has_captions: bool = False
 

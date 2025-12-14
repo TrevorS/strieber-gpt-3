@@ -6,7 +6,7 @@ import logging
 import re
 import shutil
 import uuid
-from datetime import datetime
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Optional
 
@@ -238,7 +238,7 @@ class TrainingRunner:
             return
 
         job.status = TrainingStatus.RUNNING
-        job.started_at = datetime.utcnow()
+        job.started_at = datetime.now(UTC)
         self.job_store.save_job(job)
 
         container = None
@@ -306,7 +306,7 @@ class TrainingRunner:
             job.error_message = str(e)
             logger.error(f"Training error for job {job_id}: {e}", exc_info=True)
         finally:
-            job.completed_at = datetime.utcnow()
+            job.completed_at = datetime.now(UTC)
             self.job_store.save_job(job)
             self._active_containers.pop(job_id, None)
 
@@ -482,7 +482,7 @@ class TrainingRunner:
                 logger.warning(f"Failed to stop container: {e}")
 
         job.status = TrainingStatus.STOPPED
-        job.completed_at = datetime.utcnow()
+        job.completed_at = datetime.now(UTC)
         self.job_store.save_job(job)
 
         return job

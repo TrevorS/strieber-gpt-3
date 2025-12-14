@@ -9,7 +9,15 @@ from typing import List, Literal, Optional
 from mcp.server.fastmcp import Context, FastMCP
 from mcp.types import ImageContent, TextContent
 
+from lora_trainer.captioner import VisionCaptioner
 from lora_trainer.dataset_manager import DatasetManager
+from lora_trainer.image_utils import (
+    ImageFetchError,
+    ImageProcessingError,
+    fetch_image,
+    fetch_images_batch,
+    smart_crop,
+)
 from lora_trainer.job_store import create_job_store
 from lora_trainer.job_store_base import JobStoreBase
 from lora_trainer.models import LoRAType, TrainingConfig, TrainingStatus
@@ -224,6 +232,472 @@ async def lora_list_datasets(
         lines.append("")
 
     return [TextContent(type="text", text="\n".join(lines))]
+
+
+# ============================================================================
+# Image Acquisition Tools
+# ============================================================================
+
+
+@mcp.tool()
+async def lora_fetch_image(
+    dataset_name: str,
+    url: str,
+    caption: Optional[str] = None,
+    preprocess: bool = True,
+    crop_mode: Literal["center", "smart", "none"] = "smart",
+    ctx: Context = None,
+) -> List[TextContent]:
+    """Fetch image from URL and add to dataset.
+
+    Automatically downloads, validates, and optionally preprocesses the image
+    for optimal training (smart crop around faces, resize to 1024x1024).
+
+    Args:
+        dataset_name: Name of existing dataset
+        url: URL of image to fetch (PNG, JPEG, WebP supported)
+        caption: Optional caption (include trigger token!)
+        preprocess: If True, apply smart crop and resize (default True)
+        crop_mode: How to crop - "smart" detects faces, "center", or "none"
+
+    Returns:
+        Confirmation with filename.
+    """
+    try:
+        # Fetch image from URL
+        if ctx:
+            await ctx.report_progress(0, 2, "Fetching image...")
+
+        image_bytes = await fetch_image(url)
+
+        # Optionally preprocess
+        if preprocess:
+            if ctx:
+                await ctx.report_progress(1, 2, "Preprocessing...")
+            image_bytes = smart_crop(image_bytes, target_size=1024, crop_mode=crop_mode)
+
+        # Add to dataset
+        dm = _get_dataset_manager()
+        filename = dm.add_image(dataset_name, image_bytes, caption)
+
+        if ctx:
+            await ctx.report_progress(2, 2, "Done")
+
+        metadata = dm.get_metadata(dataset_name)
+        return [
+            TextContent(
+                type="text",
+                text=f"Added image from URL to '{dataset_name}'.\n"
+                f"Filename: {filename}\n"
+                f"Total images: {metadata.image_count}\n"
+                f"Preprocessed: {preprocess} (crop_mode={crop_mode})",
+            )
+        ]
+    except ImageFetchError as e:
+        return [TextContent(type="text", text=f"Fetch error: {str(e)}")]
+    except ImageProcessingError as e:
+        return [TextContent(type="text", text=f"Processing error: {str(e)}")]
+    except Exception as e:
+        logger.error(f"Fetch image error: {e}", exc_info=True)
+        return [TextContent(type="text", text=f"Error: {str(e)}")]
+
+
+@mcp.tool()
+async def lora_fetch_images_batch(
+    dataset_name: str,
+    urls: List[str],
+    auto_caption: bool = False,
+    caption_style: Literal["detailed", "simple", "tags"] = "detailed",
+    preprocess: bool = True,
+    crop_mode: Literal["center", "smart", "none"] = "smart",
+    ctx: Context = None,
+) -> List[TextContent]:
+    """Fetch multiple images from URLs and add to dataset.
+
+    Downloads images concurrently (max 5 at a time), optionally generates
+    captions using vision model, and adds all to the dataset.
+
+    Args:
+        dataset_name: Name of existing dataset
+        urls: List of image URLs to fetch
+        auto_caption: If True, generate captions with vision model
+        caption_style: Caption style - "detailed", "simple", or "tags"
+        preprocess: If True, apply smart crop and resize
+        crop_mode: How to crop - "smart" detects faces, "center", or "none"
+
+    Returns:
+        Summary of fetched images and any failures.
+    """
+    try:
+        dm = _get_dataset_manager()
+        metadata = dm.get_metadata(dataset_name)
+
+        total = len(urls)
+        if ctx:
+            await ctx.report_progress(0, total, "Starting batch fetch...")
+
+        # Fetch all images
+        def progress_cb(completed: int, total: int, url: str):
+            # Can't call async ctx.report_progress from sync callback
+            logger.info(f"Fetched {completed}/{total}: {url[:50]}...")
+
+        results = await fetch_images_batch(
+            urls, max_concurrent=5, on_progress=progress_cb
+        )
+
+        # Process results
+        success_count = 0
+        fail_count = 0
+        failures = []
+
+        # Prepare captioner if needed
+        captioner = None
+        if auto_caption:
+            captioner = VisionCaptioner()
+
+        try:
+            for i, (url, result) in enumerate(results):
+                if isinstance(result, Exception):
+                    fail_count += 1
+                    failures.append(f"- {url[:50]}...: {str(result)[:50]}")
+                    continue
+
+                # Preprocess if requested
+                image_bytes = result
+                if preprocess:
+                    try:
+                        image_bytes = smart_crop(
+                            image_bytes, target_size=1024, crop_mode=crop_mode
+                        )
+                    except ImageProcessingError as e:
+                        fail_count += 1
+                        failures.append(f"- {url[:50]}...: preprocessing failed: {e}")
+                        continue
+
+                # Generate caption if requested
+                caption = None
+                if auto_caption and captioner:
+                    try:
+                        caption = await captioner.caption_image(
+                            image_bytes=image_bytes,
+                            style=caption_style,
+                            trigger_token=metadata.trigger_token,
+                        )
+                    except Exception as e:
+                        logger.warning(f"Caption generation failed for {url}: {e}")
+                        # Continue without caption
+
+                # Add to dataset
+                dm.add_image(dataset_name, image_bytes, caption)
+                success_count += 1
+
+                if ctx:
+                    await ctx.report_progress(
+                        i + 1, total, f"Processed {i + 1}/{total}"
+                    )
+        finally:
+            if captioner:
+                await captioner.close()
+
+        # Build summary
+        metadata = dm.get_metadata(dataset_name)
+        lines = [
+            f"Batch fetch complete for '{dataset_name}':",
+            f"  Succeeded: {success_count}/{total}",
+            f"  Failed: {fail_count}/{total}",
+            f"  Total images now: {metadata.image_count}",
+            f"  Auto-captioned: {auto_caption}",
+        ]
+
+        if failures:
+            lines.append("\nFailures:")
+            lines.extend(failures[:10])  # Limit to 10
+            if len(failures) > 10:
+                lines.append(f"  ... and {len(failures) - 10} more")
+
+        return [TextContent(type="text", text="\n".join(lines))]
+    except Exception as e:
+        logger.error(f"Batch fetch error: {e}", exc_info=True)
+        return [TextContent(type="text", text=f"Error: {str(e)}")]
+
+
+# ============================================================================
+# Captioning Tools
+# ============================================================================
+
+
+@mcp.tool()
+async def lora_caption_images(
+    dataset_name: str,
+    style: Literal["detailed", "simple", "tags"] = "detailed",
+    overwrite: bool = False,
+    ctx: Context = None,
+) -> List[TextContent]:
+    """Auto-generate captions for all images in a dataset using vision model.
+
+    Uses Qwen-VL to analyze each image and generate descriptive captions.
+    Automatically prepends the dataset's trigger token to each caption.
+
+    CAPTION STYLES:
+    - detailed: Full description with appearance, clothing, pose, background
+    - simple: Short phrase like "portrait photo, studio lighting"
+    - tags: Comma-separated tags like "woman, brown_hair, outdoor"
+
+    Args:
+        dataset_name: Name of dataset to caption
+        style: Caption style (default "detailed")
+        overwrite: If True, regenerate existing captions
+
+    Returns:
+        Summary of generated captions.
+    """
+    try:
+        dm = _get_dataset_manager()
+        metadata = dm.get_metadata(dataset_name)
+        dataset_path = dm.get_dataset_path(dataset_name)
+
+        images_dir = dataset_path / "images"
+        captions_dir = dataset_path / "captions"
+
+        if not images_dir.exists():
+            return [
+                TextContent(
+                    type="text", text=f"No images directory found for '{dataset_name}'"
+                )
+            ]
+
+        # Count images
+        image_files = [
+            p
+            for p in images_dir.iterdir()
+            if p.suffix.lower() in (".png", ".jpg", ".jpeg")
+        ]
+        total = len(image_files)
+
+        if total == 0:
+            return [
+                TextContent(type="text", text=f"No images found in '{dataset_name}'")
+            ]
+
+        if ctx:
+            await ctx.report_progress(0, total, "Starting captioning...")
+
+        async with VisionCaptioner() as captioner:
+
+            def progress_cb(current: int, total: int, name: str):
+                logger.info(f"Captioned {current}/{total}: {name}")
+
+            results = await captioner.caption_dataset(
+                images_dir=images_dir,
+                captions_dir=captions_dir,
+                trigger_token=metadata.trigger_token,
+                style=style,
+                overwrite=overwrite,
+                on_progress=progress_cb,
+            )
+
+        if ctx:
+            await ctx.report_progress(total, total, "Done")
+
+        # Update metadata
+        dm._update_metadata(dataset_name)
+
+        lines = [
+            f"Captioning complete for '{dataset_name}':",
+            f"  Style: {style}",
+            f"  Images captioned: {len(results)}/{total}",
+            f"  Trigger token: {metadata.trigger_token}",
+            "",
+            "Sample captions:",
+        ]
+
+        # Show first 3 captions as samples
+        for i, (name, caption) in enumerate(list(results.items())[:3]):
+            lines.append(f"  {name}: {caption[:80]}...")
+
+        return [TextContent(type="text", text="\n".join(lines))]
+    except Exception as e:
+        logger.error(f"Caption error: {e}", exc_info=True)
+        return [TextContent(type="text", text=f"Error: {str(e)}")]
+
+
+@mcp.tool()
+async def lora_caption_single(
+    dataset_name: str,
+    image_name: str,
+    style: Literal["detailed", "simple", "tags"] = "detailed",
+    custom_prompt: Optional[str] = None,
+    ctx: Context = None,
+) -> List[TextContent]:
+    """Generate or regenerate caption for a specific image.
+
+    Useful for fixing or customizing individual captions after batch captioning.
+
+    Args:
+        dataset_name: Name of dataset
+        image_name: Filename of image to caption (e.g., "001_abc123.png")
+        style: Caption style (ignored if custom_prompt provided)
+        custom_prompt: Optional custom prompt for vision model
+
+    Returns:
+        Generated caption.
+    """
+    try:
+        dm = _get_dataset_manager()
+        metadata = dm.get_metadata(dataset_name)
+        dataset_path = dm.get_dataset_path(dataset_name)
+
+        image_path = dataset_path / "images" / image_name
+        if not image_path.exists():
+            return [TextContent(type="text", text=f"Image not found: {image_name}")]
+
+        # Read image
+        with open(image_path, "rb") as f:
+            image_bytes = f.read()
+
+        async with VisionCaptioner() as captioner:
+            caption = await captioner.caption_image(
+                image_bytes=image_bytes,
+                style=style,
+                trigger_token=metadata.trigger_token,
+            )
+
+        # Save caption
+        captions_dir = dataset_path / "captions"
+        captions_dir.mkdir(exist_ok=True)
+        caption_path = captions_dir / f"{image_path.stem}.txt"
+        with open(caption_path, "w") as f:
+            f.write(caption)
+
+        # Update metadata
+        dm._update_metadata(dataset_name)
+
+        return [
+            TextContent(
+                type="text",
+                text=f"Caption generated for '{image_name}':\n\n{caption}",
+            )
+        ]
+    except Exception as e:
+        logger.error(f"Caption single error: {e}", exc_info=True)
+        return [TextContent(type="text", text=f"Error: {str(e)}")]
+
+
+# ============================================================================
+# Preprocessing Tools
+# ============================================================================
+
+
+@mcp.tool()
+async def lora_preprocess_dataset(
+    dataset_name: str,
+    target_size: int = 1024,
+    crop_mode: Literal["center", "smart", "none"] = "smart",
+    ctx: Context = None,
+) -> List[TextContent]:
+    """Preprocess all images in a dataset for optimal training.
+
+    Applies smart cropping (face detection for characters) and resizing
+    to ensure consistent, high-quality training images.
+
+    PREPROCESSING STEPS:
+    - Detect faces (if crop_mode="smart") and center crop around them
+    - Resize to target_size x target_size (square)
+    - Convert to PNG format
+    - Remove EXIF metadata for privacy
+
+    Args:
+        dataset_name: Name of dataset to preprocess
+        target_size: Output size in pixels (default 1024, recommended 1024 or 1536)
+        crop_mode: "smart" for face detection, "center", or "none"
+
+    Returns:
+        Summary of preprocessed images.
+    """
+    try:
+        dm = _get_dataset_manager()
+        dataset_path = dm.get_dataset_path(dataset_name)
+        images_dir = dataset_path / "images"
+
+        if not images_dir.exists():
+            return [
+                TextContent(
+                    type="text", text=f"No images directory found for '{dataset_name}'"
+                )
+            ]
+
+        # Find all images
+        image_files = sorted(
+            [
+                p
+                for p in images_dir.iterdir()
+                if p.suffix.lower() in (".png", ".jpg", ".jpeg")
+            ]
+        )
+        total = len(image_files)
+
+        if total == 0:
+            return [
+                TextContent(type="text", text=f"No images found in '{dataset_name}'")
+            ]
+
+        if ctx:
+            await ctx.report_progress(0, total, "Starting preprocessing...")
+
+        processed = 0
+        failed = 0
+        failures = []
+
+        for i, image_path in enumerate(image_files):
+            try:
+                # Read image
+                with open(image_path, "rb") as f:
+                    image_bytes = f.read()
+
+                # Process
+                processed_bytes = smart_crop(
+                    image_bytes, target_size=target_size, crop_mode=crop_mode
+                )
+
+                # Write back (as PNG)
+                output_path = image_path.with_suffix(".png")
+                with open(output_path, "wb") as f:
+                    f.write(processed_bytes)
+
+                # Remove original if it was different format
+                if output_path != image_path:
+                    image_path.unlink()
+
+                processed += 1
+                logger.info(f"Preprocessed {i + 1}/{total}: {image_path.name}")
+
+            except Exception as e:
+                failed += 1
+                failures.append(f"- {image_path.name}: {str(e)[:50]}")
+                logger.warning(f"Failed to preprocess {image_path.name}: {e}")
+
+            if ctx:
+                await ctx.report_progress(i + 1, total, f"Processed {i + 1}/{total}")
+
+        # Update metadata
+        dm._update_metadata(dataset_name)
+
+        lines = [
+            f"Preprocessing complete for '{dataset_name}':",
+            f"  Target size: {target_size}x{target_size}",
+            f"  Crop mode: {crop_mode}",
+            f"  Processed: {processed}/{total}",
+            f"  Failed: {failed}/{total}",
+        ]
+
+        if failures:
+            lines.append("\nFailures:")
+            lines.extend(failures[:5])
+
+        return [TextContent(type="text", text="\n".join(lines))]
+    except Exception as e:
+        logger.error(f"Preprocess error: {e}", exc_info=True)
+        return [TextContent(type="text", text=f"Error: {str(e)}")]
 
 
 # ============================================================================
