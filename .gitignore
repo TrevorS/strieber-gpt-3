@@ -70,3 +70,7 @@ temp/
 
 # mounted data
 comfyui-data/
+
+# Auth secrets and data (Authelia)
+auth/.env.authelia
+auth/data/

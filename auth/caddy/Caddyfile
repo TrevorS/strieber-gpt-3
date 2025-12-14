@@ -1,0 +1,28 @@
+# =============================================================================
+# Caddy Configuration for strieber-gpt-3
+# =============================================================================
+# SSL termination + Authelia forward auth for Chat UI
+# Let's Encrypt automatic HTTPS
+
+# -----------------------------------------------------------------------------
+# Auth Portal (Authelia login page)
+# -----------------------------------------------------------------------------
+auth.strieber.org {
+    reverse_proxy authelia:9091
+}
+
+# -----------------------------------------------------------------------------
+# Chat UI (protected by Authelia)
+# -----------------------------------------------------------------------------
+chat.strieber.org {
+    # Forward auth to Authelia
+    forward_auth authelia:9091 {
+        uri /api/authz/forward-auth
+
+        # Copy auth headers to upstream (chat-ui can see who's logged in)
+        copy_headers Remote-User Remote-Groups Remote-Email Remote-Name
+    }
+
+    # Proxy to Chat UI after successful auth
+    reverse_proxy chat-ui:3000
+}

@@ -1,0 +1,104 @@
+# =============================================================================
+# Authelia Configuration for strieber-gpt-3
+# =============================================================================
+# Minimal config for TOTP + WebAuthn (passkeys) with file-based users
+# No external services required - all local to Docker
+
+# -----------------------------------------------------------------------------
+# Server Settings
+# -----------------------------------------------------------------------------
+server:
+  address: 'tcp://:9091'
+
+# -----------------------------------------------------------------------------
+# Logging
+# -----------------------------------------------------------------------------
+log:
+  level: info
+  format: text
+
+# -----------------------------------------------------------------------------
+# Authentication Backend (file-based users)
+# -----------------------------------------------------------------------------
+authentication_backend:
+  file:
+    path: /config/users.yml
+    password:
+      algorithm: argon2id
+      iterations: 3
+      memory: 65536
+      parallelism: 4
+      key_length: 32
+      salt_length: 16
+
+# -----------------------------------------------------------------------------
+# Session Configuration
+# -----------------------------------------------------------------------------
+session:
+  secret: '${AUTHELIA_SESSION_SECRET}'
+  cookies:
+    - domain: 'strieber.org'
+      authelia_url: 'https://auth.strieber.org'
+      default_redirection_url: 'https://chat.strieber.org'
+      name: 'authelia_session'
+      same_site: 'lax'
+      inactivity: '1h'
+      expiration: '24h'
+      remember_me: '1M'
+
+# -----------------------------------------------------------------------------
+# Storage (SQLite - local, no external DB needed)
+# -----------------------------------------------------------------------------
+storage:
+  encryption_key: '${AUTHELIA_STORAGE_ENCRYPTION_KEY}'
+  local:
+    path: /data/db.sqlite3
+
+# -----------------------------------------------------------------------------
+# TOTP Configuration (Time-based One-Time Password)
+# -----------------------------------------------------------------------------
+totp:
+  disable: false
+  issuer: 'strieber.org'
+  # Defaults: SHA1, 6 digits, 30-second period - compatible with all apps
+
+# -----------------------------------------------------------------------------
+# WebAuthn Configuration (Passkeys, YubiKey, Windows Hello, etc.)
+# -----------------------------------------------------------------------------
+webauthn:
+  disable: false
+  display_name: 'Strieber Chat'
+  attestation_conveyance_preference: 'indirect'
+  user_verification: 'preferred'
+  timeout: '60s'
+
+# -----------------------------------------------------------------------------
+# Access Control
+# IMPORTANT: Must have two_factor policy for MFA options to appear!
+# -----------------------------------------------------------------------------
+access_control:
+  default_policy: 'deny'
+  rules:
+    # Chat UI requires two-factor authentication
+    - domain: 'chat.strieber.org'
+      policy: 'two_factor'
+
+    # Auth portal itself (bypass - it handles its own auth)
+    - domain: 'auth.strieber.org'
+      policy: 'bypass'
+
+# -----------------------------------------------------------------------------
+# Notifier (file-based - no SMTP required)
+# Check /data/notifications.txt for password reset links, etc.
+# -----------------------------------------------------------------------------
+notifier:
+  disable: false
+  filesystem:
+    filename: /data/notifications.txt
+
+# -----------------------------------------------------------------------------
+# Identity Validation (for password resets, device registration)
+# -----------------------------------------------------------------------------
+identity_validation:
+  reset_password:
+    jwt_secret: '${AUTHELIA_JWT_SECRET}'

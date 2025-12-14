@@ -696,6 +696,60 @@ services:
     profiles:
       - dev
 
+  # ==========================================================================
+  # Authelia: Authentication server with TOTP + WebAuthn
+  # ABOUTME: Provides login portal, MFA, and session management
+  # Users access chat.strieber.org → Caddy → Authelia check → chat-ui
+  # ==========================================================================
+  authelia:
+    image: authelia/authelia:latest
+    container_name: strieber-authelia
+    restart: unless-stopped
+    volumes:
+      - ./auth/authelia/configuration.yml:/config/configuration.yml:ro
+      - ./auth/authelia/users.yml:/config/users.yml:ro
+      - ./auth/data:/data
+    env_file:
+      - ./auth/.env.authelia
+    environment:
+      - TZ=America/Chicago
+    networks:
+      - strieber-net
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "-q", "http://localhost:9091/api/health"]
+      interval: 30s
+      timeout: 5s
+      start_period: 10s
+      retries: 3
+    profiles:
+      - auth
+
+  # ==========================================================================
+  # Caddy: Reverse proxy with automatic HTTPS
+  # ABOUTME: SSL termination via Let's Encrypt + forward auth to Authelia
+  # Exposes: auth.strieber.org (login) and chat.strieber.org (protected chat)
+  # ==========================================================================
+  caddy:
+    image: caddy:2-alpine
+    container_name: strieber-caddy
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./auth/caddy/Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data
+      - caddy-config:/config
+    depends_on:
+      authelia:
+        condition: service_healthy
+      chat-ui:
+        condition: service_healthy
+    networks:
+      - strieber-net
+    profiles:
+      - auth
+
 networks:
   strieber-net:
     driver: bridge
@@ -703,3 +757,5 @@ networks:
 volumes:
   backend-cargo-cache:
   responses-data:
+  caddy-data:
+  caddy-config:
