@@ -22,6 +22,7 @@ Chat UI (Svelte 5)  ──HTTP──►  responses-api (Rust)  ──HTTP──�
                                         │       - reader :9130
                                         │       - weather :9100
                                         │       - comfy_zimage :9141
+                                        │       - lora_trainer :9145
                                         │
                                         └──►  llama-server-qwen-vl :9020 (vision)
 ```
@@ -40,6 +41,9 @@ Run validation in order: **Format → Lint → Type Check → Test**
 docker compose run --rm backend-dev cargo fmt
 docker compose run --rm backend-dev cargo clippy -- -D warnings
 docker compose run --rm backend-dev cargo test
+
+# Run single test
+docker compose run --rm backend-dev cargo test test_name
 ```
 
 ### Frontend (frontend/)
@@ -51,14 +55,20 @@ docker compose run --rm frontend-dev npm run check
 
 ### Python MCP Servers (backend/tools/mcp_servers/)
 ```bash
+cd backend/tools/mcp_servers
+
+# Format and lint run locally (ruff not in container)
 source .venv/bin/activate && ruff format .
 source .venv/bin/activate && ruff check --fix .
-source .venv/bin/activate && pytest -v
+
+# Tests run in Docker (has all deps like pyyaml)
+docker exec strieber-mcp-lora-trainer pytest -v /app
+docker exec strieber-mcp-lora-trainer pytest -v /app/tests/test_file.py::TestClass::test_method
 ```
 
 ## Docker Development
 
-All tools run inside containers. Never install Node, Rust, or Python dependencies on the host.
+All runtime tools run inside containers. Dev tools (ruff for Python linting) can run locally via venv.
 
 ### Common Commands
 ```bash
@@ -83,6 +93,26 @@ docker compose up chat-ui  # Run dev server
 docker compose run --rm playwright-test
 ```
 Screenshots saved to `frontend/test-results/screenshots/`
+
+### MCP Server Testing
+Interactive debugging tool for testing MCP servers:
+```bash
+# Run from inside any MCP container
+docker exec strieber-mcp-lora-trainer python /app/mcp_test.py servers
+docker exec strieber-mcp-lora-trainer python /app/mcp_test.py ping <server>
+docker exec strieber-mcp-lora-trainer python /app/mcp_test.py list <server>
+docker exec strieber-mcp-lora-trainer python /app/mcp_test.py call <server> <tool> '{"arg": "value"}'
+```
+
+### Docker Naming Convention
+- **Service names** (docker compose, network DNS): `mcp-lora-trainer`, `mcp-web-search`
+- **Container names** (docker exec): `strieber-mcp-lora-trainer`, `strieber-mcp-web-search`
+
+### Rebuilding Containers
+After code changes, rebuild and restart specific services:
+```bash
+docker compose build --no-cache mcp-lora-trainer && docker compose up -d mcp-lora-trainer
+```
 
 ## Tech Stack Reference
 
