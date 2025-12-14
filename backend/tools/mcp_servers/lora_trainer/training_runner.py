@@ -97,11 +97,9 @@ class TrainingRunner:
         )
         self.job_store.save_job(job)
 
-        # Create output directory
+        # Create output directory (ai-toolkit creates its own structure inside)
         job_output_path = self.outputs_path / job_id
         job_output_path.mkdir(parents=True, exist_ok=True)
-        (job_output_path / "checkpoints").mkdir()
-        (job_output_path / "samples").mkdir()
 
         # Generate config YAML
         config_path = self._write_config(job_id, dataset_name, trigger_token, config)
@@ -408,22 +406,24 @@ class TrainingRunner:
         if not job:
             return
 
-        output_path = self.outputs_path / job_id
+        # ai-toolkit outputs to: {training_folder}/{dataset_name}_{job_id}/
+        job_output_dir = self.outputs_path / job_id / f"{job.dataset_name}_{job_id}"
         updated = False
 
-        # Scan checkpoints
-        checkpoints_dir = output_path / "checkpoints"
-        if checkpoints_dir.exists():
-            checkpoints = sorted(checkpoints_dir.glob("*.safetensors"))
+        # Scan checkpoints (in job output directory, not separate checkpoints dir)
+        if job_output_dir.exists():
+            checkpoints = sorted(job_output_dir.glob("*.safetensors"))
             new_checkpoints = [c.name for c in checkpoints]
             if new_checkpoints != job.checkpoints:
                 job.checkpoints = new_checkpoints
                 updated = True
 
-        # Scan samples
-        samples_dir = output_path / "samples"
+        # Scan samples (ai-toolkit outputs JPGs in samples subdirectory)
+        samples_dir = job_output_dir / "samples"
         if samples_dir.exists():
-            samples = sorted(samples_dir.glob("*.png"))
+            samples = sorted(
+                list(samples_dir.glob("*.jpg")) + list(samples_dir.glob("*.png"))
+            )
             new_samples = [str(s) for s in samples]
             if new_samples != job.sample_images:
                 job.sample_images = new_samples
@@ -485,7 +485,9 @@ class TrainingRunner:
         if not job:
             raise ValueError(f"Job not found: {job_id}")
 
-        src = self.outputs_path / job_id / "checkpoints" / checkpoint_name
+        # ai-toolkit outputs to: {training_folder}/{dataset_name}_{job_id}/
+        job_output_dir = self.outputs_path / job_id / f"{job.dataset_name}_{job_id}"
+        src = job_output_dir / checkpoint_name
         if not src.exists():
             raise ValueError(f"Checkpoint not found: {checkpoint_name}")
 
