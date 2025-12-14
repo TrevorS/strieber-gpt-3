@@ -360,21 +360,46 @@ class TrainingRunner:
         updated = False
 
         # Parse patterns like "Step 500/3000", "step: 500", or tqdm "| 71/100 ["
+        # Find ALL matches and prefer those where total matches job.total_steps
+        # This avoids matching latent caching progress (e.g., 0/27) instead of
+        # training progress (e.g., 50/100)
         step_patterns = [
             r"\|\s*(\d+)/(\d+)\s+\[",  # tqdm: | 71/100 [
             r"[Ss]tep[:\s]+(\d+)[/\s]+(\d+)",
             r"(\d+)/(\d+)\s+steps?",
-            r"step[:\s]+(\d+)",
         ]
 
+        best_match = None
         for pattern in step_patterns:
-            match = re.search(pattern, logs)
-            if match:
-                job.current_step = int(match.group(1))
-                if len(match.groups()) > 1:
-                    job.total_steps = int(match.group(2))
-                updated = True
+            for match in re.finditer(pattern, logs):
+                current = int(match.group(1))
+                total = int(match.group(2))
+
+                # Prefer matches where total matches expected training steps
+                if total == job.total_steps:
+                    best_match = (current, total)
+                    break
+                elif best_match is None and total > 0:
+                    # Keep first valid match as fallback
+                    best_match = (current, total)
+
+            # If we found an exact total_steps match, stop searching
+            if best_match and best_match[1] == job.total_steps:
                 break
+
+        if best_match:
+            job.current_step = best_match[0]
+            # Only update total_steps if it differs (don't overwrite with caching total)
+            if best_match[1] == job.total_steps or job.current_step == 0:
+                job.total_steps = best_match[1]
+            updated = True
+
+        # Also check single-step pattern as last resort (no total in match)
+        if not best_match:
+            single_step = re.search(r"step[:\s]+(\d+)", logs, re.IGNORECASE)
+            if single_step:
+                job.current_step = int(single_step.group(1))
+                updated = True
 
         # Parse loss patterns like "Loss: 0.0234", "loss=0.023", or "loss: 2.891e-01"
         loss_patterns = [

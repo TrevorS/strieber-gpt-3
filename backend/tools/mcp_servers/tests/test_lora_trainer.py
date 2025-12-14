@@ -292,3 +292,124 @@ class TestJobStore:
 
         assert retrieved is not None
         assert retrieved.job_id == "test123"
+
+
+class TestProgressParsing:
+    """Tests for training progress parsing from logs."""
+
+    @pytest.fixture
+    def runner_with_job(self, tmp_path: Path):
+        """Create a TrainingRunner with a sample job (total_steps=100)."""
+        from lora_trainer.training_runner import TrainingRunner
+
+        store = JobStore(tmp_path / "jobs.json")
+        config = TrainingConfig(dataset="test", steps=100)
+        job = TrainingJob(
+            job_id="test123",
+            dataset_name="test",
+            trigger_token="ohwx",
+            config=config,
+            total_steps=100,
+        )
+        store.save_job(job)
+
+        runner = TrainingRunner(
+            datasets_path=tmp_path / "datasets",
+            outputs_path=tmp_path / "outputs",
+            configs_path=tmp_path / "configs",
+            job_store=store,
+        )
+        return runner, store
+
+    def test_parse_training_progress_not_caching(self, runner_with_job):
+        """Test that training progress is parsed, not latent caching progress."""
+        runner, store = runner_with_job
+
+        # Logs contain BOTH latent caching AND training progress
+        logs = """
+        | 0/27 [ 0%] Processing images (Caching latents)
+        | 15/27 [55%] Caching latents
+        | 27/27 [100%] Caching complete
+        | 50/100 [50%] Training: loss: 0.0234
+        """
+
+        runner._parse_progress("test123", logs)
+
+        job = store.get_job("test123")
+        assert job.current_step == 50, "Should match training progress, not caching"
+        assert job.total_steps == 100, "Should keep expected total steps"
+        assert job.latest_loss == pytest.approx(0.0234)
+
+    def test_parse_only_caching_progress_uses_fallback(self, runner_with_job):
+        """Test that caching progress is used as fallback when no training match."""
+        runner, store = runner_with_job
+
+        # Only latent caching, no training started yet
+        logs = "| 15/27 [55%] Caching latents"
+
+        runner._parse_progress("test123", logs)
+
+        job = store.get_job("test123")
+        # Falls back to caching progress since no match for total_steps=100
+        assert job.current_step == 15
+        # Note: total_steps may be updated as fallback behavior
+
+    def test_parse_progress_prefers_matching_total(self, runner_with_job):
+        """Test that progress matching job.total_steps is preferred."""
+        runner, store = runner_with_job
+
+        # Multiple progress bars with different totals
+        logs = """
+        | 5/10 [50%] Loading checkpoints
+        | 75/100 [75%] Training
+        | 3/5 [60%] Sampling
+        """
+
+        runner._parse_progress("test123", logs)
+
+        job = store.get_job("test123")
+        assert job.current_step == 75, "Should prefer progress matching total_steps"
+        assert job.total_steps == 100
+
+    def test_parse_loss_scientific_notation(self, runner_with_job):
+        """Test parsing loss in scientific notation."""
+        runner, store = runner_with_job
+
+        logs = "| 50/100 [50%] Training: loss: 2.891e-01"
+
+        runner._parse_progress("test123", logs)
+
+        job = store.get_job("test123")
+        assert job.latest_loss == pytest.approx(0.2891)
+
+    def test_parse_step_patterns_alternative_formats(self, runner_with_job):
+        """Test alternative step format patterns."""
+        runner, store = runner_with_job
+
+        # Test "Step X/Y" format
+        logs = "Step 42/100 completed"
+        runner._parse_progress("test123", logs)
+
+        job = store.get_job("test123")
+        assert job.current_step == 42
+
+    def test_parse_single_step_pattern(self, runner_with_job):
+        """Test single step pattern (no total) as fallback."""
+        runner, store = runner_with_job
+
+        logs = "step: 85 - processing..."
+        runner._parse_progress("test123", logs)
+
+        job = store.get_job("test123")
+        assert job.current_step == 85
+
+    def test_parse_no_progress_no_update(self, runner_with_job):
+        """Test that irrelevant logs don't update job state."""
+        runner, store = runner_with_job
+
+        logs = "Loading model weights..."
+        runner._parse_progress("test123", logs)
+
+        job = store.get_job("test123")
+        assert job.current_step == 0  # Unchanged from initial
+        assert job.latest_loss is None
