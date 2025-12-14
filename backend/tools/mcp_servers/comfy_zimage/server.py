@@ -41,6 +41,7 @@ def _load_workflow(filename: str) -> Dict:
 
 
 ZIMAGE_WORKFLOW = _load_workflow("zimage_api.json")
+ZIMAGE_LORA_WORKFLOW = _load_workflow("zimage_lora_api.json")
 ZIMAGE_CONTROLNET_WORKFLOW = _load_workflow("zimage_controlnet_api.json")
 
 
@@ -82,6 +83,24 @@ ZIMAGE_NODES = {
     "vae_decode": "9",  # VAEDecode
     "save_image": "10",  # SaveImage
 }
+
+# Node ID mappings for z-image LoRA workflow
+ZIMAGE_LORA_NODES = {
+    "clip_loader": "1",  # CLIPLoader (qwen_3_4b, lumina2)
+    "vae_loader": "2",  # VAELoader (ae.safetensors)
+    "unet_loader": "3",  # UNETLoader (z_image_turbo_bf16)
+    "lora_loader": "4",  # LoraLoaderModelOnly (lora_name, strength_model)
+    "empty_latent": "5",  # EmptySD3LatentImage (width, height, batch_size)
+    "positive_prompt": "6",  # CLIPTextEncode for positive prompt
+    "negative_zero": "7",  # ConditioningZeroOut
+    "model_sampling": "8",  # ModelSamplingAuraFlow (shift=3) - receives from lora_loader
+    "sampler": "9",  # KSampler (seed, steps, cfg)
+    "vae_decode": "10",  # VAEDecode
+    "save_image": "11",  # SaveImage
+}
+
+# Path to LoRAs directory (mounted from host)
+LORAS_PATH = Path("/models/loras")
 
 # Node ID mappings for z-image ControlNet workflow
 ZIMAGE_CONTROLNET_NODES = {
@@ -129,6 +148,8 @@ async def zimage_turbo(
     n: int = 1,
     seed: Optional[int] = None,
     steps: int = 8,
+    lora_name: Optional[str] = None,
+    lora_strength: float = 1.0,
     ctx: Context = None,
 ) -> List[TextContent | ImageContent]:
     """Generate images from text descriptions.
@@ -162,21 +183,37 @@ async def zimage_turbo(
     - 1280x720 / 720x1280: Widescreen / phone wallpaper
     - 1344x768 / 768x1344: Ultra-wide / tall banners
 
+    LORA SUPPORT:
+    If you have trained a custom LoRA, use these parameters:
+    - lora_name: LoRA filename (without .safetensors extension)
+    - lora_strength: Influence strength (0.0-2.0, default 1.0)
+    - Include the trigger token in your prompt!
+
+    Example: prompt="ohwx, portrait photo, studio lighting", lora_name="my_character"
+
+    Use lora_list_available() to see trained LoRAs.
+
     Args:
         prompt: Detailed image description. ALWAYS expand simple requests.
         size: Image dimensions. Default "1024x1024".
         n: Number of images (1-4). Default 1.
         seed: Random seed for reproducibility.
-        steps: Denoising steps (1-20). Default 9.
+        steps: Denoising steps (1-20). Default 8.
+        lora_name: Optional LoRA name (without .safetensors). Use with trigger token.
+        lora_strength: LoRA influence (0.0-2.0). Default 1.0.
 
     Returns:
         Generated image(s) as base64 PNG.
     """
-    logger.info(f"zimage_turbo called: prompt='{prompt[:50]}...', size={size}, n={n}")
+    lora_info = f", lora={lora_name}" if lora_name else ""
+    logger.info(
+        f"zimage_turbo called: prompt='{prompt[:50]}...', size={size}, n={n}{lora_info}"
+    )
 
     # Clamp parameters
     n = max(1, min(4, n))
     steps = max(1, min(20, steps))
+    lora_strength = max(0.0, min(2.0, lora_strength))
 
     try:
         # Parse size
@@ -186,17 +223,27 @@ async def zimage_turbo(
         if seed is None:
             seed = random.randint(0, 2**32 - 1)
 
-        # Prepare workflow
-        workflow = json.loads(json.dumps(ZIMAGE_WORKFLOW))  # Deep copy
+        # Select workflow based on LoRA usage
+        if lora_name:
+            workflow = json.loads(json.dumps(ZIMAGE_LORA_WORKFLOW))  # Deep copy
+            nodes = ZIMAGE_LORA_NODES
+
+            # Configure LoRA loader node
+            lora_filename = f"{lora_name}.safetensors"
+            workflow[nodes["lora_loader"]]["inputs"]["lora_name"] = lora_filename
+            workflow[nodes["lora_loader"]]["inputs"]["strength_model"] = lora_strength
+        else:
+            workflow = json.loads(json.dumps(ZIMAGE_WORKFLOW))  # Deep copy
+            nodes = ZIMAGE_NODES
 
         # Update workflow nodes with parameters
-        workflow[ZIMAGE_NODES["positive_prompt"]]["inputs"]["text"] = prompt
-        workflow[ZIMAGE_NODES["empty_latent"]]["inputs"]["width"] = width
-        workflow[ZIMAGE_NODES["empty_latent"]]["inputs"]["height"] = height
-        workflow[ZIMAGE_NODES["empty_latent"]]["inputs"]["batch_size"] = n
-        workflow[ZIMAGE_NODES["sampler"]]["inputs"]["seed"] = seed
-        workflow[ZIMAGE_NODES["sampler"]]["inputs"]["steps"] = steps
-        workflow[ZIMAGE_NODES["sampler"]]["inputs"]["cfg"] = 1.0
+        workflow[nodes["positive_prompt"]]["inputs"]["text"] = prompt
+        workflow[nodes["empty_latent"]]["inputs"]["width"] = width
+        workflow[nodes["empty_latent"]]["inputs"]["height"] = height
+        workflow[nodes["empty_latent"]]["inputs"]["batch_size"] = n
+        workflow[nodes["sampler"]]["inputs"]["seed"] = seed
+        workflow[nodes["sampler"]]["inputs"]["steps"] = steps
+        workflow[nodes["sampler"]]["inputs"]["cfg"] = 1.0
 
         # Queue workflow
         prompt_id = await comfy_client.queue_prompt(workflow)
@@ -225,6 +272,9 @@ async def zimage_turbo(
             f"  seed: {seed}",
             "  cfg: 1.0",
         ]
+        if lora_name:
+            summary_parts.append(f"  lora_name: {lora_name}")
+            summary_parts.append(f"  lora_strength: {lora_strength}")
 
         summary_text = "\n".join(summary_parts)
         content_blocks.append(TextContent(type="text", text=summary_text))
@@ -403,6 +453,52 @@ async def zimage_controlnet(
             f"- Verify the input image is valid base64 PNG/JPEG"
         )
         return [TextContent(type="text", text=error_msg)]
+
+
+@mcp.tool()
+async def lora_list_available(
+    ctx: Context = None,
+) -> List[TextContent]:
+    """List available LoRAs for z-image turbo inference.
+
+    Shows LoRAs that can be used with zimage_turbo's lora_name parameter.
+    These are .safetensors files in the loras directory.
+
+    Returns:
+        List of LoRA names with file sizes.
+    """
+    if not LORAS_PATH.exists():
+        return [
+            TextContent(
+                type="text",
+                text="No LoRAs directory found at /models/loras.\n"
+                "Train a LoRA with lora_start_training and promote it with lora_promote_checkpoint.",
+            )
+        ]
+
+    loras = []
+    for f in sorted(LORAS_PATH.glob("*.safetensors")):
+        size_mb = f.stat().st_size / (1024 * 1024)
+        loras.append(f"- {f.stem} ({size_mb:.1f} MB)")
+
+    if not loras:
+        return [
+            TextContent(
+                type="text",
+                text="No LoRAs found in loras directory.\n"
+                "Train a LoRA with lora_start_training and promote it with lora_promote_checkpoint.",
+            )
+        ]
+
+    return [
+        TextContent(
+            type="text",
+            text="Available LoRAs:\n"
+            + "\n".join(loras)
+            + "\n\nUsage: zimage_turbo(prompt='trigger_token, description...', "
+            "lora_name='name_here', lora_strength=1.0)",
+        )
+    ]
 
 
 # ============================================================================
