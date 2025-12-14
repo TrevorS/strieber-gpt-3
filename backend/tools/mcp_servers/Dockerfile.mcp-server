@@ -22,7 +22,6 @@ COPY *.py ./
 COPY common ./common/
 COPY tests ./tests/
 COPY reader ./reader/
-COPY comfy_qwen ./comfy_qwen/
 COPY comfy_zimage ./comfy_zimage/
 COPY wikipedia ./wikipedia/
 

@@ -5,6 +5,7 @@
 mod context;
 mod executor;
 mod streaming;
+pub mod title_generator;
 
 pub use context::{ChainErrorKind, ChainResolutionError, DEFAULT_MAX_CHAIN_DEPTH, resolve_chain};
 pub use executor::{ExecutionError, Executor, ExecutorConfig, GeneratedFile};

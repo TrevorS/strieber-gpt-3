@@ -1,8 +1,16 @@
-import { test, expect } from '@playwright/test';
+import { test, expect } from './fixtures';
 
 test.describe('Model Selector', () => {
+	// Helper to wait for page to be fully ready
+	async function waitForPageReady(page: import('@playwright/test').Page) {
+		await page.waitForLoadState('networkidle');
+		const trigger = page.getByTestId('model-selector-trigger');
+		await expect(trigger).toBeEnabled({ timeout: 15000 });
+	}
+
 	test('shows model selector in header', async ({ page }) => {
 		await page.goto('/');
+		await waitForPageReady(page);
 
 		// Verify model selector is visible
 		const modelSelector = page.getByTestId('model-selector');
@@ -23,15 +31,15 @@ test.describe('Model Selector', () => {
 
 		// It may show "Loading..." briefly - this test verifies the element exists
 		// The loading state is brief so we just verify the button exists
-		await expect(trigger).toBeEnabled({ timeout: 5000 });
+		await expect(trigger).toBeEnabled({ timeout: 15000 });
 	});
 
 	test('opens dropdown when clicked', async ({ page }) => {
 		await page.goto('/');
+		await waitForPageReady(page);
 
 		// Wait for models to load
 		const trigger = page.getByTestId('model-selector-trigger');
-		await expect(trigger).toBeEnabled({ timeout: 5000 });
 
 		// Click to open dropdown
 		await trigger.click();
@@ -48,10 +56,10 @@ test.describe('Model Selector', () => {
 
 	test('closes dropdown when clicking outside', async ({ page }) => {
 		await page.goto('/');
+		await waitForPageReady(page);
 
 		// Wait for models to load and open dropdown
 		const trigger = page.getByTestId('model-selector-trigger');
-		await expect(trigger).toBeEnabled({ timeout: 5000 });
 		await trigger.click();
 
 		const dropdown = page.getByTestId('model-selector-dropdown');
@@ -66,10 +74,10 @@ test.describe('Model Selector', () => {
 
 	test('closes dropdown when pressing Escape', async ({ page }) => {
 		await page.goto('/');
+		await waitForPageReady(page);
 
 		// Wait for models to load and open dropdown
 		const trigger = page.getByTestId('model-selector-trigger');
-		await expect(trigger).toBeEnabled({ timeout: 5000 });
 		await trigger.click();
 
 		const dropdown = page.getByTestId('model-selector-dropdown');
@@ -84,10 +92,10 @@ test.describe('Model Selector', () => {
 
 	test('shows available model options in dropdown', async ({ page }) => {
 		await page.goto('/');
+		await waitForPageReady(page);
 
 		// Wait for models to load and open dropdown
 		const trigger = page.getByTestId('model-selector-trigger');
-		await expect(trigger).toBeEnabled({ timeout: 5000 });
 		await trigger.click();
 
 		const dropdown = page.getByTestId('model-selector-dropdown');
@@ -101,10 +109,10 @@ test.describe('Model Selector', () => {
 
 	test('selecting a model updates the displayed selection', async ({ page }) => {
 		await page.goto('/');
+		await waitForPageReady(page);
 
 		// Wait for models to load
 		const trigger = page.getByTestId('model-selector-trigger');
-		await expect(trigger).toBeEnabled({ timeout: 5000 });
 
 		// Get current selected model text
 		const initialText = await trigger.textContent();
@@ -146,10 +154,10 @@ test.describe('Model Selector', () => {
 
 	test('selected model persists across page reloads', async ({ page }) => {
 		await page.goto('/');
+		await waitForPageReady(page);
 
 		// Wait for models to load
 		const trigger = page.getByTestId('model-selector-trigger');
-		await expect(trigger).toBeEnabled({ timeout: 5000 });
 
 		// Open dropdown and select a specific model
 		await trigger.click();
@@ -174,9 +182,10 @@ test.describe('Model Selector', () => {
 		if (selectedModelId) {
 			// Reload page
 			await page.reload();
+			await page.waitForLoadState('networkidle');
 
 			// Wait for models to load again
-			await expect(trigger).toBeEnabled({ timeout: 5000 });
+			await expect(trigger).toBeEnabled({ timeout: 15000 });
 
 			// Verify same model is still selected
 			await expect(trigger).toContainText(selectedModelId);

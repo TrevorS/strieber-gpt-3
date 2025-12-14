@@ -45,24 +45,22 @@ export function generateUUID(): string {
 
 /**
  * A chat conversation containing messages and metadata.
+ * The id is now the server-side conversation ID (conv_xxx format).
  */
 export interface Conversation {
-	/** Unique identifier (UUID) */
+	/** Unique identifier - server ID (conv_xxx format) */
 	id: string;
 
-	/** Display title (auto-generated or user-edited) */
+	/** Display title (stored in server metadata.title) */
 	title: string;
 
-	/** Timestamp when conversation was created */
+	/** Timestamp when conversation was created (from server) */
 	createdAt: number;
 
-	/** Timestamp when conversation was last updated */
+	/** Timestamp when conversation was last updated (client-side tracking) */
 	updatedAt: number;
 
-	/** Last response ID for context chaining with Responses API */
-	lastResponseId: string | null;
-
-	/** Messages in chronological order */
+	/** Messages in chronological order (client-side cache for UI) */
 	messages: Message[];
 }
 
@@ -161,18 +159,19 @@ export function isComputerUseItem(
 }
 
 /**
- * Helper to create a new conversation with defaults.
+ * Convert a server conversation to local Conversation format.
+ * Server conversations use metadata.title for the title.
  */
-export function createConversation(overrides?: Partial<Conversation>): Conversation {
-	const now = Date.now();
+export function serverToLocalConversation(
+	server: { id: string; created_at: number; metadata?: Record<string, string> },
+	existingMessages: Message[] = []
+): Conversation {
 	return {
-		id: generateUUID(),
-		title: 'New Chat',
-		createdAt: now,
-		updatedAt: now,
-		lastResponseId: null,
-		messages: [],
-		...overrides
+		id: server.id,
+		title: server.metadata?.title || 'New Chat',
+		createdAt: server.created_at * 1000, // Server uses seconds, client uses ms
+		updatedAt: Date.now(),
+		messages: existingMessages
 	};
 }
 

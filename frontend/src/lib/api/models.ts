@@ -15,6 +15,8 @@ export interface Model {
 	supports_vision?: boolean;
 	/** Which tools this model supports. null = all tools, [] = no tools */
 	supported_tools?: string[] | null;
+	/** Model capabilities (e.g., 'task', 'vision', 'reasoning') */
+	capabilities?: string[];
 }
 
 export interface ModelsResponse {

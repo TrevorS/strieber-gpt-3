@@ -16,6 +16,7 @@ ENV DEBIAN_FRONTEND=noninteractive \
 ARG USERNAME=app
 ARG UID=1000
 ARG GID=1000
+ARG COMFYUI_VERSION=v0.4.0
 
 # Install system dependencies
 # - git: Clone ComfyUI repo
@@ -40,8 +41,8 @@ RUN (groupadd -g ${GID} ${USERNAME} 2>/dev/null || groupmod -n ${USERNAME} $(get
 
 WORKDIR /opt
 
-# Clone ComfyUI repository
-RUN git clone https://github.com/comfyanonymous/ComfyUI.git
+# Clone ComfyUI repository at pinned version
+RUN git clone --depth 1 --branch ${COMFYUI_VERSION} https://github.com/comfyanonymous/ComfyUI.git
 
 WORKDIR /opt/ComfyUI
 

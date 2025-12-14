@@ -19,8 +19,8 @@ use crate::execution::{
     execute_streaming, resolve_chain,
 };
 use crate::mcp::McpClient;
-use crate::models::{ChatMessage, CreateResponseRequest, DeleteResponse};
-use crate::state::{InMemoryStore, ResponseStore};
+use crate::models::{ChatMessage, ConversationItem, CreateResponseRequest, DeleteResponse};
+use crate::state::{ConversationStore, InMemoryConversationStore, InMemoryStore, ResponseStore};
 use crate::translation::assemble_context_from_chain;
 
 /// Type alias for API error responses.
@@ -30,6 +30,7 @@ type ApiError = (StatusCode, Json<serde_json::Value>);
 pub struct AppState {
     pub executor: Executor,
     pub store: InMemoryStore,
+    pub conversations: InMemoryConversationStore,
     pub config: Config,
     pub mcp: McpClient,
     pub containers: ContainerStore,
@@ -40,17 +41,35 @@ pub async fn create_response(
     State(state): State<Arc<AppState>>,
     Json(req): Json<CreateResponseRequest>,
 ) -> Result<impl IntoResponse, (StatusCode, Json<serde_json::Value>)> {
+    // Validate mutual exclusivity of conversation and previous_response_id
+    if req.conversation.is_some() && req.previous_response_id.is_some() {
+        return Err((
+            StatusCode::BAD_REQUEST,
+            Json(json!({
+                "error": {
+                    "type": "invalid_request_error",
+                    "message": "Cannot use both 'conversation' and 'previous_response_id' in the same request"
+                }
+            })),
+        ));
+    }
+
     tracing::info!(
         model = %req.model,
         previous_response_id = ?req.previous_response_id,
+        conversation_id = ?req.conversation.as_ref().map(|c| &c.id),
         store = req.store,
         stream = req.stream,
         "Creating response"
     );
 
-    // Resolve previous_response_id chain if provided
-    let (resolved_instructions, previous_messages) =
-        resolve_previous_response_chain(&state.store, &req)?;
+    // Resolve context from either conversation or previous_response_id chain
+    let (resolved_instructions, previous_messages) = if let Some(ref conv_param) = req.conversation
+    {
+        resolve_conversation_context(&state.conversations, &conv_param.id, &req)?
+    } else {
+        resolve_previous_response_chain(&state.store, &req)?
+    };
 
     tracing::info!(
         previous_messages_count = previous_messages.len(),
@@ -75,7 +94,12 @@ pub async fn create_response(
         .map_err(execution_error)?;
 
     if req.store {
-        state.store.store(response.clone(), req);
+        state.store.store(response.clone(), req.clone());
+    }
+
+    // After creating non-streaming response, append to conversation if specified
+    if let Some(ref conv_param) = req.conversation {
+        append_response_to_conversation(&state.conversations, &conv_param.id, &req, &response);
     }
 
     Ok((StatusCode::OK, Json(response)).into_response())
@@ -162,6 +186,14 @@ async fn create_streaming_response(
         None
     };
 
+    // Extract conversation parameters for streaming
+    let conversation_id = req.conversation.as_ref().map(|c| c.id.clone());
+    let conversation_store = if conversation_id.is_some() {
+        Some(state.conversations.clone())
+    } else {
+        None
+    };
+
     let mcp = state.mcp.clone();
     let containers = state.containers.clone();
     let stream = execute_streaming(
@@ -171,6 +203,8 @@ async fn create_streaming_response(
         previous_messages,
         store,
         containers,
+        conversation_store,
+        conversation_id,
     );
 
     let sse_stream = stream.map(|result| -> Result<Event, Infallible> {
@@ -284,7 +318,8 @@ pub async fn list_models(State(state): State<Arc<AppState>>) -> impl IntoRespons
                 "created": 1234567890,
                 "owned_by": m.owned_by,
                 "supports_vision": m.supports_vision,
-                "supported_tools": m.supported_tools
+                "supported_tools": m.supported_tools,
+                "capabilities": m.capabilities
             })
         })
         .collect();
@@ -293,4 +328,234 @@ pub async fn list_models(State(state): State<Arc<AppState>>) -> impl IntoRespons
         StatusCode::OK,
         Json(json!({ "object": "list", "data": models })),
     )
+}
+
+// ============================================================================
+// Conversation Integration Helpers
+// ============================================================================
+
+/// Resolve conversation context into chat messages.
+fn resolve_conversation_context(
+    store: &InMemoryConversationStore,
+    conversation_id: &str,
+    req: &CreateResponseRequest,
+) -> Result<(Option<String>, Vec<ChatMessage>), ApiError> {
+    use crate::models::{PaginationQuery, SortOrder};
+
+    // Check if conversation exists
+    let _conversation = store.get(conversation_id).ok_or_else(|| {
+        (
+            StatusCode::NOT_FOUND,
+            Json(json!({
+                "error": {
+                    "type": "not_found",
+                    "message": format!("Conversation {} not found", conversation_id)
+                }
+            })),
+        )
+    })?;
+
+    // Get all items from conversation (use high limit, asc order)
+    let query = PaginationQuery {
+        after: None,
+        limit: 100,
+        order: SortOrder::Asc,
+    };
+
+    let items_response = store.list_items(conversation_id, &query);
+    let items = items_response.map(|r| r.data).unwrap_or_default();
+
+    // Convert conversation items to chat messages
+    let messages = conversation_items_to_chat_messages(&items);
+
+    tracing::info!(
+        conversation_id = %conversation_id,
+        items_count = items.len(),
+        messages_count = messages.len(),
+        "Loaded conversation context"
+    );
+
+    Ok((req.instructions.clone(), messages))
+}
+
+/// Convert conversation items to chat messages for context.
+fn conversation_items_to_chat_messages(items: &[ConversationItem]) -> Vec<ChatMessage> {
+    use crate::models::{
+        ChatContent, ChatRole, ConversationItemContent, InputItem, MessageContent,
+    };
+
+    items
+        .iter()
+        .filter_map(|item| {
+            match &item.content {
+                ConversationItemContent::Input(input_item) => {
+                    match input_item {
+                        InputItem::Message(msg) => {
+                            let role = match msg.role {
+                                crate::models::Role::User => ChatRole::User,
+                                crate::models::Role::Assistant => ChatRole::Assistant,
+                                crate::models::Role::System | crate::models::Role::Developer => {
+                                    ChatRole::System
+                                }
+                            };
+                            let content = match &msg.content {
+                                MessageContent::Text(t) => Some(ChatContent::Text(t.clone())),
+                                MessageContent::Parts(_) => None, // TODO: handle parts
+                            };
+                            content.map(|c| ChatMessage {
+                                role,
+                                content: Some(c),
+                                reasoning_content: None,
+                                tool_calls: None,
+                                tool_call_id: None,
+                            })
+                        }
+                        _ => None, // Skip other input types for now
+                    }
+                }
+                ConversationItemContent::Output(output_json) => {
+                    // Parse output JSON and extract message content
+                    // Output items have a "type" field to identify them
+                    let type_field = output_json.get("type").and_then(|t| t.as_str());
+
+                    match type_field {
+                        Some("message") => {
+                            // Extract text content from message output
+                            let content_array =
+                                output_json.get("content").and_then(|c| c.as_array());
+                            let text = content_array.and_then(|arr| {
+                                arr.iter().find_map(|part| {
+                                    if part.get("type").and_then(|t| t.as_str())
+                                        == Some("output_text")
+                                    {
+                                        part.get("text")
+                                            .and_then(|t| t.as_str())
+                                            .map(|s| s.to_string())
+                                    } else {
+                                        None
+                                    }
+                                })
+                            });
+
+                            text.map(|t| ChatMessage {
+                                role: ChatRole::Assistant,
+                                content: Some(ChatContent::Text(t)),
+                                reasoning_content: None,
+                                tool_calls: None,
+                                tool_call_id: None,
+                            })
+                        }
+                        Some("reasoning") => {
+                            // Extract reasoning content and wrap in think tags
+                            let content_array =
+                                output_json.get("content").and_then(|c| c.as_array());
+                            let text = content_array.and_then(|arr| {
+                                let texts: Vec<String> = arr
+                                    .iter()
+                                    .filter_map(|part| {
+                                        if part.get("type").and_then(|t| t.as_str())
+                                            == Some("reasoning_text")
+                                        {
+                                            part.get("text")
+                                                .and_then(|t| t.as_str())
+                                                .map(|s| s.to_string())
+                                        } else {
+                                            None
+                                        }
+                                    })
+                                    .collect();
+                                if texts.is_empty() {
+                                    None
+                                } else {
+                                    Some(texts.join(""))
+                                }
+                            });
+
+                            text.map(|t| ChatMessage {
+                                role: ChatRole::Assistant,
+                                content: None,
+                                reasoning_content: Some(t),
+                                tool_calls: None,
+                                tool_call_id: None,
+                            })
+                        }
+                        _ => None, // Skip function calls and other types
+                    }
+                }
+            }
+        })
+        .collect()
+}
+
+/// Append request input and response output to conversation.
+fn append_response_to_conversation(
+    store: &InMemoryConversationStore,
+    conversation_id: &str,
+    req: &CreateResponseRequest,
+    response: &crate::models::Response,
+) {
+    use crate::models::{ConversationItemContent, Input, InputItem, OutputStatus};
+    use crate::translation::{function_call_id, item_id, message_id, reasoning_id};
+
+    let mut all_items: Vec<ConversationItem> = Vec::new();
+
+    // First, append input items from the request
+    let input_items: Vec<InputItem> = match &req.input {
+        Input::Empty => vec![],
+        Input::Text(text) => {
+            // Convert simple text to a user message
+            vec![InputItem::Message(crate::models::MessageInput {
+                role: crate::models::Role::User,
+                content: crate::models::MessageContent::Text(text.clone()),
+            })]
+        }
+        Input::Items(items) => items.clone(),
+    };
+
+    for input_item in input_items {
+        let id = match &input_item {
+            InputItem::Message(_) => message_id(),
+            InputItem::Reasoning(_) => reasoning_id(),
+            InputItem::FunctionCall(_) => function_call_id(),
+            _ => item_id(),
+        };
+        all_items.push(ConversationItem {
+            id,
+            status: OutputStatus::Completed,
+            content: ConversationItemContent::Input(input_item),
+        });
+    }
+
+    // Then, append output items from the response
+    for output in &response.output {
+        let id = match output {
+            crate::models::OutputItem::Message(_) => message_id(),
+            crate::models::OutputItem::FunctionCall(_) => function_call_id(),
+            crate::models::OutputItem::Reasoning(_) => reasoning_id(),
+            _ => item_id(),
+        };
+        all_items.push(ConversationItem {
+            id,
+            status: OutputStatus::Completed,
+            content: ConversationItemContent::Output(
+                serde_json::to_value(output).unwrap_or_default(),
+            ),
+        });
+    }
+
+    if !all_items.is_empty() {
+        let input_count = all_items
+            .iter()
+            .filter(|i| matches!(i.content, ConversationItemContent::Input(_)))
+            .count();
+        let output_count = all_items.len() - input_count;
+
+        store.append_output_items(conversation_id, all_items);
+        tracing::debug!(
+            conversation_id = %conversation_id,
+            input_items_appended = input_count,
+            output_items_appended = output_count,
+            "Appended request and response to conversation"
+        );
+    }
 }

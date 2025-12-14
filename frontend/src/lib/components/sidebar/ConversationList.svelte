@@ -97,6 +97,7 @@
 								<ConversationItem
 									{conversation}
 									isActive={conversation.id === activeId}
+									isTitlePending={conversation.title === 'New Chat' && conversation.messages.length >= 1}
 									onselect={() => onselect(conversation.id)}
 									ondelete={() => ondelete(conversation.id)}
 									onrename={onrename ? (title) => onrename(conversation.id, title) : undefined}

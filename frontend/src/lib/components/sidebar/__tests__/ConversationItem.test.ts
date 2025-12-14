@@ -4,7 +4,20 @@
 import { fireEvent, render, screen } from '@testing-library/svelte';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import ConversationItem from '../ConversationItem.svelte';
-import { createConversation } from '$lib/stores/types';
+import type { Conversation } from '$lib/stores/types';
+
+// Helper to create test conversations
+function createTestConversation(overrides: Partial<Conversation> = {}): Conversation {
+	const now = Date.now();
+	return {
+		id: `conv_test_${Math.random().toString(36).slice(2)}`,
+		title: 'New Chat',
+		createdAt: now,
+		updatedAt: now,
+		messages: [],
+		...overrides
+	};
+}
 
 describe('ConversationItem', () => {
 	let mockOnSelect: () => void;
@@ -18,7 +31,7 @@ describe('ConversationItem', () => {
 	});
 
 	it('should render conversation title', () => {
-		const conversation = createConversation({ title: 'Test Chat' });
+		const conversation = createTestConversation({ title: 'Test Chat' });
 		render(ConversationItem, {
 			props: {
 				conversation,
@@ -32,7 +45,7 @@ describe('ConversationItem', () => {
 	});
 
 	it('should truncate long titles', () => {
-		const conversation = createConversation({
+		const conversation = createTestConversation({
 			title: 'This is a very long conversation title that should be truncated'
 		});
 		render(ConversationItem, {
@@ -49,7 +62,7 @@ describe('ConversationItem', () => {
 	});
 
 	it('should highlight when active', () => {
-		const conversation = createConversation({ title: 'Active Chat' });
+		const conversation = createTestConversation({ title: 'Active Chat' });
 		render(ConversationItem, {
 			props: {
 				conversation,
@@ -65,7 +78,7 @@ describe('ConversationItem', () => {
 	});
 
 	it('should not highlight when not active', () => {
-		const conversation = createConversation({ title: 'Inactive Chat' });
+		const conversation = createTestConversation({ title: 'Inactive Chat' });
 		render(ConversationItem, {
 			props: {
 				conversation,
@@ -82,7 +95,7 @@ describe('ConversationItem', () => {
 	});
 
 	it('should call onselect when clicked', async () => {
-		const conversation = createConversation({ title: 'Click Me' });
+		const conversation = createTestConversation({ title: 'Click Me' });
 		render(ConversationItem, {
 			props: {
 				conversation,
@@ -97,7 +110,7 @@ describe('ConversationItem', () => {
 	});
 
 	it('should call ondelete when delete button clicked', async () => {
-		const conversation = createConversation({ title: 'Delete Me' });
+		const conversation = createTestConversation({ title: 'Delete Me' });
 		const { container } = render(ConversationItem, {
 			props: {
 				conversation,
@@ -118,7 +131,7 @@ describe('ConversationItem', () => {
 	});
 
 	it('should not call onselect when delete is clicked', async () => {
-		const conversation = createConversation();
+		const conversation = createTestConversation();
 		const { container } = render(ConversationItem, {
 			props: {
 				conversation,
@@ -137,7 +150,7 @@ describe('ConversationItem', () => {
 
 	describe('rename functionality', () => {
 		it('should show edit button on hover', () => {
-			const conversation = createConversation({ title: 'Rename Me' });
+			const conversation = createTestConversation({ title: 'Rename Me' });
 			const { container } = render(ConversationItem, {
 				props: {
 					conversation,
@@ -153,7 +166,7 @@ describe('ConversationItem', () => {
 		});
 
 		it('should enter edit mode when edit button clicked', async () => {
-			const conversation = createConversation({ title: 'Rename Me' });
+			const conversation = createTestConversation({ title: 'Rename Me' });
 			const { container } = render(ConversationItem, {
 				props: {
 					conversation,
@@ -173,7 +186,7 @@ describe('ConversationItem', () => {
 		});
 
 		it('should enter edit mode on double-click', async () => {
-			const conversation = createConversation({ title: 'Double Click Me' });
+			const conversation = createTestConversation({ title: 'Double Click Me' });
 			const { container } = render(ConversationItem, {
 				props: {
 					conversation,
@@ -192,7 +205,7 @@ describe('ConversationItem', () => {
 		});
 
 		it('should save on Enter key and call onrename', async () => {
-			const conversation = createConversation({ title: 'Original Title' });
+			const conversation = createTestConversation({ title: 'Original Title' });
 			const { container } = render(ConversationItem, {
 				props: {
 					conversation,
@@ -220,7 +233,7 @@ describe('ConversationItem', () => {
 		});
 
 		it('should cancel on Escape key and restore original title', async () => {
-			const conversation = createConversation({ title: 'Original Title' });
+			const conversation = createTestConversation({ title: 'Original Title' });
 			const { container } = render(ConversationItem, {
 				props: {
 					conversation,
@@ -250,7 +263,7 @@ describe('ConversationItem', () => {
 		});
 
 		it('should not call onrename if title is unchanged', async () => {
-			const conversation = createConversation({ title: 'Same Title' });
+			const conversation = createTestConversation({ title: 'Same Title' });
 			const { container } = render(ConversationItem, {
 				props: {
 					conversation,
@@ -275,7 +288,7 @@ describe('ConversationItem', () => {
 		});
 
 		it('should not call onrename if title is empty', async () => {
-			const conversation = createConversation({ title: 'Original Title' });
+			const conversation = createTestConversation({ title: 'Original Title' });
 			const { container } = render(ConversationItem, {
 				props: {
 					conversation,
@@ -301,7 +314,7 @@ describe('ConversationItem', () => {
 		});
 
 		it('should not prevent selection when onrename is not provided', async () => {
-			const conversation = createConversation({ title: 'No Rename' });
+			const conversation = createTestConversation({ title: 'No Rename' });
 			const { container } = render(ConversationItem, {
 				props: {
 					conversation,

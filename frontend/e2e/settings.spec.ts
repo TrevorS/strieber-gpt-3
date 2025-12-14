@@ -1,21 +1,21 @@
-import { test, expect } from '@playwright/test';
+import { test, expect } from './fixtures';
 
 test.describe('Settings Panel', () => {
-	test('opens settings panel when clicking settings button', async ({ page }) => {
-		await page.goto('/');
-
-		// Wait for the page to be fully loaded (hydration complete)
+	// Helper to wait for page to be fully ready
+	async function waitForPageReady(page: import('@playwright/test').Page) {
 		await page.waitForLoadState('networkidle');
-
-		// Wait for the settings button to be ready and enabled
 		const settingsButton = page.getByTestId('settings-button');
 		await expect(settingsButton).toBeVisible({ timeout: 10000 });
 		await expect(settingsButton).toBeEnabled();
+		await page.waitForTimeout(200); // Small delay for hydration
+	}
 
-		// Small delay to ensure hydration is complete
-		await page.waitForTimeout(200);
+	test('opens settings panel when clicking settings button', async ({ page }) => {
+		await page.goto('/');
+		await waitForPageReady(page);
 
 		// Click settings button
+		const settingsButton = page.getByTestId('settings-button');
 		await settingsButton.click();
 
 		// Verify settings panel is visible
@@ -31,6 +31,7 @@ test.describe('Settings Panel', () => {
 
 	test('closes settings panel when clicking backdrop', async ({ page }) => {
 		await page.goto('/');
+		await waitForPageReady(page);
 
 		// Open settings
 		await page.getByTestId('settings-button').click();
@@ -45,6 +46,7 @@ test.describe('Settings Panel', () => {
 
 	test('closes settings panel when pressing Escape', async ({ page }) => {
 		await page.goto('/');
+		await waitForPageReady(page);
 
 		// Open settings
 		await page.getByTestId('settings-button').click();
@@ -59,6 +61,7 @@ test.describe('Settings Panel', () => {
 
 	test('closes settings panel when clicking X button', async ({ page }) => {
 		await page.goto('/');
+		await waitForPageReady(page);
 
 		// Open settings
 		await page.getByTestId('settings-button').click();
@@ -74,6 +77,7 @@ test.describe('Settings Panel', () => {
 
 	test('shows theme toggle with all options', async ({ page }) => {
 		await page.goto('/');
+		await waitForPageReady(page);
 
 		// Open settings
 		await page.getByTestId('settings-button').click();
@@ -89,6 +93,7 @@ test.describe('Settings Panel', () => {
 
 	test('switching to dark theme applies dark class to document', async ({ page }) => {
 		await page.goto('/');
+		await waitForPageReady(page);
 
 		// Open settings
 		await page.getByTestId('settings-button').click();
@@ -110,6 +115,7 @@ test.describe('Settings Panel', () => {
 
 	test('switching to light theme removes dark class from document', async ({ page }) => {
 		await page.goto('/');
+		await waitForPageReady(page);
 
 		// First switch to dark
 		await page.getByTestId('settings-button').click();
@@ -132,6 +138,7 @@ test.describe('Settings Panel', () => {
 
 	test('shows temperature slider with current value', async ({ page }) => {
 		await page.goto('/');
+		await waitForPageReady(page);
 
 		// Open settings
 		await page.getByTestId('settings-button').click();
@@ -146,6 +153,7 @@ test.describe('Settings Panel', () => {
 
 	test('adjusting temperature slider updates displayed value', async ({ page }) => {
 		await page.goto('/');
+		await waitForPageReady(page);
 
 		// Open settings
 		await page.getByTestId('settings-button').click();
@@ -174,6 +182,7 @@ test.describe('Settings Panel', () => {
 
 	test('settings persist across page reloads', async ({ page }) => {
 		await page.goto('/');
+		await waitForPageReady(page);
 
 		// Open settings and change theme to dark
 		await page.getByTestId('settings-button').click();
@@ -181,6 +190,7 @@ test.describe('Settings Panel', () => {
 
 		// Reload page
 		await page.reload();
+		await waitForPageReady(page);
 
 		// Verify dark theme is still applied
 		const isDark = await page.evaluate(() => {

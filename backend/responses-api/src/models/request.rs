@@ -35,6 +35,11 @@ pub struct CreateResponseRequest {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub previous_response_id: Option<String>,
 
+    /// Conversation to use for context (mutually exclusive with previous_response_id).
+    /// Items from this conversation are prepended to input.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub conversation: Option<ConversationParam>,
+
     /// Maximum tokens to generate
     #[serde(skip_serializing_if = "Option::is_none")]
     pub max_output_tokens: Option<u32>,
@@ -122,8 +127,26 @@ pub enum InputItem {
     /// A function call from the assistant (to include in context)
     FunctionCall(FunctionCallInput),
 
+    /// A custom tool call from the assistant (to include in context for multi-turn)
+    CustomToolCall(CustomToolCallInput),
+
     /// Computer call output (screenshot result, etc.)
     ComputerCallOutput(ComputerCallOutputInput),
+
+    /// Reference to an existing item in the conversation.
+    /// Used to reference items by ID without duplicating content.
+    ItemReference(ItemReferenceInput),
+}
+
+// ============================================================================
+// Item Reference
+// ============================================================================
+
+/// Reference to an existing conversation item by ID.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ItemReferenceInput {
+    /// The ID of the referenced item (e.g., "msg_123", "fc_456")
+    pub id: String,
 }
 
 // ============================================================================
@@ -258,6 +281,25 @@ pub struct CustomToolCallOutputInput {
     pub id: Option<String>,
 }
 
+/// Custom tool call from the assistant (to include in context for multi-turn).
+/// This represents a custom_tool_call the model made, which uses free-form text input
+/// rather than JSON schema like function calls.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CustomToolCallInput {
+    /// The call_id to reference when sending results back
+    pub call_id: String,
+    /// Name of the custom tool
+    pub name: String,
+    /// Free-form text input (not JSON)
+    pub input: String,
+    /// Unique ID for this item
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub id: Option<String>,
+    /// Status of this item
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub status: Option<String>,
+}
+
 // ============================================================================
 // Computer Call Output Input
 // ============================================================================
@@ -282,4 +324,15 @@ pub struct ComputerCallOutputInput {
 pub enum ComputerOutput {
     Screenshot { image_url: String },
     Error { error: String },
+}
+
+// ============================================================================
+// Conversation Parameter
+// ============================================================================
+
+/// Reference to a conversation for context.
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct ConversationParam {
+    /// The conversation ID
+    pub id: String,
 }

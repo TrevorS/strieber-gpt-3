@@ -3,12 +3,25 @@
  */
 import { describe, expect, it, vi, beforeEach } from 'vitest';
 import { exportAsJSON, exportAsMarkdown, downloadFile } from '../export';
-import { createConversation, createMessage } from '$lib/stores/types';
+import { createMessage, type Conversation } from '$lib/stores/types';
+
+// Helper to create test conversations
+function createTestConversation(overrides: Partial<Conversation> = {}): Conversation {
+	const now = Date.now();
+	return {
+		id: `conv_test_${Math.random().toString(36).slice(2)}`,
+		title: 'Test Chat',
+		createdAt: now,
+		updatedAt: now,
+		messages: [],
+		...overrides
+	};
+}
 
 describe('export utilities', () => {
 	describe('exportAsJSON', () => {
 		it('should export conversation as valid JSON string', () => {
-			const conversation = createConversation({ title: 'Test Chat' });
+			const conversation = createTestConversation({ title: 'Test Chat' });
 
 			const result = exportAsJSON(conversation);
 
@@ -16,7 +29,7 @@ describe('export utilities', () => {
 		});
 
 		it('should include all conversation fields', () => {
-			const conversation = createConversation({
+			const conversation = createTestConversation({
 				id: 'test-id',
 				title: 'Test Chat'
 			});
@@ -31,7 +44,7 @@ describe('export utilities', () => {
 		});
 
 		it('should include messages with content', () => {
-			const conversation = createConversation({ title: 'Test Chat' });
+			const conversation = createTestConversation({ title: 'Test Chat' });
 			conversation.messages = [
 				createMessage('user', 'Hello'),
 				createMessage('assistant', 'Hi there!')
@@ -45,7 +58,7 @@ describe('export utilities', () => {
 		});
 
 		it('should format JSON with indentation', () => {
-			const conversation = createConversation({ title: 'Test' });
+			const conversation = createTestConversation({ title: 'Test' });
 
 			const result = exportAsJSON(conversation);
 
@@ -56,7 +69,7 @@ describe('export utilities', () => {
 
 	describe('exportAsMarkdown', () => {
 		it('should include conversation title as heading', () => {
-			const conversation = createConversation({ title: 'My Chat' });
+			const conversation = createTestConversation({ title: 'My Chat' });
 
 			const result = exportAsMarkdown(conversation);
 
@@ -64,7 +77,7 @@ describe('export utilities', () => {
 		});
 
 		it('should format user messages with role heading', () => {
-			const conversation = createConversation({ title: 'Test' });
+			const conversation = createTestConversation({ title: 'Test' });
 			conversation.messages = [createMessage('user', 'Hello world')];
 
 			const result = exportAsMarkdown(conversation);
@@ -74,7 +87,7 @@ describe('export utilities', () => {
 		});
 
 		it('should format assistant messages with role heading', () => {
-			const conversation = createConversation({ title: 'Test' });
+			const conversation = createTestConversation({ title: 'Test' });
 			conversation.messages = [createMessage('assistant', 'Hi there!')];
 
 			const result = exportAsMarkdown(conversation);
@@ -84,7 +97,7 @@ describe('export utilities', () => {
 		});
 
 		it('should handle multiple messages in order', () => {
-			const conversation = createConversation({ title: 'Test' });
+			const conversation = createTestConversation({ title: 'Test' });
 			conversation.messages = [
 				createMessage('user', 'First message'),
 				createMessage('assistant', 'Second message'),
@@ -102,7 +115,7 @@ describe('export utilities', () => {
 		});
 
 		it('should handle empty conversation', () => {
-			const conversation = createConversation({ title: 'Empty Chat' });
+			const conversation = createTestConversation({ title: 'Empty Chat' });
 
 			const result = exportAsMarkdown(conversation);
 
@@ -112,7 +125,7 @@ describe('export utilities', () => {
 		});
 
 		it('should preserve message content formatting', () => {
-			const conversation = createConversation({ title: 'Test' });
+			const conversation = createTestConversation({ title: 'Test' });
 			conversation.messages = [createMessage('assistant', '```python\nprint("Hello")\n```')];
 
 			const result = exportAsMarkdown(conversation);

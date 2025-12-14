@@ -13,12 +13,12 @@ use crate::containers::ContainerStore;
 use crate::mcp::{CallToolResult, McpClient};
 use crate::models::{
     Annotation, ChatCompletionChunk, ChatFunctionCall, ChatMessage, ChatRole, ChatToolCall,
-    ChatToolType, CreateResponseRequest, FinishReason, FunctionCallOutput, FunctionToolWrapper,
-    MessageOutput, OutputContent, OutputItem, OutputRole, OutputStatus, ReasoningContent,
-    ReasoningOutput, Response, ResponseStatus, SseEvent, Tool, Usage, WebSearchAction,
-    WebSearchCallOutput, WebSearchSource,
+    ChatToolType, ConversationItem, ConversationItemContent, CreateResponseRequest, FinishReason,
+    FunctionCallOutput, FunctionToolWrapper, MessageOutput, OutputContent, OutputItem, OutputRole,
+    OutputStatus, ReasoningContent, ReasoningOutput, Response, ResponseStatus, SseEvent, Tool,
+    Usage, WebSearchAction, WebSearchCallOutput, WebSearchSource,
 };
-use crate::state::{InMemoryStore, ResponseStore};
+use crate::state::{ConversationStore, InMemoryConversationStore, InMemoryStore, ResponseStore};
 use crate::translation::{
     build_url_citations, function_call_id, message_id, parse_reasoning_tags, reasoning_id,
     response_id, to_chat_completion, tool_result_message,
@@ -57,6 +57,9 @@ struct AccumulatedToolCall {
 /// * `previous_messages` - Messages from resolved previous_response_id chain
 /// * `store` - Optional store for persisting the response (if req.store is true)
 /// * `containers` - Container store for persisting generated files (images, etc.)
+/// * `conversation_store` - Optional conversation store for stateful conversations
+/// * `conversation_id` - Optional conversation ID to append output items to
+#[allow(clippy::too_many_arguments)]
 pub fn execute_streaming(
     config: ExecutorConfig,
     mcp: McpClient,
@@ -64,6 +67,8 @@ pub fn execute_streaming(
     previous_messages: Vec<ChatMessage>,
     store: Option<InMemoryStore>,
     containers: ContainerStore,
+    conversation_store: Option<InMemoryConversationStore>,
+    conversation_id: Option<String>,
 ) -> Pin<Box<dyn Stream<Item = Result<SseEvent, ExecutionError>> + Send>> {
     let (tx, rx) = mpsc::channel(32);
 
@@ -75,6 +80,8 @@ pub fn execute_streaming(
             previous_messages,
             store,
             containers,
+            conversation_store,
+            conversation_id,
             tx.clone(),
         )
         .await
@@ -86,6 +93,7 @@ pub fn execute_streaming(
     Box::pin(tokio_stream::wrappers::ReceiverStream::new(rx))
 }
 
+#[allow(clippy::too_many_arguments)]
 async fn run_streaming_loop(
     config: ExecutorConfig,
     mcp: McpClient,
@@ -93,6 +101,8 @@ async fn run_streaming_loop(
     previous_messages: Vec<ChatMessage>,
     store: Option<InMemoryStore>,
     containers: ContainerStore,
+    conversation_store: Option<InMemoryConversationStore>,
+    conversation_id: Option<String>,
     tx: mpsc::Sender<Result<SseEvent, ExecutionError>>,
 ) -> Result<(), ExecutionError> {
     // Look up model configuration
@@ -200,6 +210,13 @@ async fn run_streaming_loop(
     send(&tx, SseEvent::response_created(initial_response.clone())).await?;
     send(&tx, SseEvent::response_in_progress(initial_response)).await?;
 
+    // Store input items IMMEDIATELY to ensure they persist even if stream is interrupted.
+    // This fixes the issue where client disconnects cause items to be lost because
+    // append_output_items_to_conversation() is only called at the end of successful streaming.
+    if let (Some(conv_store), Some(conv_id)) = (&conversation_store, &conversation_id) {
+        store_input_items(conv_store, conv_id, &req);
+    }
+
     // Web search sources must persist across loop iterations (tool call cycles)
     // because sources are extracted during tool execution but used for annotations
     // in the final message after all tool calls complete.
@@ -244,6 +261,11 @@ async fn run_streaming_loop(
                     output_items = final_response.output.len(),
                     "Stored streaming response (max iterations)"
                 );
+            }
+
+            // Append output items to conversation (input items already stored at start)
+            if let (Some(conv_store), Some(conv_id)) = (&conversation_store, &conversation_id) {
+                append_output_items_to_conversation(conv_store, conv_id, &final_response.output);
             }
 
             send(&tx, SseEvent::response_completed(final_response.clone())).await?;
@@ -829,6 +851,55 @@ async fn run_streaming_loop(
             tracing::debug!(response_id = %resp_id, "Response not stored (store=false)");
         }
 
+        // Append output items to conversation (input items already stored at start)
+        if let (Some(conv_store), Some(conv_id)) = (&conversation_store, &conversation_id) {
+            append_output_items_to_conversation(conv_store, conv_id, &final_response.output);
+
+            // Generate title for new conversations (first exchange only)
+            if super::title_generator::should_generate_title(conv_store, conv_id) {
+                if let Some(task_model) = super::title_generator::find_task_model(&config.models) {
+                    let user_msg = super::title_generator::extract_first_user_message(&req.input);
+                    let assistant_resp =
+                        super::title_generator::extract_assistant_response(&final_response.output);
+
+                    match super::title_generator::generate_title(
+                        task_model,
+                        &http,
+                        &user_msg,
+                        &assistant_resp,
+                    )
+                    .await
+                    {
+                        Ok(title) => {
+                            // Update conversation title in store
+                            if let Err(e) = conv_store.update_title(conv_id, &title) {
+                                tracing::warn!(
+                                    conversation_id = %conv_id,
+                                    error = %e,
+                                    "Failed to update conversation title in store"
+                                );
+                            }
+                            // Emit title event to frontend
+                            send(
+                                &tx,
+                                SseEvent::conversation_title_generated(conv_id.clone(), title),
+                            )
+                            .await?;
+                        }
+                        Err(e) => {
+                            tracing::warn!(
+                                conversation_id = %conv_id,
+                                error = %e,
+                                "Failed to generate conversation title"
+                            );
+                        }
+                    }
+                } else {
+                    tracing::debug!("No task model configured, skipping title generation");
+                }
+            }
+        }
+
         send(&tx, SseEvent::response_completed(final_response.clone())).await?;
         send(&tx, SseEvent::response_done(final_response)).await?;
 
@@ -1241,4 +1312,97 @@ fn mcp_tool_to_function_tool(mcp_tool: rmcp::model::Tool) -> Tool {
         parameters,
         strict: false,
     })
+}
+
+/// Store input items from a request to a conversation at the START of streaming.
+///
+/// This ensures user messages are persisted even if the stream is interrupted.
+/// Should be called before the streaming loop begins.
+fn store_input_items(
+    store: &InMemoryConversationStore,
+    conversation_id: &str,
+    req: &CreateResponseRequest,
+) {
+    use crate::models::{Input, InputItem, MessageContent, MessageInput, Role};
+    use crate::translation::{function_call_id, item_id, message_id, reasoning_id};
+
+    // Convert input to items
+    let input_items: Vec<InputItem> = match &req.input {
+        Input::Empty => vec![],
+        Input::Text(text) => {
+            // Convert simple text to a user message
+            vec![InputItem::Message(MessageInput {
+                role: Role::User,
+                content: MessageContent::Text(text.clone()),
+            })]
+        }
+        Input::Items(items) => items.clone(),
+    };
+
+    if input_items.is_empty() {
+        return;
+    }
+
+    let mut items: Vec<ConversationItem> = Vec::new();
+    for input_item in input_items {
+        let id = match &input_item {
+            InputItem::Message(_) => message_id(),
+            InputItem::Reasoning(_) => reasoning_id(),
+            InputItem::FunctionCall(_) => function_call_id(),
+            _ => item_id(),
+        };
+        items.push(ConversationItem {
+            id,
+            status: OutputStatus::Completed,
+            content: ConversationItemContent::Input(input_item),
+        });
+    }
+
+    store.append_output_items(conversation_id, items.clone());
+    tracing::info!(
+        conversation_id = %conversation_id,
+        input_items_stored = items.len(),
+        "Stored input items at start of streaming"
+    );
+}
+
+/// Append output items from a response to a conversation.
+///
+/// Called at the end of streaming to store the assistant's response.
+/// Input items should already have been stored via `store_input_items()`.
+fn append_output_items_to_conversation(
+    store: &InMemoryConversationStore,
+    conversation_id: &str,
+    output: &[OutputItem],
+) {
+    use crate::translation::item_id;
+
+    if output.is_empty() {
+        return;
+    }
+
+    let mut items: Vec<ConversationItem> = Vec::new();
+    for output_item in output {
+        let id = match output_item {
+            OutputItem::Message(m) => m.id.clone(),
+            OutputItem::FunctionCall(f) => f.id.clone(),
+            OutputItem::Reasoning(r) => r.id.clone(),
+            OutputItem::WebSearchCall(w) => w.id.clone(),
+            _ => item_id(),
+        };
+        items.push(ConversationItem {
+            id,
+            status: OutputStatus::Completed,
+            content: ConversationItemContent::Output(
+                serde_json::to_value(output_item).unwrap_or_default(),
+            ),
+        });
+    }
+
+    store.append_output_items(conversation_id, items.clone());
+    tracing::info!(
+        conversation_id = %conversation_id,
+        output_items_appended = items.len(),
+        "Appended output items to conversation"
+    );
 }

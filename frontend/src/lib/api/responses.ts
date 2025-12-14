@@ -26,8 +26,8 @@ export interface ToolDefinition {
 export interface StreamingOptions {
 	/** Model to use for generation */
 	model?: string;
-	/** Previous response ID for context chaining */
-	previousResponseId?: string | null;
+	/** Server-side conversation ID (conv_xxx) for context chaining */
+	conversationId?: string | null;
 	/** AbortSignal for request cancellation */
 	signal?: AbortSignal;
 	/** Tools to enable for this request */
@@ -54,6 +54,8 @@ export interface StreamingCallbacks {
 	onReasoning?: (text: string) => void;
 	/** Called when function call arguments delta is received (for streaming tool inputs) */
 	onFunctionCallArgumentsDelta?: (itemId: string, argumentsDelta: string) => void;
+	/** Called when a conversation title is generated (for new conversations) */
+	onTitleGenerated?: (conversationId: string, title: string) => void;
 }
 
 /**
@@ -139,14 +141,21 @@ export async function sendMessageStreaming(
 ): Promise<void> {
 	const {
 		model = 'gpt-oss-120b',
-		previousResponseId = null,
+		conversationId = null,
 		signal,
 		tools = [],
 		attachments = [],
 		instructions
 	} = options;
-	const { onDelta, onComplete, onError, onOutputItem, onReasoning, onFunctionCallArgumentsDelta } =
-		callbacks;
+	const {
+		onDelta,
+		onComplete,
+		onError,
+		onOutputItem,
+		onReasoning,
+		onFunctionCallArgumentsDelta,
+		onTitleGenerated
+	} = callbacks;
 
 	const baseUrl = getApiBaseUrl();
 	const url = `${baseUrl}/responses`;
@@ -161,7 +170,7 @@ export async function sendMessageStreaming(
 		requestId,
 		model,
 		inputLength: input.length,
-		previousResponseId,
+		conversationId,
 		tools: tools.length,
 		attachments: attachments.length,
 		hasImages,
@@ -171,7 +180,7 @@ export async function sendMessageStreaming(
 	// Extra debug logging for context chain investigation
 	logger.info('api', '=== CONTEXT CHAIN DEBUG ===', {
 		requestId,
-		previousResponseId: previousResponseId ?? 'null (new conversation)',
+		conversationId: conversationId ?? 'null (new conversation)',
 		inputPreview: input.length > 50 ? `${input.slice(0, 50)}...` : input,
 		attachments: attachments.map((a) => ({ name: a.name, type: a.type }))
 	});
@@ -185,7 +194,7 @@ export async function sendMessageStreaming(
 			body: JSON.stringify({
 				model,
 				input: formattedInput,
-				previous_response_id: previousResponseId,
+				...(conversationId && { conversation: { id: conversationId } }),
 				stream: true,
 				store: true,
 				tools,
@@ -257,6 +266,18 @@ export async function sendMessageStreaming(
 				onFunctionCallArgumentsDelta(deltaEvent.item_id, deltaEvent.delta);
 			}
 
+			// Handle conversation title generated events (for new conversations)
+			// This is a custom event type not in the SDK, so we cast to unknown first
+			if ((event as { type: string }).type === 'conversation.title_generated' && onTitleGenerated) {
+				const titleEvent = event as unknown as { conversation_id: string; title: string };
+				logger.info('streaming', 'Conversation title generated', {
+					requestId,
+					conversationId: titleEvent.conversation_id,
+					title: titleEvent.title
+				});
+				onTitleGenerated(titleEvent.conversation_id, titleEvent.title);
+			}
+
 			// Track response ID from created event
 			if (event.type === 'response.created') {
 				responseId = (event as { response?: { id?: string } }).response?.id ?? '';
@@ -264,8 +285,8 @@ export async function sendMessageStreaming(
 				logger.info('api', '=== RESPONSE ID RECEIVED ===', {
 					requestId,
 					responseId,
-					previousResponseId: previousResponseId ?? 'null',
-					note: 'This responseId will become previousResponseId for next message'
+					conversationId: conversationId ?? 'null',
+					note: 'Response appended to server-side conversation'
 				});
 			}
 
@@ -383,7 +404,7 @@ export async function sendMessage(
 	input: string,
 	options: StreamingOptions = {}
 ): Promise<{ text: string; responseId: string }> {
-	const { model = 'gpt-oss-120b', previousResponseId = null, signal } = options;
+	const { model = 'gpt-oss-120b', conversationId = null, signal } = options;
 
 	const baseUrl = getApiBaseUrl();
 	const url = `${baseUrl}/responses`;
@@ -394,7 +415,7 @@ export async function sendMessage(
 		requestId,
 		model,
 		inputLength: input.length,
-		previousResponseId,
+		conversationId,
 		stream: false
 	});
 
@@ -406,7 +427,7 @@ export async function sendMessage(
 		body: JSON.stringify({
 			model,
 			input,
-			previous_response_id: previousResponseId,
+			...(conversationId && { conversation: { id: conversationId } }),
 			stream: false,
 			store: true
 		}),

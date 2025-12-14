@@ -34,6 +34,9 @@ pub struct ModelConfig {
     /// Default reasoning configuration for this model
     #[serde(default)]
     pub reasoning: Option<ReasoningConfig>,
+    /// Model capabilities for routing (task, vision, reasoning)
+    #[serde(default)]
+    pub capabilities: Vec<String>,
 }
 
 fn default_owned_by() -> String {
@@ -51,6 +54,7 @@ impl ModelConfig {
             supports_vision: false,
             supported_tools: None,
             reasoning: None,
+            capabilities: Vec::new(),
         }
     }
 

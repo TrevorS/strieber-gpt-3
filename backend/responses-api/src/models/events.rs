@@ -126,6 +126,13 @@ pub enum StreamEvent {
 
     /// Error event
     Error { error: StreamError },
+
+    /// Conversation title was generated (async title generation complete)
+    #[serde(rename = "conversation.title_generated")]
+    ConversationTitleGenerated {
+        conversation_id: String,
+        title: String,
+    },
 }
 
 /// Error in streaming response.
@@ -349,6 +356,16 @@ impl SseEvent {
                 output_index,
                 summary_index,
                 text,
+            },
+        }
+    }
+
+    pub fn conversation_title_generated(conversation_id: String, title: String) -> Self {
+        Self {
+            event: "conversation.title_generated",
+            data: StreamEvent::ConversationTitleGenerated {
+                conversation_id,
+                title,
             },
         }
     }

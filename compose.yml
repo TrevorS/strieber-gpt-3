@@ -1,18 +1,18 @@
 # ============================================================================
-# strieber-gpt-3: LLama-Server + Open WebUI Docker Compose
+# strieber-gpt-3: LLama-Server + Chat UI Docker Compose
 # ============================================================================
-# Docker compose file for running llama.cpp inference engine with Open WebUI
+# Docker compose file for running llama.cpp inference engine with Chat UI
 # on a GPU machine (e.g., DGX Spark)
 #
 # Usage:
-#   docker compose up -d          # Start both services
-#   docker compose up -d llama-server   # Start only llama-server
+#   docker compose up -d                  # Start services
+#   docker compose up -d llama-server     # Start only llama-server
 #
 # Access:
 #   - llama-server OpenAI API: http://localhost:8000
-#   - Open WebUI: http://localhost:3000
+#   - Chat UI: http://localhost:9030
 #
-# Services: llama-server (inference) + open-webui (web interface)
+# Services: llama-server (inference) + chat-ui (web interface)
 
 services:
   # ==========================================================================
@@ -344,45 +344,6 @@ services:
       - strieber-net
 
   # ==========================================================================
-  # open-webui: Web interface for llama-server
-  # ==========================================================================
-  open-webui:
-    image: ghcr.io/open-webui/open-webui:dev
-    container_name: strieber-open-webui
-
-    # Restart policy
-    restart: unless-stopped
-
-    # Port mapping: host:container (9200 = Web UI range)
-    ports:
-      - "${OPENWEBUI_PORT:-9200}:8080"
-
-    # Volume for persistent data
-    volumes:
-      # Host bind mount for direct filesystem access and backups
-      - ./open-webui-data:/app/backend/data
-
-    # Environment variables
-    environment:
-      # Connect directly to llama-server for gpt-oss-120b
-      - OPENAI_API_BASE_URL=http://strieber-llama-server:8000/v1
-      - OPENAI_API_KEY=none
-      # Enable direct MCP server connections (native tool discovery)
-      - ENABLE_DIRECT_CONNECTIONS=true
-
-    # Depends on llama-server and MCP servers being started
-    depends_on:
-      - llama-server
-      - mcp-weather
-      - mcp-web-search
-      - mcp-code-interpreter
-      - mcp-reader
-
-    # Network configuration for inter-service communication
-    networks:
-      - strieber-net
-
-  # ==========================================================================
   # code-executor: Sandboxed Python execution environment
   # Used by code-interpreter MCP server for safe code execution
   # Note: This is ephemeral and invoked via docker run, not docker compose up
@@ -519,33 +480,6 @@ services:
     networks:
       - strieber-net
 
-  # mcp-comfy-qwen: Text-to-image and image editing with Qwen models
-  # ABOUTME: MCP server for ComfyUI-based Qwen image generation with Lightning LoRA support
-  # Uses: Split model architecture (UNETLoader, CLIPLoader, VAELoader) with quality presets
-  # ==========================================================================
-  mcp-comfy-qwen:
-    build:
-      context: ./backend/tools/mcp_servers
-      dockerfile: Dockerfile.mcp-server
-      args:
-        SERVER_MODULE: comfy_qwen
-    image: strieber-mcp-comfy-qwen:latest
-    container_name: strieber-mcp-comfy-qwen
-    restart: unless-stopped
-    ports:
-      - "9140:8000"
-    environment:
-      - PORT=8000
-      - COMFY_URL=http://comfyui:8188
-      - OWUI_BASE_URL=http://open-webui:8080
-      - OWUI_PUBLIC_URL=http://spark-ebf0.tailbb09a1.ts.net:9200
-      - OWUI_API_TOKEN=sk-5467fee6567144d3a8b1758ebb5bb843
-    depends_on:
-      comfyui:
-        condition: service_healthy
-    networks:
-      - strieber-net
-
   # ==========================================================================
   # mcp-comfy-zimage: Fast text-to-image with z-image turbo model
   # ABOUTME: MCP server for z-image turbo generation via ComfyUI
@@ -610,7 +544,7 @@ services:
       - PORT=8000
       - HOST=0.0.0.0
       # Models: JSON format {"models":[{"id":"...","url":"...","api_key":"...","owned_by":"..."}]}
-      - MODELS_CONFIG={"models":[{"id":"gpt-oss-120b","url":"http://llama-server:8000","reasoning":{"effort":"high"}},{"id":"qwen3-vl-2b","url":"http://llama-server-qwen-vl:8000","supports_vision":true,"supported_tools":[]}]}
+      - MODELS_CONFIG={"models":[{"id":"gpt-oss-120b","url":"http://llama-server:8000","reasoning":{"effort":"high"},"capabilities":["reasoning"]},{"id":"qwen3-vl-2b","url":"http://llama-server-qwen-vl:8000","supports_vision":true,"supported_tools":[],"capabilities":["task","vision"]}]}
       # MCP servers: JSON format {"servers":[{"name":"...","url":"..."}]}
       - MCP_CONFIG={"servers":[{"name":"weather","url":"http://mcp-weather:8000/mcp","builtin_type":"weather"},{"name":"web_search","url":"http://mcp-web-search:8000/mcp","builtin_type":"web_search"},{"name":"code_interpreter","url":"http://mcp-code-interpreter:8000/mcp","builtin_type":"code_interpreter"},{"name":"reader","url":"http://mcp-reader:8000/mcp","builtin_type":"reader"},{"name":"zimage","url":"http://mcp-comfy-zimage:8000/mcp","builtin_type":"zimage_turbo"},{"name":"wikipedia","url":"http://mcp-wikipedia:8000/mcp","builtin_type":"wikipedia"}]}
       - MAX_TOOL_ITERATIONS=10
@@ -658,7 +592,7 @@ services:
       target: test
     environment:
       - RESPONSES_API_URL=http://responses-api:8000
-      - MODELS_CONFIG={"models":[{"id":"gpt-oss-120b","url":"http://llama-server:8000","reasoning":{"effort":"high"}},{"id":"qwen3-vl-2b","url":"http://llama-server-qwen-vl:8000","supports_vision":true,"supported_tools":[]}]}
+      - MODELS_CONFIG={"models":[{"id":"gpt-oss-120b","url":"http://llama-server:8000","reasoning":{"effort":"high"},"capabilities":["reasoning"]},{"id":"qwen3-vl-2b","url":"http://llama-server-qwen-vl:8000","supports_vision":true,"supported_tools":[],"capabilities":["task","vision"]}]}
       - RUST_BACKTRACE=1
     depends_on:
       responses-api:

@@ -6,11 +6,11 @@
 	import { tick } from 'svelte';
 	import { fade } from 'svelte/transition';
 	import { conversationStore, settingsStore } from '$lib/stores';
-	import { loadConversations, saveConversations } from '$lib/utils/storage';
 	import { createShortcutHandler, type ShortcutAction } from '$lib/utils/shortcuts';
 	import { ConversationList } from '$lib/components/sidebar';
 	import { Button } from '$lib/components/ui/button';
 	import { ToastContainer } from '$lib/components/ui/toast';
+	import * as Tooltip from '$lib/components/ui/tooltip';
 	import { Menu, PanelLeftClose, PanelLeft, Plus, MessageSquare } from 'lucide-svelte';
 	import { logger } from '$lib/utils/logger';
 
@@ -18,7 +18,6 @@
 
 	// Mobile sidebar state
 	let sidebarOpen = $state(false);
-	let loaded = $state(false);
 
 	function toggleSidebar() {
 		sidebarOpen = !sidebarOpen;
@@ -37,37 +36,15 @@
 		logger.ui.event('Sidebar', 'Toggle Collapse', { collapsed: settingsStore.sidebarCollapsed });
 	}
 
-	// Load conversations from localStorage on mount (browser only)
-	// Always start with New Chat state on refresh (activeId = null)
+	// Load conversations from server API on mount (browser only)
 	if (browser) {
 		logger.lifecycle.mount('Layout', { browser: true });
-		const saved = loadConversations();
-		if (saved) {
-			logger.info('persistence', 'Loading from localStorage', {
-				conversationCount: saved.conversations.length,
-				savedActiveId: saved.activeId,
-				settingActiveIdTo: null
+		conversationStore.fetchAll().catch((e) => {
+			logger.error('persistence', 'Failed to load conversations from server', {
+				error: e instanceof Error ? e.message : 'Unknown error'
 			});
-			conversationStore.load(saved.conversations, null);
-		} else {
-			logger.info('persistence', 'No saved conversations found');
-		}
-		// Minimum loading time to prevent skeleton flash
-		setTimeout(() => {
-			loaded = true;
-		}, 350);
+		});
 	}
-
-	// Persist on every change
-	$effect(() => {
-		if (browser) {
-			logger.debug('persistence', 'Saving to localStorage', {
-				conversationCount: conversationStore.conversations.length,
-				activeId: conversationStore.activeId
-			});
-			saveConversations(conversationStore.conversations, conversationStore.activeId);
-		}
-	});
 
 	// Apply theme to document
 	$effect(() => {
@@ -112,6 +89,7 @@
 	function handleSelect(id: string) {
 		logger.ui.event('Sidebar', 'Conversation selected', { id });
 		closeSidebar();
+		conversationStore.setActive(id);
 		goto(`/c/${id}`);
 	}
 
@@ -123,10 +101,10 @@
 		await goto('/');
 	}
 
-	function handleDelete(id: string) {
+	async function handleDelete(id: string) {
 		logger.ui.event('Sidebar', 'Delete clicked', { id, wasActive: conversationStore.activeId === id });
 		const wasActive = conversationStore.activeId === id;
-		conversationStore.delete(id);
+		await conversationStore.delete(id);
 
 		// If we deleted the active conversation, navigate appropriately
 		if (wasActive) {
@@ -142,9 +120,16 @@
 		}
 	}
 
-	function handleRename(id: string, title: string) {
+	async function handleRename(id: string, title: string) {
 		logger.ui.event('Sidebar', 'Rename', { id, title });
-		conversationStore.updateTitle(id, title);
+		try {
+			await conversationStore.updateTitle(id, title);
+		} catch (e) {
+			logger.error('ui', 'Failed to rename conversation', {
+				id,
+				error: e instanceof Error ? e.message : 'Unknown error'
+			});
+		}
 	}
 
 	function handleExport(id: string) {
@@ -201,6 +186,9 @@
 
 <!-- Global keyboard shortcuts -->
 <svelte:window onkeydown={handleKeydown} />
+
+<!-- Tooltip Provider for bits-ui tooltips -->
+<Tooltip.Provider>
 
 <!-- Skip to main content link for keyboard users -->
 <a
@@ -275,33 +263,49 @@
 		<!-- Collapsed: Icon rail -->
 		{#if settingsStore.sidebarCollapsed}
 			<div class="flex-1 flex flex-col items-center py-3 gap-2 overflow-hidden">
-				<Button
-					variant="ghost"
-					size="icon"
-					onclick={handleNew}
-					aria-label="New chat"
-					class="w-10 h-10"
-					data-testid="new-chat-icon"
-				>
-					<Plus class="h-5 w-5" />
-				</Button>
+				<Tooltip.Root delayDuration={300}>
+					<Tooltip.Trigger>
+						{#snippet child({ props })}
+							<Button
+								{...props}
+								variant="ghost"
+								size="icon"
+								onclick={handleNew}
+								class="w-10 h-10"
+								data-testid="new-chat-icon"
+							>
+								<Plus class="h-5 w-5" />
+							</Button>
+						{/snippet}
+					</Tooltip.Trigger>
+					<Tooltip.Content side="right">New chat</Tooltip.Content>
+				</Tooltip.Root>
 				<!-- Recent conversation indicators -->
 				{#each conversationStore.sorted.slice(0, 5) as conv (conv.id)}
-					<Button
-						variant={conversationStore.activeId === conv.id ? 'secondary' : 'ghost'}
-						size="icon"
-						onclick={() => handleSelect(conv.id)}
-						aria-label={conv.title}
-						class="w-10 h-10"
-					>
-						<MessageSquare class="h-4 w-4" />
-					</Button>
+					<Tooltip.Root delayDuration={300}>
+						<Tooltip.Trigger>
+							{#snippet child({ props })}
+								<Button
+									{...props}
+									variant={conversationStore.activeId === conv.id ? 'secondary' : 'ghost'}
+									size="icon"
+									onclick={() => handleSelect(conv.id)}
+									class="w-10 h-10"
+								>
+									<MessageSquare class="h-4 w-4" />
+								</Button>
+							{/snippet}
+						</Tooltip.Trigger>
+						<Tooltip.Content side="right" class="max-w-xs">
+							{conv.title}
+						</Tooltip.Content>
+					</Tooltip.Root>
 				{/each}
 			</div>
 		{:else}
 			<!-- Expanded: Full conversation list -->
 			<ConversationList
-				loading={!loaded}
+				loading={conversationStore.isLoading}
 				conversations={conversationStore.sorted}
 				activeId={conversationStore.activeId}
 				onselect={handleSelect}
@@ -320,3 +324,5 @@
 </div>
 
 <ToastContainer />
+
+</Tooltip.Provider>
