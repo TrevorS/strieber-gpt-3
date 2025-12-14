@@ -1,39 +1,20 @@
 # =============================================================================
-# Authelia Configuration for strieber-gpt-3
+# Authelia Configuration - strieber-gpt-3
 # =============================================================================
-# Minimal config for TOTP + WebAuthn (passkeys) with file-based users
-# No external services required - all local to Docker
+# Minimal config for TOTP + WebAuthn with file-based users
 
-# -----------------------------------------------------------------------------
-# Server Settings
-# -----------------------------------------------------------------------------
 server:
   address: 'tcp://:9091'
 
-# -----------------------------------------------------------------------------
-# Logging
-# -----------------------------------------------------------------------------
 log:
   level: info
-  format: text
 
-# -----------------------------------------------------------------------------
-# Authentication Backend (file-based users)
-# -----------------------------------------------------------------------------
+# File-based users (see users.yml)
 authentication_backend:
   file:
     path: /config/users.yml
-    password:
-      algorithm: argon2id
-      iterations: 3
-      memory: 65536
-      parallelism: 4
-      key_length: 32
-      salt_length: 16
 
-# -----------------------------------------------------------------------------
-# Session Configuration
-# -----------------------------------------------------------------------------
+# Session cookies
 session:
   secret: '${AUTHELIA_SESSION_SECRET}'
   cookies:
@@ -46,59 +27,33 @@ session:
       expiration: '24h'
       remember_me: '1M'
 
-# -----------------------------------------------------------------------------
-# Storage (SQLite - local, no external DB needed)
-# -----------------------------------------------------------------------------
+# SQLite storage for credentials and sessions
 storage:
   encryption_key: '${AUTHELIA_STORAGE_ENCRYPTION_KEY}'
   local:
     path: /data/db.sqlite3
 
-# -----------------------------------------------------------------------------
-# TOTP Configuration (Time-based One-Time Password)
-# -----------------------------------------------------------------------------
+# TOTP (authenticator apps)
 totp:
-  disable: false
   issuer: 'strieber.org'
-  # Defaults: SHA1, 6 digits, 30-second period - compatible with all apps
 
-# -----------------------------------------------------------------------------
-# WebAuthn Configuration (Passkeys, YubiKey, Windows Hello, etc.)
-# -----------------------------------------------------------------------------
+# WebAuthn (passkeys, YubiKey, etc.)
 webauthn:
-  disable: false
   display_name: 'Strieber Chat'
-  attestation_conveyance_preference: 'indirect'
-  user_verification: 'preferred'
-  timeout: '60s'
 
-# -----------------------------------------------------------------------------
-# Access Control
-# IMPORTANT: Must have two_factor policy for MFA options to appear!
-# -----------------------------------------------------------------------------
+# Access control - two_factor required for MFA to appear
 access_control:
   default_policy: 'deny'
   rules:
-    # Chat UI requires two-factor authentication
     - domain: 'chat.strieber.org'
       policy: 'two_factor'
 
-    # Auth portal itself (bypass - it handles its own auth)
-    - domain: 'auth.strieber.org'
-      policy: 'bypass'
-
-# -----------------------------------------------------------------------------
-# Notifier (file-based - no SMTP required)
-# Check /data/notifications.txt for password reset links, etc.
-# -----------------------------------------------------------------------------
+# File-based notifications (no SMTP)
 notifier:
-  disable: false
   filesystem:
     filename: /data/notifications.txt
 
-# -----------------------------------------------------------------------------
-# Identity Validation (for password resets, device registration)
-# -----------------------------------------------------------------------------
+# JWT for password reset links
 identity_validation:
   reset_password:
     jwt_secret: '${AUTHELIA_JWT_SECRET}'

@@ -716,7 +716,7 @@ services:
     networks:
       - strieber-net
     healthcheck:
-      test: ["CMD", "wget", "--spider", "-q", "http://localhost:9091/api/health"]
+      test: ["CMD", "authelia", "healthcheck"]
       interval: 30s
       timeout: 5s
       start_period: 10s
