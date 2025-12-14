@@ -23,6 +23,7 @@ COPY common ./common/
 COPY tests ./tests/
 COPY reader ./reader/
 COPY comfy_zimage ./comfy_zimage/
+COPY lora_trainer ./lora_trainer/
 
 # Note: Some servers (like code-interpreter) need Docker access which requires root or docker group
 # For simplicity and security of the code execution sandbox, we run as root

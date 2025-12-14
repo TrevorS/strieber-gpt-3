@@ -484,6 +484,7 @@ services:
   # mcp-comfy-zimage: Fast text-to-image with z-image turbo model
   # ABOUTME: MCP server for z-image turbo generation via ComfyUI
   # Uses: z_image_turbo_bf16 model with res_multistep sampler, 9 steps default
+  # Enhanced: Now supports LoRA loading via lora_name and lora_strength params
   # ==========================================================================
   mcp-comfy-zimage:
     build:
@@ -499,11 +500,74 @@ services:
     environment:
       - PORT=8000
       - COMFY_URL=http://comfyui:8188
+    volumes:
+      # Mount loras directory for lora_list_available tool
+      - /home/trevor/models/comfyui/loras:/models/loras:ro
     depends_on:
       comfyui:
         condition: service_healthy
     networks:
       - strieber-net
+
+  # ==========================================================================
+  # mcp-lora-trainer: LoRA training management MCP server
+  # ABOUTME: Dataset management, training control, checkpoint promotion
+  # Uses: Docker API to spawn ai-toolkit training containers
+  # ==========================================================================
+  mcp-lora-trainer:
+    build:
+      context: ./backend/tools/mcp_servers
+      dockerfile: Dockerfile.mcp-server
+      args:
+        SERVER_MODULE: lora_trainer
+    image: strieber-mcp-lora-trainer:latest
+    container_name: strieber-mcp-lora-trainer
+    restart: unless-stopped
+    ports:
+      - "9145:8000"
+    environment:
+      - PORT=8000
+      - TRAINING_DATA_PATH=/data
+    volumes:
+      # Docker socket for spawning training containers
+      - /var/run/docker.sock:/var/run/docker.sock
+      # Training data directory (datasets, outputs, configs)
+      - /home/trevor/lora-training:/data
+      # Model weights (for loras promotion and model access)
+      - /home/trevor/models/comfyui/loras:/models/loras
+    networks:
+      - strieber-net
+
+  # ==========================================================================
+  # ai-toolkit-trainer: GPU container for LoRA training (on-demand)
+  # ABOUTME: ai-toolkit environment for z-image turbo LoRA training
+  # Note: Spawned by mcp-lora-trainer, not started directly by compose
+  # ==========================================================================
+  ai-toolkit-trainer:
+    build:
+      context: ./backend/tools/ai-toolkit
+      dockerfile: Dockerfile
+    image: strieber-ai-toolkit:latest
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+    shm_size: 16g
+    ipc: host
+    volumes:
+      # Training data (datasets, outputs, configs)
+      - /home/trevor/lora-training:/data
+      # Model weights (read-only)
+      - /home/trevor/models:/weights:ro
+      # Direct output to ComfyUI loras for promotion
+      - /home/trevor/models/comfyui/loras:/output/loras
+    networks:
+      - strieber-net
+    profiles:
+      - training
 
   # ==========================================================================
   # responses-api: OpenAI Responses API adapter
@@ -525,7 +589,7 @@ services:
       # Models: JSON format {"models":[{"id":"...","url":"...","api_key":"...","owned_by":"..."}]}
       - MODELS_CONFIG={"models":[{"id":"gpt-oss-120b","url":"http://llama-server:8000","reasoning":{"effort":"high"},"capabilities":["reasoning"]},{"id":"qwen3-vl-2b","url":"http://llama-server-qwen-vl:8000","supports_vision":true,"supported_tools":[],"capabilities":["task","vision"]}]}
       # MCP servers: JSON format {"servers":[{"name":"...","url":"..."}]}
-      - MCP_CONFIG={"servers":[{"name":"weather","url":"http://mcp-weather:8000/mcp","builtin_type":"weather"},{"name":"web_search","url":"http://mcp-web-search:8000/mcp","builtin_type":"web_search"},{"name":"code_interpreter","url":"http://mcp-code-interpreter:8000/mcp","builtin_type":"code_interpreter"},{"name":"reader","url":"http://mcp-reader:8000/mcp","builtin_type":"reader"},{"name":"zimage","url":"http://mcp-comfy-zimage:8000/mcp","builtin_type":"zimage_turbo"}]}
+      - MCP_CONFIG={"servers":[{"name":"weather","url":"http://mcp-weather:8000/mcp","builtin_type":"weather"},{"name":"web_search","url":"http://mcp-web-search:8000/mcp","builtin_type":"web_search"},{"name":"code_interpreter","url":"http://mcp-code-interpreter:8000/mcp","builtin_type":"code_interpreter"},{"name":"reader","url":"http://mcp-reader:8000/mcp","builtin_type":"reader"},{"name":"zimage","url":"http://mcp-comfy-zimage:8000/mcp","builtin_type":"zimage_turbo"},{"name":"lora_trainer","url":"http://mcp-lora-trainer:8000/mcp","builtin_type":"lora_trainer"}]}
       - MAX_TOOL_ITERATIONS=10
       - TIMEOUT_SECS=300
       - RESPONSE_TTL_SECS=3600
@@ -547,6 +611,8 @@ services:
       mcp-reader:
         condition: service_started
       mcp-comfy-zimage:
+        condition: service_started
+      mcp-lora-trainer:
         condition: service_started
     healthcheck:
       test: ["CMD", "curl", "-sf", "http://localhost:8000/health"]

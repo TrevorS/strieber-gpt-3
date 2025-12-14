@@ -45,6 +45,10 @@ def run_server(server_module: str, host: str = "0.0.0.0", port: int = 8000) -> N
             from comfy_zimage import server as comfy_zimage_server
 
             mcp_instance = comfy_zimage_server.get_mcp()
+        elif server_module == "lora_trainer":
+            from lora_trainer import server as lora_trainer_server
+
+            mcp_instance = lora_trainer_server.get_mcp()
         else:
             raise ValueError(f"Unknown MCP server module: {server_module}")
     except ImportError as e:
