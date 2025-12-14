@@ -1,6 +1,7 @@
 ---
 name: MCP Tester
 description: Test MCP servers interactively. Use when debugging MCP tools, verifying server connectivity, or testing tool inputs/outputs during development.
+allowed-tools: Bash, Read
 ---
 
 # MCP Tester

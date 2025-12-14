@@ -8,7 +8,7 @@ strieber-gpt-3 is a self-hosted AI inference stack running on DGX Spark Blackwel
 - **LLM inference** via llama.cpp (gpt-oss-120b, 63GB model)
 - **Chat UI** built with Svelte 5 + SvelteKit 2
 - **Responses API** - Rust backend that orchestrates inference and tool execution
-- **MCP tool servers** - Python services for web search, code execution, weather, web reading, and image generation
+- **MCP tool servers** - Python services for web search, code execution, weather, web reading, image generation, and LoRA training
 
 ## Architecture
 
@@ -51,19 +51,24 @@ docker compose run --rm backend-dev cargo test test_name
 docker compose run --rm frontend-dev npm run format
 docker compose run --rm frontend-dev npm run lint
 docker compose run --rm frontend-dev npm run check
+docker compose run --rm frontend-dev npm run test -- --run
+
+# Run single test file
+docker compose run --rm frontend-dev npm run test -- --run src/lib/components/chat/__tests__/ChatInput.test.ts
 ```
 
 ### Python MCP Servers (backend/tools/mcp_servers/)
 ```bash
 cd backend/tools/mcp_servers
+source .venv/bin/activate
 
-# Format and lint run locally (ruff not in container)
-source .venv/bin/activate && ruff format .
-source .venv/bin/activate && ruff check --fix .
+# Format and lint
+ruff format .
+ruff check --fix .
 
-# Tests run in Docker (has all deps like pyyaml)
-docker exec strieber-mcp-lora-trainer pytest -v /app
-docker exec strieber-mcp-lora-trainer pytest -v /app/tests/test_file.py::TestClass::test_method
+# Tests (run locally with venv)
+pytest -v
+pytest -v tests/test_lora_trainer.py::TestDatasetManager::test_create_dataset
 ```
 
 ## Docker Development
@@ -129,9 +134,15 @@ docker compose build --no-cache mcp-lora-trainer && docker compose up -d mcp-lor
 - shadcn-svelte components in `src/lib/components/ui/`
 
 ### Backend Patterns (Rust)
-- Axum handlers in `src/server/handlers.rs`
+- Axum handlers in `src/server/handlers/`
 - Tool execution loop in `src/execution/executor.rs`
 - MCP client in `src/mcp/client.rs`
+- Generic storage API at `/v1/storage/{collection}/{id}` for MCP server persistence
+
+### MCP Server Patterns (Python)
+- Each server uses FastMCP with lazy initialization (avoid module-level side effects)
+- Shared utilities in `common/` (error handling, HTTP utils, search backends)
+- Test harnesses wrap components needing context (e.g., Tooltip.Provider for Svelte)
 
 ## Shell Compatibility (zsh)
 

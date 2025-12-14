@@ -10,7 +10,8 @@ from mcp.server.fastmcp import Context, FastMCP
 from mcp.types import ImageContent, TextContent
 
 from lora_trainer.dataset_manager import DatasetManager
-from lora_trainer.job_store import JobStore
+from lora_trainer.job_store import create_job_store
+from lora_trainer.job_store_base import JobStoreBase
 from lora_trainer.models import LoRAType, TrainingConfig, TrainingStatus
 from lora_trainer.training_runner import TrainingRunner
 
@@ -21,17 +22,41 @@ logger = logging.getLogger(__name__)
 # Initialize MCP server
 mcp = FastMCP("lora_trainer", host="0.0.0.0")
 
-# Initialize managers
+# Lazy initialization - only create managers when first accessed
 BASE_PATH = Path("/data")
-dataset_manager = DatasetManager(BASE_PATH / "datasets")
-job_store = JobStore(BASE_PATH / "jobs.json")
-training_runner = TrainingRunner(
-    datasets_path=BASE_PATH / "datasets",
-    outputs_path=BASE_PATH / "outputs",
-    configs_path=BASE_PATH / "configs",
-    job_store=job_store,
-    loras_path=Path("/models/loras"),
-)
+_dataset_manager: Optional[DatasetManager] = None
+_job_store: Optional["JobStoreBase"] = None
+_training_runner: Optional[TrainingRunner] = None
+
+
+def _get_dataset_manager() -> DatasetManager:
+    """Lazy initialization of dataset manager."""
+    global _dataset_manager
+    if _dataset_manager is None:
+        _dataset_manager = DatasetManager(BASE_PATH / "datasets")
+    return _dataset_manager
+
+
+def _get_job_store() -> "JobStoreBase":
+    """Lazy initialization of job store."""
+    global _job_store
+    if _job_store is None:
+        _job_store = create_job_store(BASE_PATH)
+    return _job_store
+
+
+def _get_training_runner() -> TrainingRunner:
+    """Lazy initialization of training runner."""
+    global _training_runner
+    if _training_runner is None:
+        _training_runner = TrainingRunner(
+            datasets_path=BASE_PATH / "datasets",
+            outputs_path=BASE_PATH / "outputs",
+            configs_path=BASE_PATH / "configs",
+            job_store=_get_job_store(),
+            loras_path=Path("/models/loras"),
+        )
+    return _training_runner
 
 
 # ============================================================================
@@ -69,7 +94,8 @@ async def lora_create_dataset(
         Confirmation with dataset path.
     """
     try:
-        dataset_manager.create_dataset(
+        dm = _get_dataset_manager()
+        dm.create_dataset(
             name=name,
             trigger_token=trigger_token,
             lora_type=LoRAType(lora_type),
@@ -80,7 +106,7 @@ async def lora_create_dataset(
                 type="text",
                 text=f"Created dataset '{name}' with trigger token '{trigger_token}'.\n"
                 f"Type: {lora_type}\n"
-                f"Path: {dataset_manager.get_dataset_path(name)}\n\n"
+                f"Path: {dm.get_dataset_path(name)}\n\n"
                 f"Next: Upload training images with lora_upload_images.",
             )
         ]
@@ -128,13 +154,14 @@ async def lora_upload_images(
             # Decode and save image
             img_bytes = base64.b64decode(img_data)
             caption = captions[i] if captions and i < len(captions) else None
-            filename = dataset_manager.add_image(dataset_name, img_bytes, caption)
+            dm = _get_dataset_manager()
+            filename = dm.add_image(dataset_name, img_bytes, caption)
             results.append(filename)
 
             if ctx:
                 await ctx.report_progress(i + 1, len(images), f"Uploaded {filename}")
 
-        metadata = dataset_manager.get_metadata(dataset_name)
+        metadata = _get_dataset_manager().get_metadata(dataset_name)
         return [
             TextContent(
                 type="text",
@@ -169,7 +196,7 @@ async def lora_validate_dataset(
         Validation report with any issues found.
     """
     try:
-        report = dataset_manager.validate_dataset(dataset_name)
+        report = _get_dataset_manager().validate_dataset(dataset_name)
         return [TextContent(type="text", text=report)]
     except Exception as e:
         return [TextContent(type="text", text=f"Error: {str(e)}")]
@@ -184,7 +211,7 @@ async def lora_list_datasets(
     Returns:
         List of datasets with metadata.
     """
-    datasets = dataset_manager.list_datasets()
+    datasets = _get_dataset_manager().list_datasets()
     if not datasets:
         return [TextContent(type="text", text="No datasets found.")]
 
@@ -243,7 +270,7 @@ async def lora_start_training(
     """
     try:
         # Validate dataset exists and is ready
-        metadata = dataset_manager.get_metadata(dataset_name)
+        metadata = _get_dataset_manager().get_metadata(dataset_name)
         if metadata.image_count < 5:
             return [
                 TextContent(
@@ -268,7 +295,7 @@ async def lora_start_training(
         )
 
         # Start training
-        job = await training_runner.start_training(
+        job = await _get_training_runner().start_training(
             dataset_name=dataset_name,
             trigger_token=metadata.trigger_token,
             config=config,
@@ -304,7 +331,7 @@ async def lora_training_status(
         Status, progress, loss, and sample images (if available).
     """
     try:
-        job = job_store.get_job(job_id)
+        job = _get_job_store().get_job(job_id)
         if not job:
             return [TextContent(type="text", text=f"Job not found: {job_id}")]
 
@@ -371,7 +398,7 @@ async def lora_stop_training(
         Confirmation with available checkpoints.
     """
     try:
-        job = await training_runner.stop_training(job_id)
+        job = await _get_training_runner().stop_training(job_id)
         return [
             TextContent(
                 type="text",
@@ -399,7 +426,7 @@ async def lora_list_jobs(
     Returns:
         List of jobs with summary info.
     """
-    jobs = job_store.list_jobs(status=TrainingStatus(status) if status else None)
+    jobs = _get_job_store().list_jobs(status=TrainingStatus(status) if status else None)
     if not jobs:
         return [TextContent(type="text", text="No jobs found.")]
 
@@ -434,7 +461,7 @@ async def lora_list_checkpoints(
         List of checkpoints with step numbers.
     """
     try:
-        job = job_store.get_job(job_id)
+        job = _get_job_store().get_job(job_id)
         if not job:
             return [TextContent(type="text", text=f"Job not found: {job_id}")]
 
@@ -472,11 +499,11 @@ async def lora_promote_checkpoint(
         Confirmation with usage instructions.
     """
     try:
-        job = job_store.get_job(job_id)
+        job = _get_job_store().get_job(job_id)
         if not job:
             return [TextContent(type="text", text=f"Job not found: {job_id}")]
 
-        output_filename = training_runner.promote_checkpoint(
+        output_filename = _get_training_runner().promote_checkpoint(
             job_id=job_id,
             checkpoint_name=checkpoint_name,
             output_name=output_name or job.dataset_name,

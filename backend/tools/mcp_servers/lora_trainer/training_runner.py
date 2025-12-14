@@ -15,7 +15,7 @@ import os
 import yaml
 from docker.errors import APIError, ContainerError, ImageNotFound
 
-from lora_trainer.job_store import JobStore
+from lora_trainer.job_store_base import JobStoreBase
 from lora_trainer.models import TrainingConfig, TrainingJob, TrainingStatus
 
 
@@ -38,7 +38,7 @@ class TrainingRunner:
         datasets_path: Path,
         outputs_path: Path,
         configs_path: Path,
-        job_store: JobStore,
+        job_store: JobStoreBase,
         loras_path: Optional[Path] = None,
     ):
         """Initialize training runner.

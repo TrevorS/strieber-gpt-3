@@ -22,22 +22,19 @@ def generate_synthetic_images(count: int = 5, size: int = 512) -> list[tuple[str
     """
     try:
         from PIL import Image
-        import random
     except ImportError:
         print("PIL not installed. Install with: pip install Pillow")
         sys.exit(1)
 
     images = []
-    colors = ["red", "blue", "green", "yellow", "purple", "orange", "cyan", "magenta"]
 
     for i in range(count):
         # Create image with random color gradient
         img = Image.new("RGB", (size, size))
-        color1 = random.choice(colors)
-        color2 = random.choice(colors)
 
         # Simple gradient fill
         from PIL import ImageDraw
+
         draw = ImageDraw.Draw(img)
         for y in range(size):
             r = int(128 + 64 * (y / size))
@@ -50,7 +47,7 @@ def generate_synthetic_images(count: int = 5, size: int = 512) -> list[tuple[str
         img.save(buffer, format="PNG")
         b64 = base64.b64encode(buffer.getvalue()).decode()
 
-        caption = f"ohwx test image {i+1} with gradient pattern"
+        caption = f"ohwx test image {i + 1} with gradient pattern"
         images.append((b64, caption))
 
     return images
@@ -134,7 +131,9 @@ async def upload_images(
 
 
 async def main():
-    parser = argparse.ArgumentParser(description="Upload images to lora_trainer dataset")
+    parser = argparse.ArgumentParser(
+        description="Upload images to lora_trainer dataset"
+    )
     parser.add_argument("dataset_name", help="Name of the dataset to upload to")
     parser.add_argument(
         "--source",

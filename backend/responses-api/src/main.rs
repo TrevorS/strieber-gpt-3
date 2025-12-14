@@ -9,7 +9,9 @@ use responses_api::{
     execution::{Executor, ExecutorConfig},
     mcp::McpClient,
     server::{self, AppState},
-    state::{InMemoryConversationStore, InMemoryStore},
+    storage::{
+        StorageConfig, create_conversation_store, create_generic_store, create_response_store,
+    },
 };
 use tokio::net::TcpListener;
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
@@ -69,11 +71,16 @@ async fn main() -> anyhow::Result<()> {
     };
     let executor = Executor::new(executor_config, mcp_client.clone(), containers.clone())?;
 
+    // Configure storage backend from environment
+    let storage_config = StorageConfig::from_env();
+    tracing::info!(?storage_config, "Using storage backend");
+
     // Create application state
     let state = Arc::new(AppState {
         executor,
-        store: InMemoryStore::new(),
-        conversations: InMemoryConversationStore::new(),
+        store: create_response_store(&storage_config).await,
+        conversations: create_conversation_store(&storage_config).await,
+        generic_store: create_generic_store(&storage_config).await,
         config: config.clone(),
         mcp: mcp_client,
         containers,

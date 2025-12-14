@@ -16,7 +16,7 @@ from lora_trainer.models import (
     TrainingStatus,
 )
 from lora_trainer.dataset_manager import DatasetManager
-from lora_trainer.job_store import JobStore
+from lora_trainer.job_store_json import JsonJobStore as JobStore
 
 
 class TestModels:

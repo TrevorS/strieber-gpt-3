@@ -11,4 +11,5 @@ pub mod mcp;
 pub mod models;
 pub mod server;
 pub mod state;
+pub mod storage;
 pub mod translation;

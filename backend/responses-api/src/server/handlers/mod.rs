@@ -1,5 +1,7 @@
 //! Request handlers for Responses API endpoints.
 
+pub mod storage;
+
 use std::convert::Infallible;
 use std::sync::Arc;
 
@@ -20,7 +22,8 @@ use crate::execution::{
 };
 use crate::mcp::McpClient;
 use crate::models::{ChatMessage, ConversationItem, CreateResponseRequest, DeleteResponse};
-use crate::state::{ConversationStore, InMemoryConversationStore, InMemoryStore, ResponseStore};
+use crate::state::{ConversationStore, ResponseStore};
+use crate::storage::GenericStore;
 use crate::translation::assemble_context_from_chain;
 
 /// Type alias for API error responses.
@@ -29,8 +32,9 @@ type ApiError = (StatusCode, Json<serde_json::Value>);
 /// Shared application state.
 pub struct AppState {
     pub executor: Executor,
-    pub store: InMemoryStore,
-    pub conversations: InMemoryConversationStore,
+    pub store: Arc<dyn ResponseStore + Send + Sync>,
+    pub conversations: Arc<dyn ConversationStore + Send + Sync>,
+    pub generic_store: Arc<dyn GenericStore + Send + Sync>,
     pub config: Config,
     pub mcp: McpClient,
     pub containers: ContainerStore,
@@ -66,9 +70,9 @@ pub async fn create_response(
     // Resolve context from either conversation or previous_response_id chain
     let (resolved_instructions, previous_messages) = if let Some(ref conv_param) = req.conversation
     {
-        resolve_conversation_context(&state.conversations, &conv_param.id, &req)?
+        resolve_conversation_context(state.conversations.as_ref(), &conv_param.id, &req)?
     } else {
-        resolve_previous_response_chain(&state.store, &req)?
+        resolve_previous_response_chain(state.store.as_ref(), &req)?
     };
 
     tracing::info!(
@@ -99,7 +103,12 @@ pub async fn create_response(
 
     // After creating non-streaming response, append to conversation if specified
     if let Some(ref conv_param) = req.conversation {
-        append_response_to_conversation(&state.conversations, &conv_param.id, &req, &response);
+        append_response_to_conversation(
+            state.conversations.as_ref(),
+            &conv_param.id,
+            &req,
+            &response,
+        );
     }
 
     Ok((StatusCode::OK, Json(response)).into_response())
@@ -107,13 +116,12 @@ pub async fn create_response(
 
 /// Resolve the previous_response_id chain and assemble context.
 fn resolve_previous_response_chain(
-    store: &InMemoryStore,
+    store: &(dyn ResponseStore + Send + Sync),
     req: &CreateResponseRequest,
 ) -> Result<(Option<String>, Vec<ChatMessage>), ApiError> {
     if let Some(prev_id) = &req.previous_response_id {
         tracing::debug!(
             previous_response_id = %prev_id,
-            store_count = store.len(),
             "Resolving chain from previous_response_id"
         );
 
@@ -336,7 +344,7 @@ pub async fn list_models(State(state): State<Arc<AppState>>) -> impl IntoRespons
 
 /// Resolve conversation context into chat messages.
 fn resolve_conversation_context(
-    store: &InMemoryConversationStore,
+    store: &(dyn ConversationStore + Send + Sync),
     conversation_id: &str,
     req: &CreateResponseRequest,
 ) -> Result<(Option<String>, Vec<ChatMessage>), ApiError> {
@@ -489,7 +497,7 @@ fn conversation_items_to_chat_messages(items: &[ConversationItem]) -> Vec<ChatMe
 
 /// Append request input and response output to conversation.
 fn append_response_to_conversation(
-    store: &InMemoryConversationStore,
+    store: &(dyn ConversationStore + Send + Sync),
     conversation_id: &str,
     req: &CreateResponseRequest,
     response: &crate::models::Response,

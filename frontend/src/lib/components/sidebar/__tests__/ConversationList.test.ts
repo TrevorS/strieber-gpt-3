@@ -3,7 +3,7 @@
  */
 import { fireEvent, render, screen } from '@testing-library/svelte';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import ConversationList from '../ConversationList.svelte';
+import ConversationListHarness from './ConversationListHarness.svelte';
 import type { Conversation } from '$lib/stores/types';
 
 // Helper to create test conversations
@@ -40,7 +40,7 @@ describe('ConversationList', () => {
 	});
 
 	it('should render "New Chat" button', () => {
-		render(ConversationList, {
+		render(ConversationListHarness, {
 			props: {
 				conversations: [],
 				activeId: null,
@@ -54,7 +54,7 @@ describe('ConversationList', () => {
 	});
 
 	it('should call onnew when "New Chat" button clicked', async () => {
-		render(ConversationList, {
+		render(ConversationListHarness, {
 			props: {
 				conversations: [],
 				activeId: null,
@@ -69,7 +69,7 @@ describe('ConversationList', () => {
 	});
 
 	it('should render empty state when no conversations', () => {
-		render(ConversationList, {
+		render(ConversationListHarness, {
 			props: {
 				conversations: [],
 				activeId: null,
@@ -88,7 +88,7 @@ describe('ConversationList', () => {
 			createTestConversation({ title: 'Chat 2', updatedAt: NOW - 2000 })
 		];
 
-		render(ConversationList, {
+		render(ConversationListHarness, {
 			props: {
 				conversations,
 				activeId: null,
@@ -111,7 +111,7 @@ describe('ConversationList', () => {
 			})
 		];
 
-		render(ConversationList, {
+		render(ConversationListHarness, {
 			props: {
 				conversations,
 				activeId: null,
@@ -133,7 +133,7 @@ describe('ConversationList', () => {
 			updatedAt: NOW
 		});
 
-		render(ConversationList, {
+		render(ConversationListHarness, {
 			props: {
 				conversations: [conversation],
 				activeId: null,
@@ -154,7 +154,7 @@ describe('ConversationList', () => {
 			updatedAt: NOW
 		});
 
-		const { container } = render(ConversationList, {
+		const { container } = render(ConversationListHarness, {
 			props: {
 				conversations: [conversation],
 				activeId: null,
@@ -175,7 +175,7 @@ describe('ConversationList', () => {
 			createTestConversation({ id: 'other-id', title: 'Other', updatedAt: NOW - 1000 })
 		];
 
-		render(ConversationList, {
+		render(ConversationListHarness, {
 			props: {
 				conversations,
 				activeId: 'active-id',
@@ -196,7 +196,7 @@ describe('ConversationList', () => {
 
 	describe('search functionality', () => {
 		it('should show search input', () => {
-			render(ConversationList, {
+			render(ConversationListHarness, {
 				props: {
 					conversations: [],
 					activeId: null,
@@ -217,7 +217,7 @@ describe('ConversationList', () => {
 				createTestConversation({ title: 'Python advanced', updatedAt: NOW - 3000 })
 			];
 
-			render(ConversationList, {
+			render(ConversationListHarness, {
 				props: {
 					conversations,
 					activeId: null,
@@ -241,7 +241,7 @@ describe('ConversationList', () => {
 				createTestConversation({ title: 'lowercase chat', updatedAt: NOW - 2000 })
 			];
 
-			render(ConversationList, {
+			render(ConversationListHarness, {
 				props: {
 					conversations,
 					activeId: null,
@@ -264,7 +264,7 @@ describe('ConversationList', () => {
 				createTestConversation({ title: 'Chat 2', updatedAt: NOW - 2000 })
 			];
 
-			render(ConversationList, {
+			render(ConversationListHarness, {
 				props: {
 					conversations,
 					activeId: null,
@@ -295,7 +295,7 @@ describe('ConversationList', () => {
 				})
 			];
 
-			render(ConversationList, {
+			render(ConversationListHarness, {
 				props: {
 					conversations,
 					activeId: null,
@@ -320,7 +320,7 @@ describe('ConversationList', () => {
 				createTestConversation({ title: 'Python chat', updatedAt: NOW - 1000 })
 			];
 
-			render(ConversationList, {
+			render(ConversationListHarness, {
 				props: {
 					conversations,
 					activeId: null,

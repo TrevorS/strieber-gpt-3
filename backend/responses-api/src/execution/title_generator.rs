@@ -4,7 +4,7 @@ use crate::config::ModelConfig;
 use crate::models::{
     ContentPart, Input, InputItem, MessageContent, OutputContent, OutputItem, Role,
 };
-use crate::state::{ConversationStore, InMemoryConversationStore};
+use crate::state::ConversationStore;
 use reqwest::Client;
 
 const TITLE_PROMPT: &str = "Generate a brief title (3-6 words) for this conversation. Reply with ONLY the title, nothing else.";
@@ -84,7 +84,10 @@ fn truncate(s: &str, max_len: usize) -> &str {
 /// - The conversation exists
 /// - The title is still "New Chat" or empty
 /// - This is the first exchange (only 2 items: user message + assistant response)
-pub fn should_generate_title(conv_store: &InMemoryConversationStore, conv_id: &str) -> bool {
+pub fn should_generate_title(
+    conv_store: &(dyn ConversationStore + Send + Sync),
+    conv_id: &str,
+) -> bool {
     conv_store
         .get(conv_id)
         .map(|c| {

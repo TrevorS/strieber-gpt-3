@@ -18,7 +18,6 @@ use crate::models::{
     UpdateConversationRequest,
     item_expansion::{ExpansionOptions, expand_item, expand_items},
 };
-use crate::state::ConversationStore;
 
 use super::handlers::AppState;
 

@@ -6,7 +6,7 @@ use serde_json::Value;
 use super::{ReasoningConfig, TextConfig, Tool, ToolChoice, Truncation};
 
 /// Request body for POST /v1/responses
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CreateResponseRequest {
     /// Model ID (e.g., "gpt-4o", passed to the Chat Completions backend)
     pub model: String,

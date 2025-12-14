@@ -13,7 +13,7 @@ use super::conversation_handlers::{
     create_conversation, create_items, delete_conversation, delete_item, get_conversation,
     get_item, list_conversations, list_items, update_conversation,
 };
-use super::handlers::{self, AppState};
+use super::handlers::{self, AppState, storage};
 use crate::containers;
 
 /// Create the API router with all routes.
@@ -50,6 +50,15 @@ pub fn create_router(state: Arc<AppState>) -> Router {
         .route(
             "/v1/conversations/{conversation_id}/items/{item_id}",
             get(get_item).delete(delete_item),
+        )
+        // Generic storage endpoints
+        .route(
+            "/v1/storage/{namespace}",
+            post(storage::save_record).get(storage::list_records),
+        )
+        .route(
+            "/v1/storage/{namespace}/{id}",
+            get(storage::get_record).delete(storage::delete_record),
         )
         // Container file endpoints
         .route(

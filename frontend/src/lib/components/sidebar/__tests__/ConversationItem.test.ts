@@ -3,7 +3,7 @@
  */
 import { fireEvent, render, screen } from '@testing-library/svelte';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import ConversationItem from '../ConversationItem.svelte';
+import ConversationItemHarness from './ConversationItemHarness.svelte';
 import type { Conversation } from '$lib/stores/types';
 
 // Helper to create test conversations
@@ -32,7 +32,7 @@ describe('ConversationItem', () => {
 
 	it('should render conversation title', () => {
 		const conversation = createTestConversation({ title: 'Test Chat' });
-		render(ConversationItem, {
+		render(ConversationItemHarness, {
 			props: {
 				conversation,
 				isActive: false,
@@ -48,7 +48,7 @@ describe('ConversationItem', () => {
 		const conversation = createTestConversation({
 			title: 'This is a very long conversation title that should be truncated'
 		});
-		render(ConversationItem, {
+		render(ConversationItemHarness, {
 			props: {
 				conversation,
 				isActive: false,
@@ -58,12 +58,14 @@ describe('ConversationItem', () => {
 		});
 
 		const titleElement = screen.getByText(conversation.title);
-		expect(titleElement.classList.contains('truncate')).toBe(true);
+		// The truncate class is on the parent span (Tooltip trigger), not the inner text span
+		const truncateParent = titleElement.closest('.truncate');
+		expect(truncateParent).toBeTruthy();
 	});
 
 	it('should highlight when active', () => {
 		const conversation = createTestConversation({ title: 'Active Chat' });
-		render(ConversationItem, {
+		render(ConversationItemHarness, {
 			props: {
 				conversation,
 				isActive: true,
@@ -79,7 +81,7 @@ describe('ConversationItem', () => {
 
 	it('should not highlight when not active', () => {
 		const conversation = createTestConversation({ title: 'Inactive Chat' });
-		render(ConversationItem, {
+		render(ConversationItemHarness, {
 			props: {
 				conversation,
 				isActive: false,
@@ -96,7 +98,7 @@ describe('ConversationItem', () => {
 
 	it('should call onselect when clicked', async () => {
 		const conversation = createTestConversation({ title: 'Click Me' });
-		render(ConversationItem, {
+		render(ConversationItemHarness, {
 			props: {
 				conversation,
 				isActive: false,
@@ -111,7 +113,7 @@ describe('ConversationItem', () => {
 
 	it('should call ondelete when delete button clicked', async () => {
 		const conversation = createTestConversation({ title: 'Delete Me' });
-		const { container } = render(ConversationItem, {
+		const { container } = render(ConversationItemHarness, {
 			props: {
 				conversation,
 				isActive: false,
@@ -132,7 +134,7 @@ describe('ConversationItem', () => {
 
 	it('should not call onselect when delete is clicked', async () => {
 		const conversation = createTestConversation();
-		const { container } = render(ConversationItem, {
+		const { container } = render(ConversationItemHarness, {
 			props: {
 				conversation,
 				isActive: false,
@@ -151,7 +153,7 @@ describe('ConversationItem', () => {
 	describe('rename functionality', () => {
 		it('should show edit button on hover', () => {
 			const conversation = createTestConversation({ title: 'Rename Me' });
-			const { container } = render(ConversationItem, {
+			const { container } = render(ConversationItemHarness, {
 				props: {
 					conversation,
 					isActive: false,
@@ -167,7 +169,7 @@ describe('ConversationItem', () => {
 
 		it('should enter edit mode when edit button clicked', async () => {
 			const conversation = createTestConversation({ title: 'Rename Me' });
-			const { container } = render(ConversationItem, {
+			const { container } = render(ConversationItemHarness, {
 				props: {
 					conversation,
 					isActive: false,
@@ -187,7 +189,7 @@ describe('ConversationItem', () => {
 
 		it('should enter edit mode on double-click', async () => {
 			const conversation = createTestConversation({ title: 'Double Click Me' });
-			const { container } = render(ConversationItem, {
+			const { container } = render(ConversationItemHarness, {
 				props: {
 					conversation,
 					isActive: false,
@@ -206,7 +208,7 @@ describe('ConversationItem', () => {
 
 		it('should save on Enter key and call onrename', async () => {
 			const conversation = createTestConversation({ title: 'Original Title' });
-			const { container } = render(ConversationItem, {
+			const { container } = render(ConversationItemHarness, {
 				props: {
 					conversation,
 					isActive: false,
@@ -234,7 +236,7 @@ describe('ConversationItem', () => {
 
 		it('should cancel on Escape key and restore original title', async () => {
 			const conversation = createTestConversation({ title: 'Original Title' });
-			const { container } = render(ConversationItem, {
+			const { container } = render(ConversationItemHarness, {
 				props: {
 					conversation,
 					isActive: false,
@@ -264,7 +266,7 @@ describe('ConversationItem', () => {
 
 		it('should not call onrename if title is unchanged', async () => {
 			const conversation = createTestConversation({ title: 'Same Title' });
-			const { container } = render(ConversationItem, {
+			const { container } = render(ConversationItemHarness, {
 				props: {
 					conversation,
 					isActive: false,
@@ -289,7 +291,7 @@ describe('ConversationItem', () => {
 
 		it('should not call onrename if title is empty', async () => {
 			const conversation = createTestConversation({ title: 'Original Title' });
-			const { container } = render(ConversationItem, {
+			const { container } = render(ConversationItemHarness, {
 				props: {
 					conversation,
 					isActive: false,
@@ -315,7 +317,7 @@ describe('ConversationItem', () => {
 
 		it('should not prevent selection when onrename is not provided', async () => {
 			const conversation = createTestConversation({ title: 'No Rename' });
-			const { container } = render(ConversationItem, {
+			const { container } = render(ConversationItemHarness, {
 				props: {
 					conversation,
 					isActive: false,

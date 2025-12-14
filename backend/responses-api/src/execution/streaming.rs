@@ -1,6 +1,7 @@
 //! Streaming executor for SSE responses.
 
 use std::pin::Pin;
+use std::sync::Arc;
 
 use eventsource_stream::Eventsource;
 use futures::stream::{Stream, StreamExt};
@@ -18,7 +19,7 @@ use crate::models::{
     OutputStatus, ReasoningContent, ReasoningOutput, Response, ResponseStatus, SseEvent, Tool,
     Usage, WebSearchAction, WebSearchCallOutput, WebSearchSource,
 };
-use crate::state::{ConversationStore, InMemoryConversationStore, InMemoryStore, ResponseStore};
+use crate::state::{ConversationStore, ResponseStore};
 use crate::translation::{
     build_url_citations, function_call_id, message_id, parse_reasoning_tags, reasoning_id,
     response_id, to_chat_completion, tool_result_message,
@@ -65,9 +66,9 @@ pub fn execute_streaming(
     mcp: McpClient,
     req: CreateResponseRequest,
     previous_messages: Vec<ChatMessage>,
-    store: Option<InMemoryStore>,
+    store: Option<Arc<dyn ResponseStore + Send + Sync>>,
     containers: ContainerStore,
-    conversation_store: Option<InMemoryConversationStore>,
+    conversation_store: Option<Arc<dyn ConversationStore + Send + Sync>>,
     conversation_id: Option<String>,
 ) -> Pin<Box<dyn Stream<Item = Result<SseEvent, ExecutionError>> + Send>> {
     let (tx, rx) = mpsc::channel(32);
@@ -99,9 +100,9 @@ async fn run_streaming_loop(
     mcp: McpClient,
     req: CreateResponseRequest,
     previous_messages: Vec<ChatMessage>,
-    store: Option<InMemoryStore>,
+    store: Option<Arc<dyn ResponseStore + Send + Sync>>,
     containers: ContainerStore,
-    conversation_store: Option<InMemoryConversationStore>,
+    conversation_store: Option<Arc<dyn ConversationStore + Send + Sync>>,
     conversation_id: Option<String>,
     tx: mpsc::Sender<Result<SseEvent, ExecutionError>>,
 ) -> Result<(), ExecutionError> {
@@ -214,7 +215,7 @@ async fn run_streaming_loop(
     // This fixes the issue where client disconnects cause items to be lost because
     // append_output_items_to_conversation() is only called at the end of successful streaming.
     if let (Some(conv_store), Some(conv_id)) = (&conversation_store, &conversation_id) {
-        store_input_items(conv_store, conv_id, &req);
+        store_input_items(conv_store.as_ref(), conv_id, &req);
     }
 
     // Web search sources must persist across loop iterations (tool call cycles)
@@ -255,7 +256,7 @@ async fn run_streaming_loop(
             if req.store
                 && let Some(ref store) = store
             {
-                store.store(final_response.clone(), req.clone());
+                store.as_ref().store(final_response.clone(), req.clone());
                 tracing::info!(
                     response_id = %resp_id,
                     output_items = final_response.output.len(),
@@ -265,7 +266,11 @@ async fn run_streaming_loop(
 
             // Append output items to conversation (input items already stored at start)
             if let (Some(conv_store), Some(conv_id)) = (&conversation_store, &conversation_id) {
-                append_output_items_to_conversation(conv_store, conv_id, &final_response.output);
+                append_output_items_to_conversation(
+                    conv_store.as_ref(),
+                    conv_id,
+                    &final_response.output,
+                );
             }
 
             send(&tx, SseEvent::response_completed(final_response.clone())).await?;
@@ -838,12 +843,11 @@ async fn run_streaming_loop(
         // Store the response if requested
         if req.store {
             if let Some(ref store) = store {
-                store.store(final_response.clone(), req.clone());
+                store.as_ref().store(final_response.clone(), req.clone());
                 tracing::info!(
                     response_id = %resp_id,
                     previous_response_id = ?req.previous_response_id,
                     output_items = final_response.output.len(),
-                    store_size = store.len(),
                     "Stored streaming response"
                 );
             }
@@ -853,10 +857,14 @@ async fn run_streaming_loop(
 
         // Append output items to conversation (input items already stored at start)
         if let (Some(conv_store), Some(conv_id)) = (&conversation_store, &conversation_id) {
-            append_output_items_to_conversation(conv_store, conv_id, &final_response.output);
+            append_output_items_to_conversation(
+                conv_store.as_ref(),
+                conv_id,
+                &final_response.output,
+            );
 
             // Generate title for new conversations (first exchange only)
-            if super::title_generator::should_generate_title(conv_store, conv_id) {
+            if super::title_generator::should_generate_title(conv_store.as_ref(), conv_id) {
                 if let Some(task_model) = super::title_generator::find_task_model(&config.models) {
                     let user_msg = super::title_generator::extract_first_user_message(&req.input);
                     let assistant_resp =
@@ -872,7 +880,7 @@ async fn run_streaming_loop(
                     {
                         Ok(title) => {
                             // Update conversation title in store
-                            if let Err(e) = conv_store.update_title(conv_id, &title) {
+                            if let Err(e) = conv_store.as_ref().update_title(conv_id, &title) {
                                 tracing::warn!(
                                     conversation_id = %conv_id,
                                     error = %e,
@@ -882,7 +890,7 @@ async fn run_streaming_loop(
                             // Emit title event to frontend
                             send(
                                 &tx,
-                                SseEvent::conversation_title_generated(conv_id.clone(), title),
+                                SseEvent::conversation_title_generated(conv_id.to_string(), title),
                             )
                             .await?;
                         }
@@ -1319,7 +1327,7 @@ fn mcp_tool_to_function_tool(mcp_tool: rmcp::model::Tool) -> Tool {
 /// This ensures user messages are persisted even if the stream is interrupted.
 /// Should be called before the streaming loop begins.
 fn store_input_items(
-    store: &InMemoryConversationStore,
+    store: &(dyn ConversationStore + Send + Sync),
     conversation_id: &str,
     req: &CreateResponseRequest,
 ) {
@@ -1371,7 +1379,7 @@ fn store_input_items(
 /// Called at the end of streaming to store the assistant's response.
 /// Input items should already have been stored via `store_input_items()`.
 fn append_output_items_to_conversation(
-    store: &InMemoryConversationStore,
+    store: &(dyn ConversationStore + Send + Sync),
     conversation_id: &str,
     output: &[OutputItem],
 ) {
