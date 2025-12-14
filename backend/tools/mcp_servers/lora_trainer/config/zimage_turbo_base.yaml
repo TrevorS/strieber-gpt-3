@@ -1,0 +1,47 @@
+# ABOUTME: Base ai-toolkit configuration template for z-image turbo LoRA training.
+# Values in {brackets} are placeholders replaced by training_runner.py.
+
+job:
+  extension: safetensors
+  job_id: "{job_id}"
+
+model:
+  name_or_path: /weights/z-image-turbo/z_image_turbo_bf16.safetensors
+  training_adapter: /weights/z-image-turbo/training_adapter_v2.safetensors
+  quantize: false
+
+network:
+  type: lora
+  linear: 8
+  linear_alpha: 8
+
+dataset:
+  folder_path: /data/datasets/{dataset_name}/images
+  caption_ext: ".txt"
+  caption_folder: /data/datasets/{dataset_name}/captions
+  default_caption: "{trigger_token}"
+  random_crop: true
+  resolution:
+    - 1024
+    - 1024
+
+train:
+  batch_size: 1
+  steps: 3000
+  lr: 0.0001
+  gradient_checkpointing: true
+  noise_scheduler: flowmatch
+
+save:
+  save_every: 500
+  max_step_saves_to_keep: 5
+  output_folder: /data/outputs/{job_id}/checkpoints
+
+sample:
+  sample_every: 250
+  sample_folder: /data/outputs/{job_id}/samples
+  prompts:
+    - text: "{trigger_token}, portrait, studio lighting"
+      seed: 42
+    - text: "{trigger_token}, outdoor, natural light"
+      seed: 1337
