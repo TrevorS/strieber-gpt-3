@@ -26,7 +26,7 @@ services:
       args:
         CUDA_VERSION: "13.0.1"
         UBUNTU_VERSION: "22.04"
-        CUDA_DOCKER_ARCH: "121"  # Blackwell GB10
+        CUDA_DOCKER_ARCH: "121a"  # Blackwell GB10
 
     image: strieber-llama-server:latest
     container_name: strieber-llama-server
@@ -122,7 +122,7 @@ services:
       args:
         CUDA_VERSION: "13.0.1"
         UBUNTU_VERSION: "22.04"
-        CUDA_DOCKER_ARCH: "121"  # Blackwell GB10
+        CUDA_DOCKER_ARCH: "121a"  # Blackwell GB10
 
     image: strieber-llama-server:latest  # Reuse same image
     container_name: strieber-llama-server-qwen-vl
@@ -598,7 +598,7 @@ services:
       - MAX_TOOL_ITERATIONS=10
       - TIMEOUT_SECS=300
       - RESPONSE_TTL_SECS=3600
-      - RUST_LOG=responses_api=info,tower_http=info
+      - RUST_LOG=responses_api::execution=debug,responses_api=info,tower_http=info
     volumes:
       # Persistent storage for generated files (code interpreter images, etc.)
       - responses-data:/data
@@ -766,6 +766,72 @@ services:
       - strieber-net
     profiles:
       - dev
+
+  # ==========================================================================
+  # lora-studio-dev: Development container for lora-studio work
+  # ABOUTME: Runs as host user to avoid permission issues with mounted volumes
+  # Usage: docker compose run --rm lora-studio-dev npm install
+  # ==========================================================================
+  lora-studio-dev:
+    image: node:22-alpine
+    container_name: strieber-lora-studio-dev
+    user: "1000:1000"
+    working_dir: /app
+    volumes:
+      - ./lora-studio:/app
+    networks:
+      - strieber-net
+    profiles:
+      - dev
+
+  # ==========================================================================
+  # lora-studio-dev-server: Development mode with Vite dev server
+  # ABOUTME: Hot-reloading development server for LoRA Studio
+  # Usage: docker compose --profile dev up lora-studio-dev-server
+  # ==========================================================================
+  lora-studio-dev-server:
+    image: node:22-alpine
+    container_name: strieber-lora-studio-dev-server
+    user: "1000:1000"
+    working_dir: /app
+    ports:
+      - "5174:5173"
+    volumes:
+      - ./lora-studio:/app
+      - /app/node_modules  # Anonymous volume for node_modules
+    environment:
+      - VITE_LORA_TRAINER_URL=http://localhost:9145
+      - VITE_COMFY_ZIMAGE_URL=http://localhost:9141
+    command: ["npm", "run", "dev", "--", "--host"]
+    networks:
+      - strieber-net
+    profiles:
+      - dev
+
+  # ==========================================================================
+  # lora-studio: LoRA training management UI
+  # ABOUTME: Dataset management, training control, image generation with LoRAs
+  # ==========================================================================
+  lora-studio:
+    build:
+      context: ./lora-studio
+      dockerfile: Dockerfile
+    image: strieber-lora-studio:latest
+    container_name: strieber-lora-studio
+    restart: unless-stopped
+    ports:
+      - "${LORA_STUDIO_PORT:-9310}:3000"
+    environment:
+      - PORT=3000
+      - ORIGIN=http://localhost:9310
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "http://localhost:3000/health"]
+      interval: 30s
+      timeout: 5s
+      start_period: 10s
+      retries: 3
+    networks:
+      - strieber-net
 
 networks:
   strieber-net:

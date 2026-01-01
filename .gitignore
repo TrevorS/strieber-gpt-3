@@ -58,6 +58,7 @@ yarn-error.log
 
 # SvelteKit src/lib (exception to Python lib/ rule)
 !frontend/src/lib/
+!lora-studio/src/lib/
 
 # Cache
 .cache/
