@@ -800,8 +800,7 @@ services:
       - ./lora-studio:/app
       - /app/node_modules  # Anonymous volume for node_modules
     environment:
-      - VITE_LORA_TRAINER_URL=http://localhost:9145
-      - VITE_COMFY_ZIMAGE_URL=http://localhost:9141
+      - LORA_TRAINER_URL=http://mcp-lora-trainer:8000
     command: ["npm", "run", "dev", "--", "--host"]
     networks:
       - strieber-net
@@ -824,6 +823,7 @@ services:
     environment:
       - PORT=3000
       - ORIGIN=http://localhost:9310
+      - LORA_TRAINER_URL=http://mcp-lora-trainer:8000
     healthcheck:
       test: ["CMD", "curl", "-sf", "http://localhost:3000/health"]
       interval: 30s

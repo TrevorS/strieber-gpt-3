@@ -2,9 +2,11 @@
 # Provides tools for dataset creation, image upload, training control, and checkpoint promotion.
 
 import base64
+import json
 import logging
+from datetime import datetime
 from pathlib import Path
-from typing import List, Literal, Optional
+from typing import Any, List, Literal, Optional
 
 from mcp.server.fastmcp import Context, FastMCP
 from mcp.types import ImageContent, TextContent
@@ -26,6 +28,24 @@ from lora_trainer.training_runner import TrainingRunner
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
+
+
+def _to_json(obj: Any) -> str:
+    """Serialize object to JSON string for UI consumption."""
+
+    def default(o: Any) -> Any:
+        if hasattr(o, "model_dump"):  # Pydantic
+            return o.model_dump()
+        if hasattr(o, "value"):  # Enum
+            return o.value
+        if isinstance(o, datetime):
+            return o.isoformat()
+        if isinstance(o, Path):
+            return str(o)
+        raise TypeError(f"Object of type {type(o)} is not JSON serializable")
+
+    return json.dumps(obj, default=default)
+
 
 # Initialize MCP server
 mcp = FastMCP("lora_trainer", host="0.0.0.0")
@@ -78,37 +98,47 @@ async def lora_create_dataset(
     trigger_token: str,
     lora_type: Literal["character", "style", "concept"] = "character",
     description: Optional[str] = None,
+    output_format: Literal["text", "json"] = "text",
     ctx: Context = None,
 ) -> List[TextContent]:
-    """Create a new LoRA training dataset.
+    """Create a NEW LoRA training dataset. ONLY use when user explicitly requests a new dataset.
+
+    WHEN TO USE:
+    - User says "create a new dataset" or "start a new LoRA"
+    - No existing dataset matches their needs
+
+    DO NOT USE when:
+    - User mentions an existing dataset name
+    - User wants to add images to an existing dataset
+    - User wants to train/caption/validate an existing dataset
 
     TRIGGER TOKEN GUIDELINES:
     - Use unique, non-dictionary words (e.g., "ohwx", "sks", "xyz123")
     - Keep it short (3-6 characters)
     - Avoid common words that appear in training data
 
-    LORA TYPES:
-    - character: Person/subject identity (faces, full body)
-    - style: Artistic style transfer (painting style, color palette)
-    - concept: Object or abstract concept
-
     Args:
-        name: Dataset name (alphanumeric + underscores, starts with letter)
+        name: NEW dataset name (alphanumeric + underscores, starts with letter)
         trigger_token: Unique token to trigger the LoRA (e.g., "ohwx")
-        lora_type: Type of LoRA being trained
+        lora_type: character, style, or concept
         description: Optional description
+        output_format: "text" for human-readable, "json" for structured data.
 
     Returns:
         Confirmation with dataset path.
     """
     try:
         dm = _get_dataset_manager()
-        dm.create_dataset(
+        metadata = dm.create_dataset(
             name=name,
             trigger_token=trigger_token,
             lora_type=LoRAType(lora_type),
             description=description,
         )
+
+        if output_format == "json":
+            return [TextContent(type="text", text=_to_json(metadata))]
+
         return [
             TextContent(
                 type="text",
@@ -119,6 +149,41 @@ async def lora_create_dataset(
             )
         ]
     except ValueError as e:
+        if output_format == "json":
+            return [TextContent(type="text", text=_to_json({"error": str(e)}))]
+        return [TextContent(type="text", text=f"Error: {str(e)}")]
+
+
+@mcp.tool()
+async def lora_delete_dataset(
+    name: str,
+    output_format: Literal["text", "json"] = "text",
+    ctx: Context = None,
+) -> List[TextContent]:
+    """Delete a dataset and all its contents.
+
+    WHEN TO USE:
+    - User explicitly asks to delete a dataset
+    - Cleaning up unused datasets
+
+    Args:
+        name: Dataset name to delete.
+        output_format: "text" for human-readable, "json" for structured data.
+
+    Returns:
+        Confirmation of deletion.
+    """
+    try:
+        dm = _get_dataset_manager()
+        dm.delete_dataset(name)
+
+        if output_format == "json":
+            return [TextContent(type="text", text=_to_json({"deleted": name}))]
+
+        return [TextContent(type="text", text=f"Deleted dataset '{name}'.")]
+    except Exception as e:
+        if output_format == "json":
+            return [TextContent(type="text", text=_to_json({"error": str(e)}))]
         return [TextContent(type="text", text=f"Error: {str(e)}")]
 
 
@@ -212,14 +277,28 @@ async def lora_validate_dataset(
 
 @mcp.tool()
 async def lora_list_datasets(
+    output_format: Literal["text", "json"] = "text",
     ctx: Context = None,
 ) -> List[TextContent]:
     """List all available training datasets.
 
+    WHEN TO USE:
+    - User asks "what datasets exist?" or "show me datasets"
+    - You need to verify a dataset exists before using it
+
+    DO NOT USE as a default/fallback action. If user gives a specific task, do that task.
+
+    Args:
+        output_format: "text" for human-readable, "json" for structured data.
+
     Returns:
-        List of datasets with metadata.
+        List of datasets with metadata (name, trigger, type, image count).
     """
     datasets = _get_dataset_manager().list_datasets()
+
+    if output_format == "json":
+        return [TextContent(type="text", text=_to_json({"datasets": datasets}))]
+
     if not datasets:
         return [TextContent(type="text", text="No datasets found.")]
 
@@ -232,6 +311,314 @@ async def lora_list_datasets(
         lines.append("")
 
     return [TextContent(type="text", text="\n".join(lines))]
+
+
+@mcp.tool()
+async def lora_get_dataset(
+    name: str,
+    output_format: Literal["text", "json"] = "text",
+    ctx: Context = None,
+) -> List[TextContent]:
+    """Get detailed information about a dataset including all images.
+
+    WHEN TO USE:
+    - User asks about a specific dataset's contents
+    - You need to see what images are in a dataset
+    - Before editing captions or managing images
+
+    Args:
+        name: Dataset name.
+        output_format: "text" for human-readable, "json" for structured data.
+
+    Returns:
+        Dataset metadata and list of images with captions.
+    """
+    dm = _get_dataset_manager()
+    metadata = dm.get_metadata(name)
+    dataset_path = dm.get_dataset_path(name)
+    images_dir = dataset_path / "images"
+    captions_dir = dataset_path / "captions"
+
+    # Collect images with captions
+    images = []
+    if images_dir.exists():
+        for ext in ("*.jpg", "*.jpeg", "*.png"):
+            for img_path in sorted(images_dir.glob(ext)):
+                caption_path = captions_dir / f"{img_path.stem}.txt"
+                caption = None
+                if caption_path.exists():
+                    caption = caption_path.read_text().strip()
+                images.append(
+                    {
+                        "filename": img_path.name,
+                        "caption": caption,
+                    }
+                )
+
+    if output_format == "json":
+        return [
+            TextContent(
+                type="text",
+                text=_to_json(
+                    {
+                        "name": metadata.name,
+                        "trigger_token": metadata.trigger_token,
+                        "lora_type": metadata.lora_type.value,
+                        "description": metadata.description,
+                        "image_count": metadata.image_count,
+                        "has_captions": metadata.has_captions,
+                        "created_at": metadata.created_at,
+                        "images": images,
+                    }
+                ),
+            )
+        ]
+
+    # Text format
+    lines = [
+        f"Dataset: {metadata.name}",
+        f"Trigger: {metadata.trigger_token}",
+        f"Type: {metadata.lora_type.value}",
+        f"Images: {metadata.image_count}",
+        f"Has captions: {metadata.has_captions}",
+        "",
+        "Images:",
+    ]
+    for img in images:
+        caption_preview = (
+            img["caption"][:100] + "..."
+            if img["caption"] and len(img["caption"]) > 100
+            else img["caption"]
+        )
+        lines.append(f"- {img['filename']}: {caption_preview or '(no caption)'}")
+
+    return [TextContent(type="text", text="\n".join(lines))]
+
+
+@mcp.tool()
+async def lora_get_image(
+    dataset_name: str,
+    filename: str,
+    output_format: Literal["text", "json"] = "text",
+    ctx: Context = None,
+) -> List[TextContent | ImageContent]:
+    """Get a specific image from a dataset.
+
+    WHEN TO USE:
+    - User wants to see a specific image from a dataset
+    - Reviewing individual images before training
+
+    Args:
+        dataset_name: Name of the dataset.
+        filename: Image filename (e.g., "001_abc123.png").
+        output_format: "text" for LLM (returns ImageContent), "json" for UI (returns base64 in JSON).
+
+    Returns:
+        The image and its caption if available.
+    """
+    dm = _get_dataset_manager()
+    if not dm.dataset_exists(dataset_name):
+        if output_format == "json":
+            return [
+                TextContent(
+                    type="text",
+                    text=_to_json({"error": f"Dataset '{dataset_name}' not found."}),
+                )
+            ]
+        return [TextContent(type="text", text=f"Dataset '{dataset_name}' not found.")]
+
+    dataset_path = dm.get_dataset_path(dataset_name)
+    image_path = dataset_path / "images" / filename
+
+    if not image_path.exists():
+        if output_format == "json":
+            return [
+                TextContent(
+                    type="text",
+                    text=_to_json({"error": f"Image '{filename}' not found."}),
+                )
+            ]
+        return [TextContent(type="text", text=f"Image '{filename}' not found.")]
+
+    # Get caption if exists
+    caption_path = dataset_path / "captions" / f"{image_path.stem}.txt"
+    caption = None
+    if caption_path.exists():
+        caption = caption_path.read_text().strip()
+
+    # Read and encode image
+    image_data = base64.b64encode(image_path.read_bytes()).decode("ascii")
+    suffix = image_path.suffix.lower()
+    media_type = {
+        ".jpg": "image/jpeg",
+        ".jpeg": "image/jpeg",
+        ".png": "image/png",
+        ".gif": "image/gif",
+        ".webp": "image/webp",
+    }.get(suffix, "image/png")
+
+    if output_format == "json":
+        return [
+            TextContent(
+                type="text",
+                text=_to_json(
+                    {
+                        "filename": filename,
+                        "data": image_data,
+                        "content_type": media_type,
+                        "caption": caption,
+                    }
+                ),
+            )
+        ]
+
+    # Text format - return ImageContent for LLM
+    result: List[TextContent | ImageContent] = []
+    if caption:
+        result.append(TextContent(type="text", text=f"Caption: {caption}"))
+    result.append(ImageContent(type="image", data=image_data, mimeType=media_type))
+    return result
+
+
+@mcp.tool()
+async def lora_delete_image(
+    dataset_name: str,
+    filename: str,
+    output_format: Literal["text", "json"] = "text",
+    ctx: Context = None,
+) -> List[TextContent]:
+    """Delete an image from a dataset.
+
+    WHEN TO USE:
+    - User wants to remove a specific image
+    - Cleaning up bad images from a dataset
+
+    Args:
+        dataset_name: Name of the dataset.
+        filename: Image filename to delete.
+        output_format: "text" for human-readable, "json" for structured data.
+
+    Returns:
+        Confirmation of deletion.
+    """
+    dm = _get_dataset_manager()
+    if not dm.dataset_exists(dataset_name):
+        if output_format == "json":
+            return [
+                TextContent(
+                    type="text",
+                    text=_to_json({"error": f"Dataset '{dataset_name}' not found."}),
+                )
+            ]
+        return [TextContent(type="text", text=f"Dataset '{dataset_name}' not found.")]
+
+    dataset_path = dm.get_dataset_path(dataset_name)
+    image_path = dataset_path / "images" / filename
+
+    if not image_path.exists():
+        if output_format == "json":
+            return [
+                TextContent(
+                    type="text",
+                    text=_to_json({"error": f"Image '{filename}' not found."}),
+                )
+            ]
+        return [TextContent(type="text", text=f"Image '{filename}' not found.")]
+
+    # Delete image
+    image_path.unlink()
+
+    # Delete caption if exists
+    caption_path = dataset_path / "captions" / f"{image_path.stem}.txt"
+    if caption_path.exists():
+        caption_path.unlink()
+
+    # Update metadata
+    dm._update_metadata(dataset_name)
+
+    if output_format == "json":
+        return [
+            TextContent(
+                type="text",
+                text=_to_json({"deleted": filename, "dataset": dataset_name}),
+            )
+        ]
+
+    return [TextContent(type="text", text=f"Deleted '{filename}' from {dataset_name}.")]
+
+
+@mcp.tool()
+async def lora_update_caption(
+    dataset_name: str,
+    filename: str,
+    caption: str,
+    output_format: Literal["text", "json"] = "text",
+    ctx: Context = None,
+) -> List[TextContent]:
+    """Update the caption for a specific image.
+
+    WHEN TO USE:
+    - User wants to edit or fix a caption
+    - Manually setting captions for specific images
+
+    Args:
+        dataset_name: Name of the dataset.
+        filename: Image filename (e.g., "001_abc123.png").
+        caption: New caption text.
+        output_format: "text" for human-readable, "json" for structured data.
+
+    Returns:
+        Confirmation of update.
+    """
+    dm = _get_dataset_manager()
+    if not dm.dataset_exists(dataset_name):
+        if output_format == "json":
+            return [
+                TextContent(
+                    type="text",
+                    text=_to_json({"error": f"Dataset '{dataset_name}' not found."}),
+                )
+            ]
+        return [TextContent(type="text", text=f"Dataset '{dataset_name}' not found.")]
+
+    dataset_path = dm.get_dataset_path(dataset_name)
+    image_path = dataset_path / "images" / filename
+
+    if not image_path.exists():
+        if output_format == "json":
+            return [
+                TextContent(
+                    type="text",
+                    text=_to_json({"error": f"Image '{filename}' not found."}),
+                )
+            ]
+        return [TextContent(type="text", text=f"Image '{filename}' not found.")]
+
+    # Write caption
+    captions_dir = dataset_path / "captions"
+    captions_dir.mkdir(exist_ok=True)
+    caption_path = captions_dir / f"{image_path.stem}.txt"
+    caption_path.write_text(caption)
+
+    # Update metadata
+    dm._update_metadata(dataset_name)
+
+    if output_format == "json":
+        return [
+            TextContent(
+                type="text",
+                text=_to_json(
+                    {"filename": filename, "dataset": dataset_name, "caption": caption}
+                ),
+            )
+        ]
+
+    return [
+        TextContent(
+            type="text",
+            text=f"Updated caption for '{filename}':\n{caption[:200]}{'...' if len(caption) > 200 else ''}",
+        )
+    ]
 
 
 # ============================================================================
@@ -248,17 +635,24 @@ async def lora_fetch_image(
     crop_mode: Literal["center", "smart", "none"] = "smart",
     ctx: Context = None,
 ) -> List[TextContent]:
-    """Fetch image from URL and add to dataset.
+    """Download and add a NEW image from a URL to a dataset.
 
-    Automatically downloads, validates, and optionally preprocesses the image
-    for optimal training (smart crop around faces, resize to 1024x1024).
+    WHEN TO USE:
+    - User provides a URL to download and add to the dataset
+    - Building a dataset from web images
+
+    DO NOT USE for captioning. To caption images already in a dataset, use lora_caption instead.
+
+    For multiple images, use lora_fetch_images_batch instead.
+
+    REQUIRES: The dataset_name must already exist.
 
     Args:
-        dataset_name: Name of existing dataset
-        url: URL of image to fetch (PNG, JPEG, WebP supported)
-        caption: Optional caption (include trigger token!)
-        preprocess: If True, apply smart crop and resize (default True)
-        crop_mode: How to crop - "smart" detects faces, "center", or "none"
+        dataset_name: Name of EXISTING dataset to add image to
+        url: URL of image to fetch (PNG, JPEG, WebP)
+        caption: Optional caption (should include trigger token)
+        preprocess: Apply smart crop and resize (recommended: true)
+        crop_mode: "smart" for face detection, "center", or "none"
 
     Returns:
         Confirmation with filename.
@@ -312,18 +706,22 @@ async def lora_fetch_images_batch(
     crop_mode: Literal["center", "smart", "none"] = "smart",
     ctx: Context = None,
 ) -> List[TextContent]:
-    """Fetch multiple images from URLs and add to dataset.
+    """Add images from URLs to an EXISTING dataset. Use this to populate a dataset with images.
 
-    Downloads images concurrently (max 5 at a time), optionally generates
-    captions using vision model, and adds all to the dataset.
+    WHEN TO USE:
+    - User provides image URLs to add to a dataset
+    - User wants to fetch/download images into a dataset
+    - Adding multiple images at once
+
+    REQUIRES: The dataset_name must already exist (created with lora_create_dataset).
 
     Args:
-        dataset_name: Name of existing dataset
-        urls: List of image URLs to fetch
-        auto_caption: If True, generate captions with vision model
-        caption_style: Caption style - "detailed", "simple", or "tags"
-        preprocess: If True, apply smart crop and resize
-        crop_mode: How to crop - "smart" detects faces, "center", or "none"
+        dataset_name: Name of EXISTING dataset to add images to
+        urls: List of image URLs to fetch (PNG, JPEG, WebP)
+        auto_caption: Generate captions automatically (recommended: true)
+        caption_style: "detailed" for full descriptions, "simple" for short, "tags" for comma-separated
+        preprocess: Apply smart crop and resize (recommended: true)
+        crop_mode: "smart" for face detection, "center", or "none"
 
     Returns:
         Summary of fetched images and any failures.
@@ -427,37 +825,55 @@ async def lora_fetch_images_batch(
 
 
 @mcp.tool()
-async def lora_caption_images(
+async def lora_caption(
     dataset_name: str,
     style: Literal["detailed", "simple", "tags"] = "detailed",
+    image_name: Optional[str] = None,
+    limit: Optional[int] = None,
     overwrite: bool = False,
+    custom_prompt: Optional[str] = None,
     ctx: Context = None,
 ) -> List[TextContent]:
-    """Auto-generate captions for all images in a dataset using vision model.
+    """Generate captions for images ALREADY IN a dataset using Qwen-VL vision model.
 
-    Uses Qwen-VL to analyze each image and generate descriptive captions.
+    WHEN TO USE:
+    - User asks to "caption", "describe", or "generate captions" for a dataset
+    - User wants to regenerate/update existing captions with a different style
+    - After uploading images, before training
+
+    DO NOT USE lora_fetch_image to caption - that tool is ONLY for downloading NEW images from URLs.
+    This tool captions images that are ALREADY in the dataset on disk.
+
     Automatically prepends the dataset's trigger token to each caption.
 
-    CAPTION STYLES:
-    - detailed: Full description with appearance, clothing, pose, background
-    - simple: Short phrase like "portrait photo, studio lighting"
+    MODES:
+    - Single image: provide image_name (e.g., "001_abc123.png")
+    - Limited batch: provide limit (e.g., limit=5 for next 5 uncaptioned)
+    - All images: omit both image_name and limit
+
+    STYLES:
+    - detailed: Full description with appearance, pose, background, lighting
+    - simple: Brief phrase like "portrait photo, studio lighting"
     - tags: Comma-separated tags like "woman, brown_hair, outdoor"
 
     Args:
         dataset_name: Name of dataset to caption
         style: Caption style (default "detailed")
-        overwrite: If True, regenerate existing captions
+        image_name: Specific image filename to caption (optional)
+        limit: Max images to caption (optional, ignored if image_name set)
+        overwrite: Set to true to regenerate/replace existing captions
+        custom_prompt: Override style with custom prompt (optional)
 
     Returns:
-        Summary of generated captions.
+        Summary with sample captions.
     """
     try:
         dm = _get_dataset_manager()
         metadata = dm.get_metadata(dataset_name)
         dataset_path = dm.get_dataset_path(dataset_name)
-
         images_dir = dataset_path / "images"
         captions_dir = dataset_path / "captions"
+        captions_dir.mkdir(exist_ok=True)
 
         if not images_dir.exists():
             return [
@@ -466,54 +882,107 @@ async def lora_caption_images(
                 )
             ]
 
-        # Count images
-        image_files = [
-            p
-            for p in images_dir.iterdir()
-            if p.suffix.lower() in (".png", ".jpg", ".jpeg")
-        ]
-        total = len(image_files)
+        # MODE 1: Single image
+        if image_name:
+            image_path = images_dir / image_name
+            if not image_path.exists():
+                return [TextContent(type="text", text=f"Image not found: {image_name}")]
 
-        if total == 0:
+            with open(image_path, "rb") as f:
+                image_bytes = f.read()
+
+            async with VisionCaptioner() as captioner:
+                caption = await captioner.caption_image(
+                    image_bytes=image_bytes,
+                    style=style,
+                    trigger_token=metadata.trigger_token,
+                    custom_prompt=custom_prompt,
+                )
+
+            caption_path = captions_dir / f"{image_path.stem}.txt"
+            caption_path.write_text(caption)
+            dm._update_metadata(dataset_name)
+
+            return [
+                TextContent(
+                    type="text", text=f"Caption for '{image_name}':\n\n{caption}"
+                )
+            ]
+
+        # MODE 2/3: Batch (all or limited)
+        image_files = sorted(
+            [
+                p
+                for p in images_dir.iterdir()
+                if p.suffix.lower() in (".png", ".jpg", ".jpeg")
+            ]
+        )
+
+        if not image_files:
             return [
                 TextContent(type="text", text=f"No images found in '{dataset_name}'")
             ]
 
-        if ctx:
-            await ctx.report_progress(0, total, "Starting captioning...")
+        total_images = len(image_files)
 
+        # Filter to uncaptioned unless overwrite is True
+        if not overwrite:
+            image_files = [
+                p for p in image_files if not (captions_dir / f"{p.stem}.txt").exists()
+            ]
+
+        # Apply limit
+        if limit and limit > 0:
+            image_files = image_files[:limit]
+
+        if not image_files:
+            return [
+                TextContent(
+                    type="text",
+                    text=f"SUCCESS: All {total_images} images in '{dataset_name}' already have captions. "
+                    f"The dataset is ready for training. If the user wants to regenerate captions with a "
+                    f"different style, use lora_regenerate_captions instead.",
+                )
+            ]
+
+        # Caption batch
+        results = {}
         async with VisionCaptioner() as captioner:
+            for idx, image_path in enumerate(image_files, 1):
+                logger.info(f"Captioning {idx}/{len(image_files)}: {image_path.name}")
+                if ctx:
+                    await ctx.report_progress(idx, len(image_files), image_path.name)
 
-            def progress_cb(current: int, total: int, name: str):
-                logger.info(f"Captioned {current}/{total}: {name}")
+                with open(image_path, "rb") as f:
+                    image_bytes = f.read()
 
-            results = await captioner.caption_dataset(
-                images_dir=images_dir,
-                captions_dir=captions_dir,
-                trigger_token=metadata.trigger_token,
-                style=style,
-                overwrite=overwrite,
-                on_progress=progress_cb,
-            )
+                try:
+                    caption = await captioner.caption_image(
+                        image_bytes=image_bytes,
+                        style=style,
+                        trigger_token=metadata.trigger_token,
+                        custom_prompt=custom_prompt,
+                    )
 
-        if ctx:
-            await ctx.report_progress(total, total, "Done")
+                    caption_path = captions_dir / f"{image_path.stem}.txt"
+                    caption_path.write_text(caption)
+                    results[image_path.name] = caption
+                except Exception as e:
+                    logger.error(f"Failed to caption {image_path.name}: {e}")
+                    results[image_path.name] = f"[ERROR: {e}]"
 
-        # Update metadata
         dm._update_metadata(dataset_name)
 
         lines = [
-            f"Captioning complete for '{dataset_name}':",
-            f"  Style: {style}",
-            f"  Images captioned: {len(results)}/{total}",
-            f"  Trigger token: {metadata.trigger_token}",
+            f"Captioned {len(results)} images in '{dataset_name}' ({style} style):",
             "",
-            "Sample captions:",
         ]
+        for name, caption in list(results.items())[:3]:
+            preview = caption[:60] + "..." if len(caption) > 60 else caption
+            lines.append(f"  {name}: {preview}")
 
-        # Show first 3 captions as samples
-        for i, (name, caption) in enumerate(list(results.items())[:3]):
-            lines.append(f"  {name}: {caption[:80]}...")
+        if len(results) > 3:
+            lines.append(f"  ... and {len(results) - 3} more")
 
         return [TextContent(type="text", text="\n".join(lines))]
     except Exception as e:
@@ -522,65 +991,38 @@ async def lora_caption_images(
 
 
 @mcp.tool()
-async def lora_caption_single(
+async def lora_regenerate_captions(
     dataset_name: str,
-    image_name: str,
     style: Literal["detailed", "simple", "tags"] = "detailed",
     custom_prompt: Optional[str] = None,
     ctx: Context = None,
 ) -> List[TextContent]:
-    """Generate or regenerate caption for a specific image.
+    """Regenerate ALL captions in a dataset, replacing existing ones.
 
-    Useful for fixing or customizing individual captions after batch captioning.
+    WHEN TO USE:
+    - User says "regenerate captions" or "re-caption"
+    - User wants to change caption style (e.g., from detailed to tags)
+    - User wants to overwrite existing captions
+
+    This tool ALWAYS overwrites existing captions. For adding captions to
+    uncaptioned images only, use lora_caption instead.
 
     Args:
-        dataset_name: Name of dataset
-        image_name: Filename of image to caption (e.g., "001_abc123.png")
-        style: Caption style (ignored if custom_prompt provided)
+        dataset_name: Name of dataset to regenerate captions for
+        style: Caption style - detailed, simple, or tags
         custom_prompt: Optional custom prompt for vision model
 
     Returns:
-        Generated caption.
+        Summary with sample regenerated captions.
     """
-    try:
-        dm = _get_dataset_manager()
-        metadata = dm.get_metadata(dataset_name)
-        dataset_path = dm.get_dataset_path(dataset_name)
-
-        image_path = dataset_path / "images" / image_name
-        if not image_path.exists():
-            return [TextContent(type="text", text=f"Image not found: {image_name}")]
-
-        # Read image
-        with open(image_path, "rb") as f:
-            image_bytes = f.read()
-
-        async with VisionCaptioner() as captioner:
-            caption = await captioner.caption_image(
-                image_bytes=image_bytes,
-                style=style,
-                trigger_token=metadata.trigger_token,
-            )
-
-        # Save caption
-        captions_dir = dataset_path / "captions"
-        captions_dir.mkdir(exist_ok=True)
-        caption_path = captions_dir / f"{image_path.stem}.txt"
-        with open(caption_path, "w") as f:
-            f.write(caption)
-
-        # Update metadata
-        dm._update_metadata(dataset_name)
-
-        return [
-            TextContent(
-                type="text",
-                text=f"Caption generated for '{image_name}':\n\n{caption}",
-            )
-        ]
-    except Exception as e:
-        logger.error(f"Caption single error: {e}", exc_info=True)
-        return [TextContent(type="text", text=f"Error: {str(e)}")]
+    # Delegate to lora_caption with overwrite=True
+    return await lora_caption(
+        dataset_name=dataset_name,
+        style=style,
+        overwrite=True,
+        custom_prompt=custom_prompt,
+        ctx=ctx,
+    )
 
 
 # ============================================================================
