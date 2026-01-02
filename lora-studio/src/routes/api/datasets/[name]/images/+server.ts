@@ -1,29 +1,35 @@
 import { json, error } from '@sveltejs/kit';
 import type { RequestHandler } from './$types';
-import { callTool } from '$lib/server/mcp';
-import type { AddImagesResult } from '$lib/server/types';
 
-// POST /api/datasets/:name/images - Add images to dataset
-export const POST: RequestHandler = async ({ params, request }) => {
-	try {
-		const body = await request.json();
+const LORA_API_URL = process.env.LORA_TRAINER_URL || 'http://mcp-lora-trainer:8000';
 
-		// Support both single URL and array of URLs
-		const sources: string[] = Array.isArray(body.urls) ? body.urls : body.url ? [body.url] : [];
+// POST /api/datasets/:name/images - Add images from URLs
+export const POST: RequestHandler = async ({ params, request, fetch }) => {
+	const body = await request.json();
 
-		if (sources.length === 0) {
-			throw error(400, { message: 'At least one URL is required' });
-		}
+	// Support both single URL and array of URLs
+	const urls: string[] = Array.isArray(body.urls) ? body.urls : body.url ? [body.url] : [];
 
-		const result = await callTool<AddImagesResult>('lora_add_images', {
-			dataset_name: params.name,
-			sources
-		});
-
-		return json(result);
-	} catch (e) {
-		if (e instanceof Response) throw e;
-		console.error('Failed to add images:', e);
-		throw error(500, { message: e instanceof Error ? e.message : 'Failed to add images' });
+	if (urls.length === 0) {
+		throw error(400, { message: 'At least one URL is required' });
 	}
+
+	const res = await fetch(`${LORA_API_URL}/api/datasets/${params.name}/images`, {
+		method: 'POST',
+		headers: { 'Content-Type': 'application/json' },
+		body: JSON.stringify({
+			urls,
+			auto_caption: body.auto_caption ?? false,
+			caption_style: body.caption_style || 'detailed',
+			preprocess: body.preprocess ?? true,
+			crop_mode: body.crop_mode || 'smart'
+		})
+	});
+
+	if (!res.ok) {
+		const err = await res.json();
+		throw error(res.status, { message: err.error || 'Failed to add images' });
+	}
+
+	return json(await res.json());
 };

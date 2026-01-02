@@ -1,37 +1,39 @@
 import { json, error } from '@sveltejs/kit';
 import type { RequestHandler } from './$types';
-import { callTool } from '$lib/server/mcp';
-import type { Dataset } from '$lib/server/types';
+
+const LORA_API_URL = process.env.LORA_TRAINER_URL || 'http://mcp-lora-trainer:8000';
 
 // GET /api/datasets - List all datasets
-export const GET: RequestHandler = async () => {
-	try {
-		const result = await callTool<{ datasets: Dataset[] }>('lora_list_datasets');
-		return json(result.datasets);
-	} catch (e) {
-		console.error('Failed to list datasets:', e);
-		throw error(500, { message: e instanceof Error ? e.message : 'Failed to list datasets' });
+export const GET: RequestHandler = async ({ fetch }) => {
+	const res = await fetch(`${LORA_API_URL}/api/datasets`);
+	if (!res.ok) {
+		throw error(res.status, { message: 'Failed to list datasets' });
 	}
+	return json(await res.json());
 };
 
 // POST /api/datasets - Create a new dataset
-export const POST: RequestHandler = async ({ request }) => {
-	try {
-		const { name, trigger_token, lora_type } = await request.json();
+export const POST: RequestHandler = async ({ request, fetch }) => {
+	const body = await request.json();
 
-		if (!name || typeof name !== 'string') {
-			throw error(400, { message: 'Dataset name is required' });
-		}
-
-		const result = await callTool<Dataset>('lora_create_dataset', {
-			name,
-			trigger_token: trigger_token || name,
-			lora_type: lora_type || 'character'
-		});
-		return json(result, { status: 201 });
-	} catch (e) {
-		if (e instanceof Response) throw e;
-		console.error('Failed to create dataset:', e);
-		throw error(500, { message: e instanceof Error ? e.message : 'Failed to create dataset' });
+	if (!body.name || typeof body.name !== 'string') {
+		throw error(400, { message: 'Dataset name is required' });
 	}
+
+	const res = await fetch(`${LORA_API_URL}/api/datasets`, {
+		method: 'POST',
+		headers: { 'Content-Type': 'application/json' },
+		body: JSON.stringify({
+			name: body.name,
+			trigger_token: body.trigger_token || body.name,
+			lora_type: body.lora_type || 'character'
+		})
+	});
+
+	if (!res.ok) {
+		const err = await res.json();
+		throw error(res.status, { message: err.error || 'Failed to create dataset' });
+	}
+
+	return json(await res.json(), { status: 201 });
 };

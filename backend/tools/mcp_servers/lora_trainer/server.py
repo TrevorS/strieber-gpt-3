@@ -2,14 +2,14 @@
 # Provides tools for dataset creation, image upload, training control, and checkpoint promotion.
 
 import base64
-import json
 import logging
-from datetime import datetime
 from pathlib import Path
-from typing import Any, List, Literal, Optional
+from typing import List, Literal, Optional
 
 from mcp.server.fastmcp import Context, FastMCP
 from mcp.types import ImageContent, TextContent
+from starlette.requests import Request
+from starlette.responses import JSONResponse, Response
 
 from lora_trainer.captioner import VisionCaptioner
 from lora_trainer.dataset_manager import DatasetManager
@@ -28,23 +28,6 @@ from lora_trainer.training_runner import TrainingRunner
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
-
-
-def _to_json(obj: Any) -> str:
-    """Serialize object to JSON string for UI consumption."""
-
-    def default(o: Any) -> Any:
-        if hasattr(o, "model_dump"):  # Pydantic
-            return o.model_dump()
-        if hasattr(o, "value"):  # Enum
-            return o.value
-        if isinstance(o, datetime):
-            return o.isoformat()
-        if isinstance(o, Path):
-            return str(o)
-        raise TypeError(f"Object of type {type(o)} is not JSON serializable")
-
-    return json.dumps(obj, default=default)
 
 
 # Initialize MCP server
@@ -98,7 +81,6 @@ async def lora_create_dataset(
     trigger_token: str,
     lora_type: Literal["character", "style", "concept"] = "character",
     description: Optional[str] = None,
-    output_format: Literal["text", "json"] = "text",
     ctx: Context = None,
 ) -> List[TextContent]:
     """Create a NEW LoRA training dataset. ONLY use when user explicitly requests a new dataset.
@@ -122,22 +104,18 @@ async def lora_create_dataset(
         trigger_token: Unique token to trigger the LoRA (e.g., "ohwx")
         lora_type: character, style, or concept
         description: Optional description
-        output_format: "text" for human-readable, "json" for structured data.
 
     Returns:
         Confirmation with dataset path.
     """
     try:
         dm = _get_dataset_manager()
-        metadata = dm.create_dataset(
+        dm.create_dataset(
             name=name,
             trigger_token=trigger_token,
             lora_type=LoRAType(lora_type),
             description=description,
         )
-
-        if output_format == "json":
-            return [TextContent(type="text", text=_to_json(metadata))]
 
         return [
             TextContent(
@@ -149,15 +127,12 @@ async def lora_create_dataset(
             )
         ]
     except ValueError as e:
-        if output_format == "json":
-            return [TextContent(type="text", text=_to_json({"error": str(e)}))]
         return [TextContent(type="text", text=f"Error: {str(e)}")]
 
 
 @mcp.tool()
 async def lora_delete_dataset(
     name: str,
-    output_format: Literal["text", "json"] = "text",
     ctx: Context = None,
 ) -> List[TextContent]:
     """Delete a dataset and all its contents.
@@ -168,7 +143,6 @@ async def lora_delete_dataset(
 
     Args:
         name: Dataset name to delete.
-        output_format: "text" for human-readable, "json" for structured data.
 
     Returns:
         Confirmation of deletion.
@@ -176,14 +150,8 @@ async def lora_delete_dataset(
     try:
         dm = _get_dataset_manager()
         dm.delete_dataset(name)
-
-        if output_format == "json":
-            return [TextContent(type="text", text=_to_json({"deleted": name}))]
-
         return [TextContent(type="text", text=f"Deleted dataset '{name}'.")]
     except Exception as e:
-        if output_format == "json":
-            return [TextContent(type="text", text=_to_json({"error": str(e)}))]
         return [TextContent(type="text", text=f"Error: {str(e)}")]
 
 
@@ -277,7 +245,6 @@ async def lora_validate_dataset(
 
 @mcp.tool()
 async def lora_list_datasets(
-    output_format: Literal["text", "json"] = "text",
     ctx: Context = None,
 ) -> List[TextContent]:
     """List all available training datasets.
@@ -288,16 +255,10 @@ async def lora_list_datasets(
 
     DO NOT USE as a default/fallback action. If user gives a specific task, do that task.
 
-    Args:
-        output_format: "text" for human-readable, "json" for structured data.
-
     Returns:
         List of datasets with metadata (name, trigger, type, image count).
     """
     datasets = _get_dataset_manager().list_datasets()
-
-    if output_format == "json":
-        return [TextContent(type="text", text=_to_json({"datasets": datasets}))]
 
     if not datasets:
         return [TextContent(type="text", text="No datasets found.")]
@@ -316,7 +277,6 @@ async def lora_list_datasets(
 @mcp.tool()
 async def lora_get_dataset(
     name: str,
-    output_format: Literal["text", "json"] = "text",
     ctx: Context = None,
 ) -> List[TextContent]:
     """Get detailed information about a dataset including all images.
@@ -328,7 +288,6 @@ async def lora_get_dataset(
 
     Args:
         name: Dataset name.
-        output_format: "text" for human-readable, "json" for structured data.
 
     Returns:
         Dataset metadata and list of images with captions.
@@ -355,25 +314,6 @@ async def lora_get_dataset(
                     }
                 )
 
-    if output_format == "json":
-        return [
-            TextContent(
-                type="text",
-                text=_to_json(
-                    {
-                        "name": metadata.name,
-                        "trigger_token": metadata.trigger_token,
-                        "lora_type": metadata.lora_type.value,
-                        "description": metadata.description,
-                        "image_count": metadata.image_count,
-                        "has_captions": metadata.has_captions,
-                        "created_at": metadata.created_at,
-                        "images": images,
-                    }
-                ),
-            )
-        ]
-
     # Text format
     lines = [
         f"Dataset: {metadata.name}",
@@ -399,7 +339,6 @@ async def lora_get_dataset(
 async def lora_get_image(
     dataset_name: str,
     filename: str,
-    output_format: Literal["text", "json"] = "text",
     ctx: Context = None,
 ) -> List[TextContent | ImageContent]:
     """Get a specific image from a dataset.
@@ -411,33 +350,18 @@ async def lora_get_image(
     Args:
         dataset_name: Name of the dataset.
         filename: Image filename (e.g., "001_abc123.png").
-        output_format: "text" for LLM (returns ImageContent), "json" for UI (returns base64 in JSON).
 
     Returns:
         The image and its caption if available.
     """
     dm = _get_dataset_manager()
     if not dm.dataset_exists(dataset_name):
-        if output_format == "json":
-            return [
-                TextContent(
-                    type="text",
-                    text=_to_json({"error": f"Dataset '{dataset_name}' not found."}),
-                )
-            ]
         return [TextContent(type="text", text=f"Dataset '{dataset_name}' not found.")]
 
     dataset_path = dm.get_dataset_path(dataset_name)
     image_path = dataset_path / "images" / filename
 
     if not image_path.exists():
-        if output_format == "json":
-            return [
-                TextContent(
-                    type="text",
-                    text=_to_json({"error": f"Image '{filename}' not found."}),
-                )
-            ]
         return [TextContent(type="text", text=f"Image '{filename}' not found.")]
 
     # Get caption if exists
@@ -457,22 +381,7 @@ async def lora_get_image(
         ".webp": "image/webp",
     }.get(suffix, "image/png")
 
-    if output_format == "json":
-        return [
-            TextContent(
-                type="text",
-                text=_to_json(
-                    {
-                        "filename": filename,
-                        "data": image_data,
-                        "content_type": media_type,
-                        "caption": caption,
-                    }
-                ),
-            )
-        ]
-
-    # Text format - return ImageContent for LLM
+    # Return ImageContent for LLM
     result: List[TextContent | ImageContent] = []
     if caption:
         result.append(TextContent(type="text", text=f"Caption: {caption}"))
@@ -484,7 +393,6 @@ async def lora_get_image(
 async def lora_delete_image(
     dataset_name: str,
     filename: str,
-    output_format: Literal["text", "json"] = "text",
     ctx: Context = None,
 ) -> List[TextContent]:
     """Delete an image from a dataset.
@@ -496,33 +404,18 @@ async def lora_delete_image(
     Args:
         dataset_name: Name of the dataset.
         filename: Image filename to delete.
-        output_format: "text" for human-readable, "json" for structured data.
 
     Returns:
         Confirmation of deletion.
     """
     dm = _get_dataset_manager()
     if not dm.dataset_exists(dataset_name):
-        if output_format == "json":
-            return [
-                TextContent(
-                    type="text",
-                    text=_to_json({"error": f"Dataset '{dataset_name}' not found."}),
-                )
-            ]
         return [TextContent(type="text", text=f"Dataset '{dataset_name}' not found.")]
 
     dataset_path = dm.get_dataset_path(dataset_name)
     image_path = dataset_path / "images" / filename
 
     if not image_path.exists():
-        if output_format == "json":
-            return [
-                TextContent(
-                    type="text",
-                    text=_to_json({"error": f"Image '{filename}' not found."}),
-                )
-            ]
         return [TextContent(type="text", text=f"Image '{filename}' not found.")]
 
     # Delete image
@@ -536,14 +429,6 @@ async def lora_delete_image(
     # Update metadata
     dm._update_metadata(dataset_name)
 
-    if output_format == "json":
-        return [
-            TextContent(
-                type="text",
-                text=_to_json({"deleted": filename, "dataset": dataset_name}),
-            )
-        ]
-
     return [TextContent(type="text", text=f"Deleted '{filename}' from {dataset_name}.")]
 
 
@@ -552,7 +437,6 @@ async def lora_update_caption(
     dataset_name: str,
     filename: str,
     caption: str,
-    output_format: Literal["text", "json"] = "text",
     ctx: Context = None,
 ) -> List[TextContent]:
     """Update the caption for a specific image.
@@ -565,33 +449,18 @@ async def lora_update_caption(
         dataset_name: Name of the dataset.
         filename: Image filename (e.g., "001_abc123.png").
         caption: New caption text.
-        output_format: "text" for human-readable, "json" for structured data.
 
     Returns:
         Confirmation of update.
     """
     dm = _get_dataset_manager()
     if not dm.dataset_exists(dataset_name):
-        if output_format == "json":
-            return [
-                TextContent(
-                    type="text",
-                    text=_to_json({"error": f"Dataset '{dataset_name}' not found."}),
-                )
-            ]
         return [TextContent(type="text", text=f"Dataset '{dataset_name}' not found.")]
 
     dataset_path = dm.get_dataset_path(dataset_name)
     image_path = dataset_path / "images" / filename
 
     if not image_path.exists():
-        if output_format == "json":
-            return [
-                TextContent(
-                    type="text",
-                    text=_to_json({"error": f"Image '{filename}' not found."}),
-                )
-            ]
         return [TextContent(type="text", text=f"Image '{filename}' not found.")]
 
     # Write caption
@@ -602,16 +471,6 @@ async def lora_update_caption(
 
     # Update metadata
     dm._update_metadata(dataset_name)
-
-    if output_format == "json":
-        return [
-            TextContent(
-                type="text",
-                text=_to_json(
-                    {"filename": filename, "dataset": dataset_name, "caption": caption}
-                ),
-            )
-        ]
 
     return [
         TextContent(
@@ -1439,6 +1298,345 @@ async def lora_promote_checkpoint(
         ]
     except Exception as e:
         return [TextContent(type="text", text=f"Error: {str(e)}")]
+
+
+# ============================================================================
+# REST API Endpoints (for lora-studio UI)
+# ============================================================================
+
+
+def _serialize_dataset(ds) -> dict:
+    """Serialize dataset metadata to JSON-safe dict."""
+    return {
+        "name": ds.name,
+        "trigger_token": ds.trigger_token,
+        "lora_type": ds.lora_type.value,
+        "description": ds.description,
+        "image_count": ds.image_count,
+        "has_captions": ds.has_captions,
+        "created_at": ds.created_at.isoformat(),
+    }
+
+
+@mcp.custom_route("/api/datasets", methods=["GET"])
+async def api_list_datasets(request: Request) -> Response:
+    """List all datasets as JSON."""
+    datasets = _get_dataset_manager().list_datasets()
+    return JSONResponse([_serialize_dataset(ds) for ds in datasets])
+
+
+@mcp.custom_route("/api/datasets", methods=["POST"])
+async def api_create_dataset(request: Request) -> Response:
+    """Create a new dataset."""
+    body = await request.json()
+    name = body.get("name")
+    trigger_token = body.get("trigger_token")
+    lora_type = body.get("lora_type", "character")
+    description = body.get("description")
+
+    if not name or not trigger_token:
+        return JSONResponse(
+            {"error": "name and trigger_token are required"}, status_code=400
+        )
+
+    try:
+        dm = _get_dataset_manager()
+        metadata = dm.create_dataset(
+            name=name,
+            trigger_token=trigger_token,
+            lora_type=LoRAType(lora_type),
+            description=description,
+        )
+        return JSONResponse(_serialize_dataset(metadata), status_code=201)
+    except ValueError as e:
+        return JSONResponse({"error": str(e)}, status_code=400)
+
+
+@mcp.custom_route("/api/datasets/{name}", methods=["GET"])
+async def api_get_dataset(request: Request) -> Response:
+    """Get dataset details with images."""
+    name = request.path_params["name"]
+    dm = _get_dataset_manager()
+
+    if not dm.dataset_exists(name):
+        return JSONResponse({"error": "Dataset not found"}, status_code=404)
+
+    metadata = dm.get_metadata(name)
+    dataset_path = dm.get_dataset_path(name)
+    images_dir = dataset_path / "images"
+    captions_dir = dataset_path / "captions"
+
+    images = []
+    if images_dir.exists():
+        for ext in ("*.jpg", "*.jpeg", "*.png"):
+            for img_path in sorted(images_dir.glob(ext)):
+                caption_path = captions_dir / f"{img_path.stem}.txt"
+                caption = (
+                    caption_path.read_text().strip() if caption_path.exists() else None
+                )
+                images.append({"filename": img_path.name, "caption": caption})
+
+    result = _serialize_dataset(metadata)
+    result["images"] = images
+    return JSONResponse(result)
+
+
+@mcp.custom_route("/api/datasets/{name}", methods=["DELETE"])
+async def api_delete_dataset(request: Request) -> Response:
+    """Delete a dataset."""
+    name = request.path_params["name"]
+    dm = _get_dataset_manager()
+
+    if not dm.dataset_exists(name):
+        return JSONResponse({"error": "Dataset not found"}, status_code=404)
+
+    try:
+        dm.delete_dataset(name)
+        return Response(status_code=204)
+    except Exception as e:
+        return JSONResponse({"error": str(e)}, status_code=500)
+
+
+@mcp.custom_route("/api/datasets/{name}/images/{filename}", methods=["GET"])
+async def api_get_image(request: Request) -> Response:
+    """Serve an image file directly (binary response)."""
+    name = request.path_params["name"]
+    filename = request.path_params["filename"]
+
+    dm = _get_dataset_manager()
+    if not dm.dataset_exists(name):
+        return JSONResponse({"error": "Dataset not found"}, status_code=404)
+
+    image_path = dm.get_dataset_path(name) / "images" / filename
+    if not image_path.exists():
+        return JSONResponse({"error": "Image not found"}, status_code=404)
+
+    suffix = image_path.suffix.lower()
+    content_type = {
+        ".jpg": "image/jpeg",
+        ".jpeg": "image/jpeg",
+        ".png": "image/png",
+    }.get(suffix, "image/png")
+
+    return Response(
+        content=image_path.read_bytes(),
+        media_type=content_type,
+        headers={"Cache-Control": "public, max-age=3600"},
+    )
+
+
+@mcp.custom_route("/api/datasets/{name}/images/{filename}", methods=["DELETE"])
+async def api_delete_image(request: Request) -> Response:
+    """Delete an image from a dataset."""
+    name = request.path_params["name"]
+    filename = request.path_params["filename"]
+
+    dm = _get_dataset_manager()
+    if not dm.dataset_exists(name):
+        return JSONResponse({"error": "Dataset not found"}, status_code=404)
+
+    dataset_path = dm.get_dataset_path(name)
+    image_path = dataset_path / "images" / filename
+    if not image_path.exists():
+        return JSONResponse({"error": "Image not found"}, status_code=404)
+
+    image_path.unlink()
+    caption_path = dataset_path / "captions" / f"{image_path.stem}.txt"
+    if caption_path.exists():
+        caption_path.unlink()
+    dm._update_metadata(name)
+
+    return Response(status_code=204)
+
+
+@mcp.custom_route("/api/datasets/{name}/images/{filename}/caption", methods=["PUT"])
+async def api_update_caption(request: Request) -> Response:
+    """Update caption for an image."""
+    name = request.path_params["name"]
+    filename = request.path_params["filename"]
+    body = await request.json()
+
+    dm = _get_dataset_manager()
+    if not dm.dataset_exists(name):
+        return JSONResponse({"error": "Dataset not found"}, status_code=404)
+
+    dataset_path = dm.get_dataset_path(name)
+    image_path = dataset_path / "images" / filename
+    if not image_path.exists():
+        return JSONResponse({"error": "Image not found"}, status_code=404)
+
+    # Write caption
+    captions_dir = dataset_path / "captions"
+    captions_dir.mkdir(exist_ok=True)
+    caption_path = captions_dir / f"{image_path.stem}.txt"
+    caption = body.get("caption", "")
+    caption_path.write_text(caption)
+    dm._update_metadata(name)
+
+    return JSONResponse({"filename": filename, "caption": caption})
+
+
+@mcp.custom_route("/api/datasets/{name}/images", methods=["POST"])
+async def api_add_images(request: Request) -> Response:
+    """Fetch images from URLs and add to dataset."""
+    name = request.path_params["name"]
+    body = await request.json()
+
+    dm = _get_dataset_manager()
+    if not dm.dataset_exists(name):
+        return JSONResponse({"error": "Dataset not found"}, status_code=404)
+
+    urls = body.get("urls", [])
+    if not urls:
+        return JSONResponse({"error": "urls array is required"}, status_code=400)
+
+    auto_caption = body.get("auto_caption", False)
+    caption_style = body.get("caption_style", "detailed")
+    preprocess = body.get("preprocess", True)
+    crop_mode = body.get("crop_mode", "smart")
+
+    metadata = dm.get_metadata(name)
+    results = await fetch_images_batch(urls, max_concurrent=5)
+
+    success_count = 0
+    failures = []
+
+    captioner = None
+    if auto_caption:
+        captioner = VisionCaptioner()
+
+    try:
+        for url, result in results:
+            if isinstance(result, Exception):
+                failures.append({"url": url, "error": str(result)})
+                continue
+
+            image_bytes = result
+            if preprocess:
+                try:
+                    image_bytes = smart_crop(
+                        image_bytes, target_size=1024, crop_mode=crop_mode
+                    )
+                except ImageProcessingError as e:
+                    failures.append({"url": url, "error": f"preprocessing failed: {e}"})
+                    continue
+
+            caption = None
+            if auto_caption and captioner:
+                try:
+                    caption = await captioner.caption_image(
+                        image_bytes=image_bytes,
+                        style=caption_style,
+                        trigger_token=metadata.trigger_token,
+                    )
+                except Exception as e:
+                    logger.warning(f"Caption failed for {url}: {e}")
+
+            dm.add_image(name, image_bytes, caption)
+            success_count += 1
+    finally:
+        if captioner:
+            await captioner.close()
+
+    metadata = dm.get_metadata(name)
+    return JSONResponse(
+        {
+            "added": success_count,
+            "failed": len(failures),
+            "total_images": metadata.image_count,
+            "failures": failures[:10],
+        }
+    )
+
+
+@mcp.custom_route("/api/datasets/{name}/caption", methods=["POST"])
+async def api_caption_dataset(request: Request) -> Response:
+    """Auto-caption images in a dataset."""
+    name = request.path_params["name"]
+    body = await request.json()
+
+    dm = _get_dataset_manager()
+    if not dm.dataset_exists(name):
+        return JSONResponse({"error": "Dataset not found"}, status_code=404)
+
+    style = body.get("style", "detailed")
+    overwrite = body.get("overwrite", False)
+    image_name = body.get("image_name")  # Optional: caption single image
+
+    metadata = dm.get_metadata(name)
+    dataset_path = dm.get_dataset_path(name)
+    images_dir = dataset_path / "images"
+    captions_dir = dataset_path / "captions"
+    captions_dir.mkdir(exist_ok=True)
+
+    if not images_dir.exists():
+        return JSONResponse({"error": "No images directory"}, status_code=400)
+
+    # Single image mode
+    if image_name:
+        image_path = images_dir / image_name
+        if not image_path.exists():
+            return JSONResponse(
+                {"error": f"Image not found: {image_name}"}, status_code=404
+            )
+
+        async with VisionCaptioner() as captioner:
+            caption = await captioner.caption_image(
+                image_bytes=image_path.read_bytes(),
+                style=style,
+                trigger_token=metadata.trigger_token,
+            )
+
+        caption_path = captions_dir / f"{image_path.stem}.txt"
+        caption_path.write_text(caption)
+        dm._update_metadata(name)
+
+        return JSONResponse({"filename": image_name, "caption": caption})
+
+    # Batch mode
+    image_files = sorted(
+        [
+            p
+            for p in images_dir.iterdir()
+            if p.suffix.lower() in (".png", ".jpg", ".jpeg")
+        ]
+    )
+
+    if not overwrite:
+        image_files = [
+            p for p in image_files if not (captions_dir / f"{p.stem}.txt").exists()
+        ]
+
+    if not image_files:
+        return JSONResponse(
+            {"captioned": 0, "message": "All images already have captions"}
+        )
+
+    results = []
+    async with VisionCaptioner() as captioner:
+        for image_path in image_files:
+            try:
+                caption = await captioner.caption_image(
+                    image_bytes=image_path.read_bytes(),
+                    style=style,
+                    trigger_token=metadata.trigger_token,
+                )
+                caption_path = captions_dir / f"{image_path.stem}.txt"
+                caption_path.write_text(caption)
+                results.append({"filename": image_path.name, "caption": caption[:100]})
+            except Exception as e:
+                logger.error(f"Caption failed for {image_path.name}: {e}")
+                results.append({"filename": image_path.name, "error": str(e)})
+
+    dm._update_metadata(name)
+
+    return JSONResponse(
+        {
+            "captioned": len([r for r in results if "caption" in r]),
+            "failed": len([r for r in results if "error" in r]),
+            "results": results[:10],
+        }
+    )
 
 
 # ============================================================================
