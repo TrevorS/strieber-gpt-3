@@ -2,7 +2,7 @@
 # Provides REST API for fetching and rendering web pages with JavaScript support
 # Used by local_reader MCP server for privacy-preserving web content extraction
 
-FROM mcr.microsoft.com/playwright/python:v1.40.0-jammy
+FROM mcr.microsoft.com/playwright/python:v1.57.0-jammy
 
 WORKDIR /app
 

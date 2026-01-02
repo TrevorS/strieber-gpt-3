@@ -25,8 +25,9 @@ RUN mkdir -p src && \
 # Build dependencies only
 RUN cargo build --release && rm -rf src
 
-# Copy actual source code
+# Copy actual source code and migrations
 COPY src ./src
+COPY migrations ./migrations
 
 # Touch main.rs to trigger rebuild of actual code (not just dependencies)
 RUN touch src/main.rs src/lib.rs

@@ -14,7 +14,8 @@ ARG BASE_CUDA_RUN_CONTAINER=nvcr.io/nvidia/cuda:${CUDA_VERSION}-runtime-ubuntu${
 FROM ${BASE_CUDA_DEV_CONTAINER} AS build
 
 # Target Blackwell GB10 architecture (compute capability 12.1)
-ARG CUDA_DOCKER_ARCH="121"
+# Use 121a for Blackwell-specific optimizations (required since llama.cpp b7500+)
+ARG CUDA_DOCKER_ARCH="121a"
 
 # Install build dependencies
 RUN apt-get update && \
@@ -32,11 +33,11 @@ RUN apt-get update && \
 WORKDIR /app
 
 # Clone llama.cpp repository
-# Pin to tag b7376
+# Pin to tag b7572
 # Patch: Bump MAX_REPETITION_THRESHOLD 2000→10000 for Open WebUI tool grammars
 #        See 075584e for context (security fix in b7118 broke MCP tool calling)
 RUN git clone https://github.com/ggml-org/llama.cpp.git . && \
-    git checkout b7376 && \
+    git checkout b7572 && \
     sed -i 's/#define MAX_REPETITION_THRESHOLD 2000/#define MAX_REPETITION_THRESHOLD 10000/' src/llama-grammar.cpp
 
 # Build llama.cpp with DGX Spark optimizations
@@ -48,7 +49,7 @@ RUN git clone https://github.com/ggml-org/llama.cpp.git . && \
 #   -DGGML_BACKEND_DL=ON                   - Dynamic backend loading
 #   -DLLAMA_BUILD_TESTS=OFF                - Skip tests to reduce build time
 RUN if [ "${CUDA_DOCKER_ARCH}" != "default" ]; then \
-        export CMAKE_ARGS="-DCMAKE_CUDA_ARCHITECTURES=121"; \
+        export CMAKE_ARGS="-DCMAKE_CUDA_ARCHITECTURES=${CUDA_DOCKER_ARCH}"; \
     fi && \
     cmake -B build \
         -GNinja \

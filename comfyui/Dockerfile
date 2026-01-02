@@ -1,6 +1,6 @@
 # ComfyUI for NVIDIA DGX Spark
-# Base: NGC PyTorch 25.09 with CUDA 13.0 for Blackwell GB10 GPU support
-FROM nvcr.io/nvidia/pytorch:25.09-py3
+# Base: NGC PyTorch 25.12 with CUDA 13.1 for Blackwell GB10 GPU support
+FROM nvcr.io/nvidia/pytorch:25.12-py3
 
 ENV DEBIAN_FRONTEND=noninteractive \
     PYTHONUNBUFFERED=1 \

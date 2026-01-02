@@ -1,8 +1,8 @@
 # ABOUTME: AI-Toolkit training container for Z-Image Turbo LoRA training.
 # Uses NGC PyTorch for native Blackwell GPU optimization.
 
-# NGC PyTorch 25.09 - proven working pattern from comfyui/Dockerfile
-FROM nvcr.io/nvidia/pytorch:25.09-py3
+# NGC PyTorch 25.12 - proven working pattern from comfyui/Dockerfile
+FROM nvcr.io/nvidia/pytorch:25.12-py3
 
 ENV DEBIAN_FRONTEND=noninteractive \
     PYTHONUNBUFFERED=1 \
