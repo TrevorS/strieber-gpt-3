@@ -119,6 +119,36 @@ After code changes, rebuild and restart specific services:
 docker compose build --no-cache mcp-lora-trainer && docker compose up -d mcp-lora-trainer
 ```
 
+### MCP Server Deployment (Cache Issues)
+
+**Problem**: Docker layer caching can prevent Python code changes from deploying even when files are modified. The `COPY lora_trainer ./lora_trainer/` layer may show "CACHED" even after editing server.py.
+
+**Solution**: Always use `--no-cache` when MCP server code changes aren't reflected:
+```bash
+# Force rebuild without cache
+docker compose build --no-cache mcp-lora-trainer
+
+# Restart in correct order (MCP servers FIRST, then responses-api)
+docker compose stop responses-api mcp-lora-trainer
+docker compose up -d mcp-lora-trainer
+sleep 3
+docker compose up -d responses-api
+```
+
+**Why order matters**: `responses-api` caches tool schemas from MCP servers at startup. If you restart responses-api before the MCP server is ready with new code, it will cache the OLD tool definitions.
+
+**Verify deployment**:
+```bash
+# Check tool schema in container matches source
+docker exec strieber-mcp-lora-trainer grep "def lora_caption" /app/lora_trainer/server.py
+
+# Verify responses-api sees updated tools
+docker compose logs --tail=50 responses-api | grep "Available MCP tools"
+
+# Check specific parameter in schema sent to LLM
+docker compose logs responses-api | grep -A50 '"name": "lora_caption"' | head -60
+```
+
 ## Tech Stack Reference
 
 | Component | Technology | Key Files |
