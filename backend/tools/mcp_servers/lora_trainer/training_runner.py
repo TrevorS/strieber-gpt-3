@@ -5,6 +5,7 @@ import asyncio
 import logging
 import re
 import shutil
+import sqlite3
 import uuid
 from datetime import UTC, datetime
 from pathlib import Path
@@ -198,6 +199,12 @@ class TrainingRunner:
                 "guidance_scale": 4,
                 "sample_steps": 20,
             },
+            # Use SQLite logging for reliable progress monitoring
+            # Writes to {training_folder}/{name}/loss_log.db
+            "logging": {
+                "log_every": 1,  # Log every step for real-time updates
+                "use_ui_logger": True,
+            },
         }
 
         # Wrap in the expected ai-toolkit structure
@@ -306,8 +313,28 @@ class TrainingRunner:
             job.error_message = str(e)
             logger.error(f"Training error for job {job_id}: {e}", exc_info=True)
         finally:
-            job.completed_at = datetime.now(UTC)
-            self.job_store.save_job(job)
+            # Re-fetch job to get latest state (samples, checkpoints, progress)
+            # that was updated during monitoring
+            latest_job = self.job_store.get_job(job_id)
+            if latest_job:
+                latest_job.status = job.status
+                latest_job.completed_at = datetime.now(UTC)
+                if job.error_message:
+                    latest_job.error_message = job.error_message
+                # Do one final scan for outputs
+                self._scan_outputs(job_id)
+                # Re-fetch again after scan
+                latest_job = self.job_store.get_job(job_id)
+                if latest_job:
+                    latest_job.status = job.status
+                    latest_job.completed_at = datetime.now(UTC)
+                    if job.error_message:
+                        latest_job.error_message = job.error_message
+                    self.job_store.save_job(latest_job)
+            else:
+                # Fallback if job somehow doesn't exist
+                job.completed_at = datetime.now(UTC)
+                self.job_store.save_job(job)
             self._active_containers.pop(job_id, None)
 
             # Cleanup container
@@ -336,18 +363,111 @@ class TrainingRunner:
             except Exception:
                 break
 
-            # Parse logs for progress
+            # Read progress: prefer SQLite, fallback to log parsing
             try:
-                logs = await asyncio.to_thread(container.logs, tail=50)
-                self._parse_progress(job_id, logs.decode())
+                # Try SQLite first (reliable, structured data)
+                sqlite_success = self._read_progress_from_sqlite(job_id)
+
+                # Fallback to log parsing if SQLite not available yet
+                if not sqlite_success:
+                    logs = await asyncio.to_thread(container.logs, tail=50)
+                    self._parse_progress(job_id, logs.decode())
             except Exception as e:
-                logger.debug(f"Failed to parse logs: {e}")
+                logger.debug(f"Failed to read progress: {e}")
 
             # Scan for new outputs
             self._scan_outputs(job_id)
 
+    def _read_progress_from_sqlite(self, job_id: str) -> bool:
+        """Read training progress from ai-toolkit's SQLite log.
+
+        The UILogger writes to loss_log.db with tables:
+        - steps: (step INTEGER PRIMARY KEY, wall_time REAL)
+        - metrics: (step INTEGER, key TEXT, value_real REAL, value_text TEXT)
+
+        Args:
+            job_id: Job identifier.
+
+        Returns:
+            True if progress was updated from SQLite, False otherwise.
+        """
+        job = self.job_store.get_job(job_id)
+        if not job:
+            logger.info(f"SQLite progress: job {job_id} not found in store")
+            return False
+
+        # ai-toolkit writes to: {training_folder}/{name}/loss_log.db
+        db_path = (
+            self.outputs_path
+            / job_id
+            / f"{job.dataset_name}_{job_id}"
+            / "loss_log.db"
+        )
+
+        if not db_path.exists():
+            logger.debug(f"SQLite progress: {db_path} not found")
+            return False
+
+        logger.info(f"SQLite progress: reading from {db_path}")
+
+        try:
+            # Use timeout and read-only mode for safe concurrent access
+            conn = sqlite3.connect(
+                f"file:{db_path}?mode=ro",
+                uri=True,
+                timeout=5.0,
+            )
+            cursor = conn.cursor()
+
+            # Get the latest step
+            cursor.execute("SELECT MAX(step) FROM steps")
+            result = cursor.fetchone()
+            if not result or result[0] is None:
+                conn.close()
+                return False
+
+            # ai-toolkit uses 0-indexed steps, convert to 1-indexed for display
+            current_step = result[0] + 1
+
+            # Get the latest loss value (ai-toolkit uses 'loss/loss' key)
+            cursor.execute(
+                "SELECT value_real FROM metrics WHERE key IN ('loss', 'loss/loss') "
+                "ORDER BY step DESC LIMIT 1"
+            )
+            result = cursor.fetchone()
+            latest_loss = result[0] if result else None
+
+            conn.close()
+
+            # Update job
+            updated = False
+            if current_step != job.current_step:
+                job.current_step = current_step
+                updated = True
+
+            if latest_loss is not None and latest_loss != job.latest_loss:
+                job.latest_loss = latest_loss
+                updated = True
+
+            if updated:
+                self.job_store.save_job(job)
+                logger.info(
+                    f"SQLite progress for {job_id}: step={current_step}, loss={latest_loss}"
+                )
+
+            return True
+
+        except sqlite3.Error as e:
+            logger.debug(f"SQLite read error for {job_id}: {e}")
+            return False
+        except Exception as e:
+            logger.debug(f"Unexpected error reading SQLite for {job_id}: {e}")
+            return False
+
     def _parse_progress(self, job_id: str, logs: str) -> None:
-        """Parse ai-toolkit output for step/loss updates.
+        """Parse ai-toolkit output for step/loss updates (fallback for tqdm).
+
+        This is the fallback method when SQLite logging is not available.
 
         Args:
             job_id: Job identifier.
@@ -358,39 +478,62 @@ class TrainingRunner:
             return
 
         updated = False
+        expected_steps = job.config.steps  # Original config value (reliable)
 
-        # Parse patterns like "Step 500/3000", "step: 500", or tqdm "| 71/100 ["
-        # Find ALL matches and prefer those where total matches job.total_steps
-        # This avoids matching latent caching progress (e.g., 0/27) instead of
-        # training progress (e.g., 50/100)
+        # ai-toolkit training progress format:
+        # constance_wu_f6242d29:  28%|██▊       | 141/500 [20:26<51:56, ...]
+        #
+        # We need to distinguish this from caching/loading progress like:
+        # Caching latents to disk: 100%|██████████| 5/5 [...]
+        # Loading checkpoint shards: 100%|██████████| 3/3 [...]
+        #
+        # Strategy: Look for matches where total equals expected_steps from config.
+        # This is reliable because config.steps is set at job creation.
+
         step_patterns = [
-            r"\|\s*(\d+)/(\d+)\s+\[",  # tqdm: | 71/100 [
+            # ai-toolkit training: jobname: XX%|bars| current/total [
+            r"[a-zA-Z0-9_]+:\s+\d+%\|[^|]*\|\s*(\d+)/(\d+)\s+\[",
+            # Generic tqdm: | 71/100 [
+            r"\|\s*(\d+)/(\d+)\s+\[",
+            # Step X/Y format
             r"[Ss]tep[:\s]+(\d+)[/\s]+(\d+)",
             r"(\d+)/(\d+)\s+steps?",
         ]
 
         best_match = None
+        best_is_training = False
+
         for pattern in step_patterns:
             for match in re.finditer(pattern, logs):
                 current = int(match.group(1))
                 total = int(match.group(2))
 
+                # Skip obviously non-training matches (checkpoints, shards, etc)
+                if total <= 10 and total != expected_steps:
+                    continue
+
                 # Prefer matches where total matches expected training steps
-                if total == job.total_steps:
+                # Keep updating best_match to get the LAST (most recent) match
+                if total == expected_steps:
                     best_match = (current, total)
-                    break
-                elif best_match is None and total > 0:
-                    # Keep first valid match as fallback
+                    best_is_training = True
+                    # Don't break - continue to find the last match in logs
+                elif not best_is_training and total > 10:
+                    # Fallback: keep any substantial match
                     best_match = (current, total)
 
-            # If we found an exact total_steps match, stop searching
-            if best_match and best_match[1] == job.total_steps:
+            # If we found training matches, don't try other patterns
+            if best_is_training:
                 break
 
         if best_match:
             job.current_step = best_match[0]
-            # Only update total_steps if it differs (don't overwrite with caching total)
-            if best_match[1] == job.total_steps or job.current_step == 0:
+            # Always use total from match if it equals expected_steps
+            # This corrects any wrong total_steps values from earlier bad parses
+            if best_match[1] == expected_steps:
+                job.total_steps = expected_steps
+            elif job.total_steps != expected_steps and best_match[1] > job.total_steps:
+                # Fallback: update if the match has a larger total (likely training)
                 job.total_steps = best_match[1]
             updated = True
 
@@ -401,22 +544,15 @@ class TrainingRunner:
                 job.current_step = int(single_step.group(1))
                 updated = True
 
-        # Parse loss patterns like "Loss: 0.0234", "loss=0.023", or "loss: 2.891e-01"
-        loss_patterns = [
-            r"loss[:\s]+([0-9.e+-]+)",  # tqdm: loss: 2.891e-01
-            r"[Ll]oss[:\s=]+([0-9.]+)",
-            r"train_loss[:\s=]+([0-9.]+)",
-        ]
-
-        for pattern in loss_patterns:
-            match = re.search(pattern, logs)
-            if match:
-                try:
-                    job.latest_loss = float(match.group(1))
-                    updated = True
-                except ValueError:
-                    pass
-                break
+        # Parse loss from tqdm output: loss: 2.891e-01
+        # Look for the LAST occurrence as it's the most recent
+        loss_matches = list(re.finditer(r"loss:\s*([0-9.e+-]+)", logs, re.IGNORECASE))
+        if loss_matches:
+            try:
+                job.latest_loss = float(loss_matches[-1].group(1))
+                updated = True
+            except ValueError:
+                pass
 
         if updated:
             self.job_store.save_job(job)
@@ -535,3 +671,155 @@ class TrainingRunner:
             List of job IDs with running containers.
         """
         return list(self._active_containers.keys())
+
+    async def refresh_job_progress(self, job_id: str) -> Optional[TrainingJob]:
+        """Manually refresh job progress by parsing container logs.
+
+        Useful when monitoring task was interrupted (e.g., server restart).
+
+        Args:
+            job_id: Job identifier.
+
+        Returns:
+            Updated job if found and container exists, None otherwise.
+        """
+        job = self.job_store.get_job(job_id)
+        if not job:
+            logger.warning(f"Job {job_id} not found")
+            return None
+
+        if not self._docker:
+            logger.warning("Docker not available for refresh")
+            return None
+
+        # Try to find the container
+        container_name = f"lora-training-{job_id}"
+        try:
+            container = await asyncio.to_thread(
+                self._docker.containers.get, container_name
+            )
+        except Exception as e:
+            logger.debug(f"Container {container_name} not found: {e}")
+            return None
+
+        # Update container_id if not set
+        if not job.container_id:
+            job.container_id = container.id
+            self.job_store.save_job(job)
+
+        # Check container status
+        await asyncio.to_thread(container.reload)
+        if container.status == "running":
+            # Read progress: prefer SQLite, fallback to log parsing
+            sqlite_success = self._read_progress_from_sqlite(job_id)
+            if not sqlite_success:
+                logs = await asyncio.to_thread(container.logs, tail=100)
+                self._parse_progress(job_id, logs.decode())
+
+            # Scan for outputs
+            self._scan_outputs(job_id)
+
+            # Ensure status is running
+            job = self.job_store.get_job(job_id)
+            if job and job.status != TrainingStatus.RUNNING:
+                job.status = TrainingStatus.RUNNING
+                job.completed_at = None
+                self.job_store.save_job(job)
+
+        return self.job_store.get_job(job_id)
+
+    async def resume_orphaned_monitoring(self, job_id: str) -> bool:
+        """Resume monitoring for an orphaned training container.
+
+        Call this when a job shows as "running" but has no active monitoring task.
+
+        Args:
+            job_id: Job identifier.
+
+        Returns:
+            True if monitoring resumed, False otherwise.
+        """
+        job = self.job_store.get_job(job_id)
+        if not job or job.status != TrainingStatus.RUNNING:
+            return False
+
+        if job_id in self._active_containers:
+            logger.info(f"Job {job_id} already being monitored")
+            return True
+
+        if not self._docker:
+            logger.warning("Docker not available")
+            return False
+
+        container_name = f"lora-training-{job_id}"
+        try:
+            container = await asyncio.to_thread(
+                self._docker.containers.get, container_name
+            )
+            await asyncio.to_thread(container.reload)
+
+            if container.status != "running":
+                logger.info(f"Container {container_name} is {container.status}")
+                return False
+
+            # Resume monitoring
+            self._active_containers[job_id] = container.id
+            logger.info(f"Resuming monitoring for job {job_id}")
+
+            # Start monitoring task (will complete when container finishes)
+            asyncio.create_task(self._resume_monitor_task(job_id, container))
+            return True
+
+        except Exception as e:
+            logger.warning(f"Failed to resume monitoring for {job_id}: {e}")
+            return False
+
+    async def _resume_monitor_task(self, job_id: str, container) -> None:
+        """Monitor a resumed container until completion.
+
+        Args:
+            job_id: Job identifier.
+            container: Docker container object.
+        """
+        job = self.job_store.get_job(job_id)
+        if not job:
+            return
+
+        try:
+            # Monitor progress
+            await self._monitor_progress(job_id, container)
+
+            # Wait for completion
+            result = await asyncio.to_thread(container.wait)
+
+            job = self.job_store.get_job(job_id)
+            if not job:
+                return
+
+            if result["StatusCode"] == 0:
+                job.status = TrainingStatus.COMPLETED
+                logger.info(f"Training job {job_id} completed successfully")
+            else:
+                job.status = TrainingStatus.FAILED
+                logs = await asyncio.to_thread(container.logs, tail=100)
+                job.error_message = logs.decode()[-1000:]
+                logger.error(f"Training job {job_id} failed")
+
+        except Exception as e:
+            job = self.job_store.get_job(job_id)
+            if job:
+                job.status = TrainingStatus.FAILED
+                job.error_message = str(e)
+                logger.error(f"Resume monitor error for {job_id}: {e}", exc_info=True)
+        finally:
+            job = self.job_store.get_job(job_id)
+            if job:
+                job.completed_at = datetime.now(UTC)
+                self.job_store.save_job(job)
+            self._active_containers.pop(job_id, None)
+
+            # Cleanup container
+            try:
+                await asyncio.to_thread(container.remove)
+            except Exception:
+                pass

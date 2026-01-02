@@ -1,6 +1,6 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
-	import { Plus, FolderOpen, Image, ChevronRight } from 'lucide-svelte';
+	import { Plus, FolderOpen, Image, ChevronRight, ArrowLeft } from 'lucide-svelte';
 
 	interface Dataset {
 		name: string;
@@ -62,6 +62,14 @@
 </script>
 
 <div class="container mx-auto px-4 py-8">
+	<a
+		href="/"
+		class="inline-flex items-center gap-1 text-sm text-muted-foreground hover:text-foreground mb-4"
+	>
+		<ArrowLeft class="w-4 h-4" />
+		LoRA Studio
+	</a>
+
 	<header class="flex items-center justify-between mb-8">
 		<div>
 			<h1 class="text-3xl font-bold text-foreground">Datasets</h1>

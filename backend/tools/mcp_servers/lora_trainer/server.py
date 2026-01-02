@@ -6,6 +6,8 @@ import logging
 from pathlib import Path
 from typing import List, Literal, Optional
 
+import docker
+from docker.errors import NotFound as DockerNotFound
 from mcp.server.fastmcp import Context, FastMCP
 from mcp.types import ImageContent, TextContent
 from starlette.requests import Request
@@ -38,6 +40,7 @@ BASE_PATH = Path("/data")
 _dataset_manager: Optional[DatasetManager] = None
 _job_store: Optional["JobStoreBase"] = None
 _training_runner: Optional[TrainingRunner] = None
+_docker_client: Optional[docker.DockerClient] = None
 
 
 def _get_dataset_manager() -> DatasetManager:
@@ -68,6 +71,18 @@ def _get_training_runner() -> TrainingRunner:
             loras_path=Path("/models/loras"),
         )
     return _training_runner
+
+
+def _get_docker_client() -> Optional[docker.DockerClient]:
+    """Lazy initialization of Docker client."""
+    global _docker_client
+    if _docker_client is None:
+        try:
+            _docker_client = docker.from_env()
+        except Exception as e:
+            logger.warning(f"Failed to connect to Docker: {e}")
+            _docker_client = None
+    return _docker_client
 
 
 # ============================================================================
@@ -1645,6 +1660,447 @@ async def api_caption_dataset(request: Request) -> Response:
             "results": results[:10],
         }
     )
+
+
+# ============================================================================
+# Training Job REST API Endpoints
+# ============================================================================
+
+
+def _serialize_job(job) -> dict:
+    """Serialize training job to JSON-safe dict."""
+    return {
+        "job_id": job.job_id,
+        "dataset_name": job.dataset_name,
+        "trigger_token": job.trigger_token,
+        "status": job.status.value,
+        "current_step": job.current_step,
+        "total_steps": job.total_steps,
+        "latest_loss": job.latest_loss,
+        "checkpoints": job.checkpoints,
+        "sample_images": [Path(p).name for p in job.sample_images],
+        "started_at": job.started_at.isoformat() if job.started_at else None,
+        "completed_at": job.completed_at.isoformat() if job.completed_at else None,
+        "error_message": job.error_message,
+    }
+
+
+@mcp.custom_route("/api/jobs", methods=["GET"])
+async def api_list_jobs(request: Request) -> Response:
+    """List all training jobs, optionally filtered by status."""
+    status_filter = request.query_params.get("status")
+    status = TrainingStatus(status_filter) if status_filter else None
+    jobs = _get_job_store().list_jobs(status=status)
+    return JSONResponse([_serialize_job(job) for job in jobs])
+
+
+@mcp.custom_route("/api/jobs", methods=["POST"])
+async def api_start_training(request: Request) -> Response:
+    """Start a new training job."""
+    body = await request.json()
+    dataset_name = body.get("dataset_name")
+
+    if not dataset_name:
+        return JSONResponse({"error": "dataset_name is required"}, status_code=400)
+
+    dm = _get_dataset_manager()
+    if not dm.dataset_exists(dataset_name):
+        return JSONResponse({"error": "Dataset not found"}, status_code=404)
+
+    metadata = dm.get_metadata(dataset_name)
+    if metadata.image_count < 5:
+        return JSONResponse(
+            {
+                "error": f"Dataset has {metadata.image_count} images. Minimum 5 required."
+            },
+            status_code=400,
+        )
+
+    config = TrainingConfig(
+        dataset=dataset_name,
+        steps=body.get("steps", 3000),
+        lr=body.get("learning_rate", 0.0001),
+        lora_rank=body.get("lora_rank", 8),
+        checkpoint_every=body.get("checkpoint_every", 500),
+        sample_every=body.get("sample_every", 250),
+        sample_prompts=body.get("sample_prompts")
+        or [
+            f"{metadata.trigger_token}, portrait, studio lighting",
+            f"{metadata.trigger_token}, outdoor, natural light",
+        ],
+    )
+
+    try:
+        job = await _get_training_runner().start_training(
+            dataset_name=dataset_name,
+            trigger_token=metadata.trigger_token,
+            config=config,
+        )
+        return JSONResponse(_serialize_job(job), status_code=201)
+    except Exception as e:
+        logger.error(f"Failed to start training: {e}", exc_info=True)
+        return JSONResponse({"error": str(e)}, status_code=500)
+
+
+@mcp.custom_route("/api/jobs/{job_id}", methods=["GET"])
+async def api_get_job(request: Request) -> Response:
+    """Get training job details."""
+    job_id = request.path_params["job_id"]
+    job = _get_job_store().get_job(job_id)
+
+    if not job:
+        return JSONResponse({"error": "Job not found"}, status_code=404)
+
+    return JSONResponse(_serialize_job(job))
+
+
+@mcp.custom_route("/api/jobs/{job_id}", methods=["DELETE"])
+async def api_delete_job(request: Request) -> Response:
+    """Delete a training job from the store."""
+    job_id = request.path_params["job_id"]
+
+    if _get_job_store().delete_job(job_id):
+        return JSONResponse({"deleted": job_id})
+
+    return JSONResponse({"error": "Job not found"}, status_code=404)
+
+
+@mcp.custom_route("/api/jobs/{job_id}/stop", methods=["POST"])
+async def api_stop_job(request: Request) -> Response:
+    """Stop a running training job."""
+    job_id = request.path_params["job_id"]
+
+    try:
+        job = await _get_training_runner().stop_training(job_id)
+        return JSONResponse(_serialize_job(job))
+    except ValueError as e:
+        return JSONResponse({"error": str(e)}, status_code=404)
+    except Exception as e:
+        logger.error(f"Failed to stop job: {e}", exc_info=True)
+        return JSONResponse({"error": str(e)}, status_code=500)
+
+
+@mcp.custom_route("/api/jobs/{job_id}/checkpoints", methods=["GET"])
+async def api_list_checkpoints(request: Request) -> Response:
+    """List checkpoints for a training job."""
+    job_id = request.path_params["job_id"]
+    job = _get_job_store().get_job(job_id)
+
+    if not job:
+        return JSONResponse({"error": "Job not found"}, status_code=404)
+
+    return JSONResponse({"checkpoints": job.checkpoints})
+
+
+@mcp.custom_route("/api/jobs/{job_id}/promote", methods=["POST"])
+async def api_promote_checkpoint(request: Request) -> Response:
+    """Promote a checkpoint to the active LoRA directory."""
+    job_id = request.path_params["job_id"]
+    body = await request.json()
+    checkpoint_name = body.get("checkpoint_name")
+    output_name = body.get("output_name")
+
+    if not checkpoint_name:
+        return JSONResponse({"error": "checkpoint_name is required"}, status_code=400)
+
+    try:
+        output_path = _get_training_runner().promote_checkpoint(
+            job_id=job_id,
+            checkpoint_name=checkpoint_name,
+            output_name=output_name,
+        )
+        return JSONResponse({"output_path": output_path})
+    except ValueError as e:
+        return JSONResponse({"error": str(e)}, status_code=404)
+    except Exception as e:
+        logger.error(f"Failed to promote checkpoint: {e}", exc_info=True)
+        return JSONResponse({"error": str(e)}, status_code=500)
+
+
+def _parse_sample_filename(filename: str) -> dict:
+    """Parse ai-toolkit sample filename to extract metadata.
+
+    Format: {timestamp_ms}__{step_padded}_{prompt_index}.jpg
+    Example: 1767373295113__000000000_0.jpg
+
+    Returns:
+        Dict with timestamp, step, prompt_index, or empty dict if parse fails.
+    """
+    import re
+
+    # Pattern: timestamp__step_promptindex.ext
+    match = re.match(r"(\d+)__(\d+)_(\d+)\.(jpg|png)", filename)
+    if not match:
+        return {}
+
+    timestamp_ms = int(match.group(1))
+    step = int(match.group(2))
+    prompt_index = int(match.group(3))
+
+    return {
+        "timestamp_ms": timestamp_ms,
+        "step": step,
+        "prompt_index": prompt_index,
+    }
+
+
+def _get_sample_prompts(job_id: str, dataset_name: str) -> list[str]:
+    """Read sample prompts from training config."""
+    import yaml
+
+    config_path = BASE_PATH / "outputs" / job_id / f"{dataset_name}_{job_id}" / "config.yaml"
+    if not config_path.exists():
+        return []
+
+    try:
+        with open(config_path) as f:
+            config = yaml.safe_load(f)
+        # Navigate to sample.prompts
+        processes = config.get("config", {}).get("process", [])
+        if processes:
+            return processes[0].get("sample", {}).get("prompts", [])
+    except Exception:
+        pass
+    return []
+
+
+@mcp.custom_route("/api/jobs/{job_id}/samples", methods=["GET"])
+async def api_list_sample_images(request: Request) -> Response:
+    """List all sample images for a training job with metadata."""
+    job_id = request.path_params["job_id"]
+    job = _get_job_store().get_job(job_id)
+
+    if not job:
+        return JSONResponse({"error": "Job not found"}, status_code=404)
+
+    # Get sample prompts from config
+    prompts = _get_sample_prompts(job_id, job.dataset_name)
+
+    # Scan filesystem for samples
+    samples_dir = BASE_PATH / "outputs" / job_id / f"{job.dataset_name}_{job_id}" / "samples"
+    samples = []
+    if samples_dir.exists():
+        for f in sorted(samples_dir.glob("*.jpg")):
+            sample_info = {"filename": f.name}
+            # Parse metadata from filename
+            meta = _parse_sample_filename(f.name)
+            if meta:
+                sample_info["step"] = meta["step"]
+                sample_info["prompt_index"] = meta["prompt_index"]
+                sample_info["timestamp"] = meta["timestamp_ms"]
+                # Add prompt text if available
+                if meta["prompt_index"] < len(prompts):
+                    sample_info["prompt"] = prompts[meta["prompt_index"]]
+            samples.append(sample_info)
+        for f in sorted(samples_dir.glob("*.png")):
+            sample_info = {"filename": f.name}
+            meta = _parse_sample_filename(f.name)
+            if meta:
+                sample_info["step"] = meta["step"]
+                sample_info["prompt_index"] = meta["prompt_index"]
+                sample_info["timestamp"] = meta["timestamp_ms"]
+                if meta["prompt_index"] < len(prompts):
+                    sample_info["prompt"] = prompts[meta["prompt_index"]]
+            samples.append(sample_info)
+
+    return JSONResponse({"samples": samples, "prompts": prompts})
+
+
+@mcp.custom_route("/api/jobs/{job_id}/samples/{filename}", methods=["GET"])
+async def api_get_sample_image(request: Request) -> Response:
+    """Serve a sample image from a training job."""
+    from starlette.responses import FileResponse
+
+    job_id = request.path_params["job_id"]
+    filename = request.path_params["filename"]
+    job = _get_job_store().get_job(job_id)
+
+    if not job:
+        return JSONResponse({"error": "Job not found"}, status_code=404)
+
+    # First try to find in job.sample_images
+    for sample_path in job.sample_images:
+        if Path(sample_path).name == filename:
+            sample_file = Path(sample_path)
+            if sample_file.exists():
+                media_type = "image/jpeg" if filename.endswith(".jpg") else "image/png"
+                return FileResponse(sample_file, media_type=media_type)
+
+    # Fallback: look directly in the samples directory
+    samples_dir = BASE_PATH / "outputs" / job_id / f"{job.dataset_name}_{job_id}" / "samples"
+    sample_file = samples_dir / filename
+    if sample_file.exists():
+        media_type = "image/jpeg" if filename.endswith(".jpg") else "image/png"
+        return FileResponse(sample_file, media_type=media_type)
+
+    return JSONResponse({"error": "Sample not found"}, status_code=404)
+
+
+@mcp.custom_route("/api/jobs/{job_id}/refresh", methods=["POST"])
+async def api_refresh_job(request: Request) -> Response:
+    """Refresh job progress by re-parsing container logs.
+
+    Useful after server restart or when monitoring was interrupted.
+    """
+    job_id = request.path_params["job_id"]
+
+    try:
+        job = await _get_training_runner().refresh_job_progress(job_id)
+        if not job:
+            return JSONResponse(
+                {"error": "Job not found or container not running"},
+                status_code=404,
+            )
+        return JSONResponse(_serialize_job(job))
+    except Exception as e:
+        logger.error(f"Failed to refresh job {job_id}: {e}", exc_info=True)
+        return JSONResponse({"error": str(e)}, status_code=500)
+
+
+@mcp.custom_route("/api/jobs/{job_id}/resume", methods=["POST"])
+async def api_resume_monitoring(request: Request) -> Response:
+    """Resume monitoring for an orphaned training container.
+
+    Call this when a job shows as "running" but progress isn't updating.
+    """
+    job_id = request.path_params["job_id"]
+
+    try:
+        success = await _get_training_runner().resume_orphaned_monitoring(job_id)
+        if not success:
+            return JSONResponse(
+                {"error": "Cannot resume - job not running or container not found"},
+                status_code=404,
+            )
+        job = _get_job_store().get_job(job_id)
+        return JSONResponse(
+            {
+                "resumed": True,
+                "job": _serialize_job(job) if job else None,
+            }
+        )
+    except Exception as e:
+        logger.error(f"Failed to resume job {job_id}: {e}", exc_info=True)
+        return JSONResponse({"error": str(e)}, status_code=500)
+
+
+# ============================================================================
+# Container Management REST API Endpoints
+# ============================================================================
+
+# Containers to expose in the status UI (prefix match)
+MANAGED_CONTAINER_PREFIX = "strieber-"
+
+# Containers that should be hidden from the UI
+HIDDEN_CONTAINERS = {
+    "strieber-lora-studio",  # The UI itself
+}
+
+
+def _serialize_container(container) -> dict:
+    """Serialize Docker container to JSON-safe dict."""
+    # Get ports info
+    ports = []
+    if container.attrs.get("NetworkSettings", {}).get("Ports"):
+        for container_port, host_bindings in container.attrs["NetworkSettings"][
+            "Ports"
+        ].items():
+            if host_bindings:
+                for binding in host_bindings:
+                    ports.append(
+                        {
+                            "container_port": container_port,
+                            "host_port": binding.get("HostPort"),
+                        }
+                    )
+
+    return {
+        "id": container.short_id,
+        "name": container.name,
+        "status": container.status,
+        "image": container.image.tags[0] if container.image.tags else "unknown",
+        "ports": ports,
+    }
+
+
+@mcp.custom_route("/api/containers", methods=["GET"])
+async def api_list_containers(request: Request) -> Response:
+    """List Docker containers managed by this project."""
+    client = _get_docker_client()
+    if not client:
+        return JSONResponse({"error": "Docker not available"}, status_code=503)
+
+    try:
+        # Get all containers (running and stopped)
+        containers = client.containers.list(all=True)
+
+        # Filter to our managed containers
+        managed = []
+        for c in containers:
+            if c.name.startswith(MANAGED_CONTAINER_PREFIX):
+                if c.name not in HIDDEN_CONTAINERS:
+                    managed.append(_serialize_container(c))
+
+        # Sort by name
+        managed.sort(key=lambda x: x["name"])
+
+        return JSONResponse(managed)
+    except Exception as e:
+        logger.error(f"Failed to list containers: {e}", exc_info=True)
+        return JSONResponse({"error": str(e)}, status_code=500)
+
+
+@mcp.custom_route("/api/containers/{name}/stop", methods=["POST"])
+async def api_stop_container(request: Request) -> Response:
+    """Stop a running container."""
+    name = request.path_params["name"]
+    client = _get_docker_client()
+
+    if not client:
+        return JSONResponse({"error": "Docker not available"}, status_code=503)
+
+    # Security: only allow stopping our managed containers
+    if not name.startswith(MANAGED_CONTAINER_PREFIX):
+        return JSONResponse({"error": "Container not managed"}, status_code=403)
+
+    if name in HIDDEN_CONTAINERS:
+        return JSONResponse({"error": "Cannot stop this container"}, status_code=403)
+
+    try:
+        container = client.containers.get(name)
+        container.stop(timeout=30)
+        return JSONResponse(_serialize_container(container))
+    except DockerNotFound:
+        return JSONResponse({"error": "Container not found"}, status_code=404)
+    except Exception as e:
+        logger.error(f"Failed to stop container {name}: {e}", exc_info=True)
+        return JSONResponse({"error": str(e)}, status_code=500)
+
+
+@mcp.custom_route("/api/containers/{name}/start", methods=["POST"])
+async def api_start_container(request: Request) -> Response:
+    """Start a stopped container."""
+    name = request.path_params["name"]
+    client = _get_docker_client()
+
+    if not client:
+        return JSONResponse({"error": "Docker not available"}, status_code=503)
+
+    # Security: only allow starting our managed containers
+    if not name.startswith(MANAGED_CONTAINER_PREFIX):
+        return JSONResponse({"error": "Container not managed"}, status_code=403)
+
+    try:
+        container = client.containers.get(name)
+        container.start()
+        # Refresh container state
+        container.reload()
+        return JSONResponse(_serialize_container(container))
+    except DockerNotFound:
+        return JSONResponse({"error": "Container not found"}, status_code=404)
+    except Exception as e:
+        logger.error(f"Failed to start container {name}: {e}", exc_info=True)
+        return JSONResponse({"error": str(e)}, status_code=500)
 
 
 # ============================================================================

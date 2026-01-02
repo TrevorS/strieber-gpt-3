@@ -111,7 +111,10 @@ class HttpJobStore(JobStoreBase):
 
             response = self.client.get(self._storage_url(), params=params)
             response.raise_for_status()
-            items = response.json()
+            data = response.json()
+
+            # Handle wrapped response format: {"collection": "...", "records": [...]}
+            items = data.get("records", data) if isinstance(data, dict) else data
 
             result = []
             for item in items:

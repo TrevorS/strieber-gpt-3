@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { Layers, FolderOpen, Sparkles, Play } from 'lucide-svelte';
+	import { Layers, FolderOpen, Sparkles, Play, Activity } from 'lucide-svelte';
 </script>
 
 <div class="container mx-auto px-4 py-8">
@@ -60,6 +60,19 @@
 			</h2>
 			<p class="text-sm text-muted-foreground mt-1">
 				Generate images with LoRAs
+			</p>
+		</a>
+
+		<a
+			href="/status"
+			class="group p-6 rounded-lg border border-border bg-card hover:bg-accent transition-colors"
+		>
+			<Activity class="w-8 h-8 text-primary mb-3" />
+			<h2 class="text-lg font-semibold text-card-foreground group-hover:text-accent-foreground">
+				Status
+			</h2>
+			<p class="text-sm text-muted-foreground mt-1">
+				Manage running containers
 			</p>
 		</a>
 	</div>

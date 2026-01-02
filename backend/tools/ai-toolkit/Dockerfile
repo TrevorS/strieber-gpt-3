@@ -38,7 +38,6 @@ RUN unset PIP_CONSTRAINT && pip install --no-deps \
     lycoris-lora==1.8.3 \
     kornia \
     accelerate \
-    bitsandbytes \
     lpips \
     pytorch_fid \
     optimum-quanto==0.2.4 \
@@ -48,6 +47,18 @@ RUN unset PIP_CONSTRAINT && pip install --no-deps \
     controlnet_aux==0.0.10 \
     prodigyopt \
     pytorch-wavelets==1.3.0
+
+# Stage 2b: Build bitsandbytes from source for CUDA 13.1 / Blackwell (sm100+)
+# CUDA 13.1 drops support for pre-Turing GPUs, so we only build for 75+ (Turing and newer)
+# Use --no-deps to prevent overwriting NGC's CUDA-enabled PyTorch with CPU version
+RUN unset PIP_CONSTRAINT && \
+    pip install cmake scikit-build-core && \
+    git clone --depth 1 https://github.com/bitsandbytes-foundation/bitsandbytes.git /tmp/bnb && \
+    cd /tmp/bnb && \
+    cmake -B build -DCOMPUTE_BACKEND=cuda -DCOMPUTE_CAPABILITY="75;80;86;89;90;100" && \
+    cmake --build build --config Release -j4 && \
+    pip install --force-reinstall --no-deps --no-build-isolation . && \
+    rm -rf /tmp/bnb
 
 # Stage 3: Install albumentations with fixed versions (has complex deps)
 RUN unset PIP_CONSTRAINT && pip install \
