@@ -48,6 +48,7 @@ class VisionCaptioner:
         image_bytes: bytes,
         style: Literal["detailed", "simple", "tags"] = "detailed",
         trigger_token: Optional[str] = None,
+        custom_prompt: Optional[str] = None,
     ) -> str:
         """Generate caption for a single image.
 
@@ -55,6 +56,7 @@ class VisionCaptioner:
             image_bytes: Raw image bytes (PNG or JPEG).
             style: Caption style - detailed, simple, or tags.
             trigger_token: Optional token to prepend to caption.
+            custom_prompt: Override style-based prompt with custom text.
 
         Returns:
             Generated caption.
@@ -63,7 +65,7 @@ class VisionCaptioner:
             httpx.HTTPError: If API request fails.
             ValueError: If style is invalid.
         """
-        if style not in PROMPTS:
+        if custom_prompt is None and style not in PROMPTS:
             raise ValueError(
                 f"Invalid style '{style}'. Must be one of: {list(PROMPTS.keys())}"
             )
@@ -72,7 +74,7 @@ class VisionCaptioner:
         b64_image = base64.b64encode(image_bytes).decode("utf-8")
 
         # Build OpenAI-compatible vision request
-        prompt = PROMPTS[style]
+        prompt = custom_prompt if custom_prompt else PROMPTS[style]
         request = {
             "model": "qwen3-vl-2b",
             "messages": [

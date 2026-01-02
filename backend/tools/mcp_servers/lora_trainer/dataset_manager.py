@@ -110,6 +110,28 @@ class DatasetManager:
         with open(metadata_path, "w") as f:
             json.dump(metadata.model_dump(mode="json"), f, indent=2, default=str)
 
+    def _update_metadata(self, name: str) -> None:
+        """Recalculate and save metadata from disk state.
+
+        Updates image_count and has_captions based on actual files.
+        """
+        dataset_path = self.get_dataset_path(name)
+        metadata = self.get_metadata(name)
+
+        images_dir = dataset_path / "images"
+        captions_dir = dataset_path / "captions"
+
+        metadata.image_count = len(
+            [
+                p
+                for p in images_dir.glob("*.*")
+                if p.suffix.lower() in (".png", ".jpg", ".jpeg")
+            ]
+        )
+        metadata.has_captions = bool(list(captions_dir.glob("*.txt")))
+
+        self._save_metadata(name, metadata)
+
     def get_metadata(self, name: str) -> DatasetMetadata:
         """Load dataset metadata.
 

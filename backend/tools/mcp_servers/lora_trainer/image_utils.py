@@ -37,8 +37,14 @@ async def fetch_image(url: str, timeout: float = 30.0) -> bytes:
     Raises:
         ImageFetchError: If fetch fails, timeout occurs, or content is not an image.
     """
+    # Use a browser-like User-Agent to avoid 403s from sites like Wikimedia
+    headers = {
+        "User-Agent": "Mozilla/5.0 (compatible; LoRATrainer/1.0; +https://github.com/strieber)"
+    }
     try:
-        async with httpx.AsyncClient(timeout=timeout, follow_redirects=True) as client:
+        async with httpx.AsyncClient(
+            timeout=timeout, follow_redirects=True, headers=headers
+        ) as client:
             response = await client.get(url)
 
             # Check HTTP status

@@ -166,7 +166,7 @@ class TrainingRunner:
                 "gradient_accumulation_steps": 1,
                 "train_unet": True,
                 "train_text_encoder": False,
-                "gradient_checkpointing": False,  # Disabled: 128GB VRAM available
+                "gradient_checkpointing": True,  # Enabled: other services use ~91GB VRAM
                 "noise_scheduler": "flowmatch",
                 "optimizer": "adamw8bit",
                 "lr": config.lr,
