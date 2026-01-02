@@ -282,6 +282,20 @@ async fn run_streaming_loop(
         let mut chat_req = to_chat_completion(&req, Some(conversation.clone()));
         chat_req.stream = true;
 
+        // After the first iteration, switch tool_choice from "required" to "auto"
+        // This allows the LLM to produce a final response once tools have been executed
+        if iteration > 1 && chat_req.tool_choice.is_some() {
+            match &req.tool_choice {
+                crate::models::ToolChoice::Mode(crate::models::ToolChoiceMode::Required)
+                | crate::models::ToolChoice::Specific(_) => {
+                    chat_req.tool_choice =
+                        Some(crate::models::ChatToolChoice::Mode("auto".to_string()));
+                    tracing::debug!("Switched tool_choice from required/specific to auto");
+                }
+                _ => {}
+            }
+        }
+
         tracing::info!(
             iteration,
             total_messages = chat_req.messages.len(),
@@ -665,16 +679,28 @@ async fn run_streaming_loop(
                 })
                 .collect();
 
-            conversation.push(ChatMessage {
-                role: ChatRole::Assistant,
-                content: if state.accumulated_text.is_empty() {
-                    None
-                } else {
+            // When tool_calls are present, llama.cpp template requires EITHER
+            // content OR reasoning_content, but NOT both.
+            // Prioritize reasoning_content if we have reasoning, else use content.
+            let (content, reasoning_content) = if !state.accumulated_reasoning.is_empty() {
+                // Put reasoning in reasoning_content, drop any tool-call analysis text
+                (None, Some(state.accumulated_reasoning.clone()))
+            } else if !state.accumulated_text.is_empty() {
+                // No reasoning, just regular content
+                (
                     Some(crate::models::ChatContent::Text(
                         state.accumulated_text.clone(),
-                    ))
-                },
-                reasoning_content: None,
+                    )),
+                    None,
+                )
+            } else {
+                (None, None)
+            };
+
+            conversation.push(ChatMessage {
+                role: ChatRole::Assistant,
+                content,
+                reasoning_content,
                 tool_calls: Some(tool_calls),
                 tool_call_id: None,
             });

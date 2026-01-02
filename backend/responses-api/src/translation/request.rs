@@ -26,8 +26,9 @@ pub fn to_chat_completion(
     }
 
     // 2. Add previous conversation context if available
-    // When previous_messages is provided, the user input is already included
-    // (added by streaming.rs to ensure correct message ordering in tool loops)
+    // When previous_messages is provided, the user input should already be included
+    // by the caller (executor.rs or streaming.rs). This ensures proper handling of
+    // image placeholders and message ordering.
     if let Some(prev) = previous_messages {
         messages.extend(prev);
     } else {
@@ -175,7 +176,11 @@ fn custom_tool_call_to_chat(ctc: &CustomToolCallInput) -> ChatMessage {
     }
 }
 
-/// Convert ReasoningInput to a ChatMessage with <think> tags.
+/// Convert ReasoningInput to a ChatMessage using the reasoning_content field.
+///
+/// Uses the native reasoning_content field instead of wrapping in <think> tags,
+/// which is required for compatibility with llama.cpp templates when tool calls
+/// are also present in the conversation.
 fn reasoning_input_to_chat(reasoning: &ReasoningInput) -> Option<ChatMessage> {
     // Check for encrypted content
     if reasoning.encrypted_content.is_some() {
@@ -203,14 +208,14 @@ fn reasoning_input_to_chat(reasoning: &ReasoningInput) -> Option<ChatMessage> {
         return None;
     }
 
-    // Combine all reasoning texts and wrap in <think> tags
+    // Combine all reasoning texts and use reasoning_content field
+    // (not content with <think> tags, which breaks llama.cpp templates with tool calls)
     let combined_reasoning = reasoning_texts.join("\n");
-    let wrapped_reasoning = format!("<think>{}</think>", combined_reasoning);
 
     Some(ChatMessage {
         role: ChatRole::Assistant,
-        content: Some(ChatContent::Text(wrapped_reasoning)),
-        reasoning_content: None,
+        content: None,
+        reasoning_content: Some(combined_reasoning),
         tool_calls: None,
         tool_call_id: None,
     })
@@ -733,7 +738,7 @@ mod tests {
     }
 
     #[test]
-    fn reasoning_input_wraps_in_think_tags() {
+    fn reasoning_input_uses_reasoning_content_field() {
         let req = CreateResponseRequest {
             model: "gpt-4o".to_string(),
             input: Input::Items(vec![
@@ -771,13 +776,12 @@ mod tests {
 
         assert_eq!(chat_req.messages.len(), 2);
 
-        // Reasoning becomes assistant message with <think> tags
+        // Reasoning becomes assistant message with reasoning_content field
         assert_eq!(chat_req.messages[0].role, ChatRole::Assistant);
+        assert_eq!(chat_req.messages[0].content, None);
         assert_eq!(
-            chat_req.messages[0].content,
-            Some(ChatContent::Text(
-                "<think>Let me analyze this problem step by step...</think>".to_string()
-            ))
+            chat_req.messages[0].reasoning_content,
+            Some("Let me analyze this problem step by step...".to_string())
         );
 
         // User message follows
@@ -825,11 +829,10 @@ mod tests {
         let chat_req = to_chat_completion(&req, None);
 
         assert_eq!(chat_req.messages.len(), 1);
+        assert_eq!(chat_req.messages[0].content, None);
         assert_eq!(
-            chat_req.messages[0].content,
-            Some(ChatContent::Text(
-                "<think>First thought\nSecond thought</think>".to_string()
-            ))
+            chat_req.messages[0].reasoning_content,
+            Some("First thought\nSecond thought".to_string())
         );
     }
 
@@ -871,11 +874,10 @@ mod tests {
         let chat_req = to_chat_completion(&req, None);
 
         assert_eq!(chat_req.messages.len(), 1);
+        assert_eq!(chat_req.messages[0].content, None);
         assert_eq!(
-            chat_req.messages[0].content,
-            Some(ChatContent::Text(
-                "<think>Visible thought\nAnother visible thought</think>".to_string()
-            ))
+            chat_req.messages[0].reasoning_content,
+            Some("Visible thought\nAnother visible thought".to_string())
         );
     }
 
@@ -1488,6 +1490,101 @@ mod tests {
             Some(ChatContent::Text(
                 "Analysis complete: all systems normal".to_string()
             ))
+        );
+    }
+
+    // ========================================================================
+    // Contract Tests: Caller Responsibility for User Input
+    // ========================================================================
+
+    /// Regression test for bug where executor.rs didn't add user input to conversation.
+    ///
+    /// When `previous_messages` is `Some(...)`, the caller (executor.rs or streaming.rs)
+    /// is responsible for adding the user input to the conversation before calling
+    /// `to_chat_completion`. This test documents that contract.
+    ///
+    /// If this test fails, either:
+    /// 1. The contract has changed (update callers accordingly), or
+    /// 2. Someone accidentally changed to_chat_completion behavior
+    #[test]
+    fn previous_messages_requires_caller_to_add_user_input() {
+        // Scenario: caller passes empty previous_messages without adding user input
+        // This would cause the bug where the LLM receives no user message
+        let req = CreateResponseRequest {
+            model: "gpt-4".to_string(),
+            input: Input::Text("User's question".to_string()),
+            instructions: None,
+            tools: vec![],
+            tool_choice: ToolChoice::default(),
+            parallel_tool_calls: true,
+            previous_response_id: None,
+            max_output_tokens: None,
+            max_tool_calls: None,
+            temperature: 1.0,
+            top_p: 1.0,
+            stream: false,
+            store: true,
+            reasoning: None,
+            text: None,
+            truncation: Default::default(),
+            metadata: None,
+            conversation: None,
+        };
+
+        // When previous_messages is Some([]) - caller forgot to add user input
+        let chat_req = to_chat_completion(&req, Some(vec![]));
+
+        // Contract: to_chat_completion does NOT add input when previous_messages is Some
+        // Only the guard message should be present (since messages would be empty otherwise)
+        assert_eq!(chat_req.messages.len(), 1);
+        assert_eq!(chat_req.messages[0].role, ChatRole::System);
+        assert_eq!(
+            chat_req.messages[0].content,
+            Some(ChatContent::Text(
+                "You are a helpful assistant.".to_string()
+            ))
+        );
+    }
+
+    /// Companion test showing the correct caller behavior.
+    ///
+    /// Callers (executor.rs, streaming.rs) should use input_to_messages to add
+    /// the user input to the conversation BEFORE calling to_chat_completion.
+    #[test]
+    fn caller_must_add_input_to_previous_messages() {
+        let req = CreateResponseRequest {
+            model: "gpt-4".to_string(),
+            input: Input::Text("User's question".to_string()),
+            instructions: None,
+            tools: vec![],
+            tool_choice: ToolChoice::default(),
+            parallel_tool_calls: true,
+            previous_response_id: None,
+            max_output_tokens: None,
+            max_tool_calls: None,
+            temperature: 1.0,
+            top_p: 1.0,
+            stream: false,
+            store: true,
+            reasoning: None,
+            text: None,
+            truncation: Default::default(),
+            metadata: None,
+            conversation: None,
+        };
+
+        // Correct pattern: caller adds input_to_messages before calling
+        let mut conversation = Vec::new();
+        conversation.extend(input_to_messages(&req.input)); // This is what executor.rs must do
+
+        let chat_req = to_chat_completion(&req, Some(conversation));
+
+        // Now the user message is present
+        assert_eq!(chat_req.messages.len(), 1);
+        assert_eq!(chat_req.messages[0].role, ChatRole::User);
+        assert_eq!(
+            chat_req.messages[0].content,
+            Some(ChatContent::Text("User's question".to_string()))
         );
     }
 }

@@ -142,6 +142,12 @@ impl Executor {
 
         // Initialize conversation with previous messages from chain
         let mut conversation: Vec<ChatMessage> = previous_messages;
+
+        // Add the current request's user input to the conversation
+        // This must be done before the tool loop so it appears first in the messages
+        use crate::translation::input_to_messages;
+        conversation.extend(input_to_messages(&req.input));
+
         let mut iteration = 0;
         let mut all_generated_files: Vec<GeneratedFile> = Vec::new();
 
@@ -160,7 +166,20 @@ impl Executor {
             }
 
             // Translate request to Chat Completions
-            let chat_req = to_chat_completion(&req_with_tools, Some(conversation.clone()));
+            let mut chat_req = to_chat_completion(&req_with_tools, Some(conversation.clone()));
+
+            // After the first iteration, switch tool_choice from "required" to "auto"
+            // This allows the LLM to produce a final response once tools have been executed
+            if iteration > 1 && chat_req.tool_choice.is_some() {
+                use crate::models::{ChatToolChoice, ToolChoice, ToolChoiceMode};
+                match &req_with_tools.tool_choice {
+                    ToolChoice::Mode(ToolChoiceMode::Required) | ToolChoice::Specific(_) => {
+                        chat_req.tool_choice = Some(ChatToolChoice::Mode("auto".to_string()));
+                        tracing::debug!("Switched tool_choice from required/specific to auto");
+                    }
+                    _ => {}
+                }
+            }
 
             // Call the backend
             tracing::info!(model = %chat_req.model, "Calling LLM");
@@ -255,6 +274,15 @@ impl Executor {
             .ok_or_else(|| ExecutionError::ModelNotFound(req.model.clone()))?;
 
         let url = format!("{}/v1/chat/completions", model_config.url);
+
+        // Log the full request being sent to the LLM
+        if let Ok(req_json) = serde_json::to_string_pretty(req) {
+            tracing::debug!(
+                url = %url,
+                request = %req_json,
+                "Sending request to LLM"
+            );
+        }
 
         // Build request with optional auth
         let mut request = self.http.post(&url).json(req);

@@ -32,8 +32,14 @@ pub struct ChatMessage {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub content: Option<ChatContent>,
     /// Reasoning content from chain-of-thought models (gpt-oss, DeepSeek-R1, etc.)
-    /// llama.cpp sends this as a separate field when using `--reasoning-format auto`
-    #[serde(skip_serializing_if = "Option::is_none")]
+    /// llama.cpp sends this as `reasoning_content` but the gpt-oss Jinja template
+    /// expects `thinking` when formatting messages. We serialize as `thinking` and
+    /// accept both names when deserializing.
+    #[serde(
+        rename = "thinking",
+        alias = "reasoning_content",
+        skip_serializing_if = "Option::is_none"
+    )]
     pub reasoning_content: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub tool_calls: Option<Vec<ChatToolCall>>,
