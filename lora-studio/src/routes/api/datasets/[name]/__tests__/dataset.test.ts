@@ -1,8 +1,8 @@
-import { describe, it, expect, vi } from 'vitest';
-import { GET, DELETE } from '../+server';
+import { describe, expect, it, vi } from 'vitest';
+import { DELETE, GET } from '../+server';
+import type { RequestEvent } from '@sveltejs/kit';
 
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-type MockEvent = any;
+type MockEvent = RequestEvent<{ name: string }, '/api/datasets/[name]'>;
 
 const mockDatasetDetail = {
 	name: 'test_dataset',
@@ -36,7 +36,7 @@ function createMockEvent(
 		isSubRequest: false,
 		setHeaders: vi.fn(),
 		...overrides
-	};
+	} as unknown as MockEvent;
 }
 
 describe('GET /api/datasets/:name', () => {

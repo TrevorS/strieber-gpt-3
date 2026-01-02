@@ -1,8 +1,8 @@
-import { describe, it, expect, vi } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { GET, POST } from '../+server';
+import type { RequestEvent } from '@sveltejs/kit';
 
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-type MockEvent = any;
+type MockEvent = RequestEvent<Record<string, string>, '/api/datasets'>;
 
 // Mock dataset response
 const mockDatasets = [
@@ -32,7 +32,7 @@ function createMockEvent(overrides: Record<string, unknown> = {}): MockEvent {
 		isSubRequest: false,
 		setHeaders: vi.fn(),
 		...overrides
-	};
+	} as unknown as MockEvent;
 }
 
 describe('GET /api/datasets', () => {

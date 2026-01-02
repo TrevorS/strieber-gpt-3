@@ -14,6 +14,7 @@
 	let error = $state<string | null>(null);
 	let showCreateModal = $state(false);
 	let newDatasetName = $state('');
+	let newTriggerToken = $state('');
 	let creating = $state(false);
 
 	async function loadDatasets() {
@@ -37,7 +38,10 @@
 			const res = await fetch('/api/datasets', {
 				method: 'POST',
 				headers: { 'Content-Type': 'application/json' },
-				body: JSON.stringify({ name: newDatasetName.trim() })
+				body: JSON.stringify({
+					name: newDatasetName.trim(),
+					trigger_token: newTriggerToken.trim() || undefined
+				})
 			});
 			if (!res.ok) {
 				const data = await res.json();
@@ -45,6 +49,7 @@
 			}
 			showCreateModal = false;
 			newDatasetName = '';
+			newTriggerToken = '';
 			await loadDatasets();
 		} catch (e) {
 			error = e instanceof Error ? e.message : 'Failed to create dataset';
@@ -129,18 +134,42 @@
 	<div class="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
 		<div class="bg-card border border-border rounded-lg p-6 w-full max-w-md mx-4">
 			<h2 class="text-xl font-semibold text-card-foreground mb-4">Create Dataset</h2>
-			<input
-				type="text"
-				bind:value={newDatasetName}
-				placeholder="Dataset name"
-				class="w-full px-3 py-2 bg-background border border-input rounded-lg text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-ring mb-4"
-				onkeydown={(e) => e.key === 'Enter' && createDataset()}
-			/>
+			<div class="space-y-4 mb-4">
+				<div>
+					<label for="dataset-name" class="block text-sm font-medium text-muted-foreground mb-1"
+						>Dataset name</label
+					>
+					<input
+						id="dataset-name"
+						type="text"
+						bind:value={newDatasetName}
+						placeholder="e.g., my_character"
+						class="w-full px-3 py-2 bg-background border border-input rounded-lg text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-ring"
+					/>
+				</div>
+				<div>
+					<label for="trigger-token" class="block text-sm font-medium text-muted-foreground mb-1"
+						>Trigger token <span class="text-muted-foreground/60">(optional)</span></label
+					>
+					<input
+						id="trigger-token"
+						type="text"
+						bind:value={newTriggerToken}
+						placeholder="e.g., sks, ohwx (defaults to dataset name)"
+						class="w-full px-3 py-2 bg-background border border-input rounded-lg text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-ring"
+						onkeydown={(e) => e.key === 'Enter' && createDataset()}
+					/>
+					<p class="text-xs text-muted-foreground mt-1">
+						Word prepended to captions. Use something unique that won't appear naturally.
+					</p>
+				</div>
+			</div>
 			<div class="flex justify-end gap-3">
 				<button
 					onclick={() => {
 						showCreateModal = false;
 						newDatasetName = '';
+						newTriggerToken = '';
 					}}
 					class="px-4 py-2 text-muted-foreground hover:text-foreground transition-colors"
 				>

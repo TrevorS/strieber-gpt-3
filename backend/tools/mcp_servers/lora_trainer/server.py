@@ -1465,15 +1465,20 @@ async def api_update_caption(request: Request) -> Response:
     if not image_path.exists():
         return JSONResponse({"error": "Image not found"}, status_code=404)
 
-    # Write caption
+    # Write or delete caption
     captions_dir = dataset_path / "captions"
     captions_dir.mkdir(exist_ok=True)
     caption_path = captions_dir / f"{image_path.stem}.txt"
     caption = body.get("caption", "")
-    caption_path.write_text(caption)
+
+    if caption:
+        caption_path.write_text(caption)
+    elif caption_path.exists():
+        caption_path.unlink()  # Delete empty caption file
+
     dm._update_metadata(name)
 
-    return JSONResponse({"filename": filename, "caption": caption})
+    return JSONResponse({"filename": filename, "caption": caption if caption else None})
 
 
 @mcp.custom_route("/api/datasets/{name}/images", methods=["POST"])
@@ -1603,9 +1608,12 @@ async def api_caption_dataset(request: Request) -> Response:
     )
 
     if not overwrite:
-        image_files = [
-            p for p in image_files if not (captions_dir / f"{p.stem}.txt").exists()
-        ]
+        # Skip images that have non-empty caption files
+        def has_caption(img_path: Path) -> bool:
+            caption_file = captions_dir / f"{img_path.stem}.txt"
+            return caption_file.exists() and caption_file.stat().st_size > 0
+
+        image_files = [p for p in image_files if not has_caption(p)]
 
     if not image_files:
         return JSONResponse(
