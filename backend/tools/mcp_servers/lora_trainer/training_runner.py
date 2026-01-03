@@ -398,10 +398,7 @@ class TrainingRunner:
 
         # ai-toolkit writes to: {training_folder}/{name}/loss_log.db
         db_path = (
-            self.outputs_path
-            / job_id
-            / f"{job.dataset_name}_{job_id}"
-            / "loss_log.db"
+            self.outputs_path / job_id / f"{job.dataset_name}_{job_id}" / "loss_log.db"
         )
 
         if not db_path.exists():
@@ -764,6 +761,12 @@ class TrainingRunner:
 
             # Resume monitoring
             self._active_containers[job_id] = container.id
+
+            # Clear any stale completed_at timestamp
+            if job.completed_at is not None:
+                job.completed_at = None
+                self.job_store.save_job(job)
+
             logger.info(f"Resuming monitoring for job {job_id}")
 
             # Start monitoring task (will complete when container finishes)
@@ -785,6 +788,9 @@ class TrainingRunner:
         if not job:
             return
 
+        final_status = TrainingStatus.FAILED
+        error_message = None
+
         try:
             # Monitor progress
             await self._monitor_progress(job_id, container)
@@ -792,30 +798,28 @@ class TrainingRunner:
             # Wait for completion
             result = await asyncio.to_thread(container.wait)
 
-            job = self.job_store.get_job(job_id)
-            if not job:
-                return
-
             if result["StatusCode"] == 0:
-                job.status = TrainingStatus.COMPLETED
+                final_status = TrainingStatus.COMPLETED
                 logger.info(f"Training job {job_id} completed successfully")
             else:
-                job.status = TrainingStatus.FAILED
+                final_status = TrainingStatus.FAILED
                 logs = await asyncio.to_thread(container.logs, tail=100)
-                job.error_message = logs.decode()[-1000:]
+                error_message = logs.decode()[-1000:]
                 logger.error(f"Training job {job_id} failed")
 
         except Exception as e:
-            job = self.job_store.get_job(job_id)
-            if job:
-                job.status = TrainingStatus.FAILED
-                job.error_message = str(e)
-                logger.error(f"Resume monitor error for {job_id}: {e}", exc_info=True)
+            final_status = TrainingStatus.FAILED
+            error_message = str(e)
+            logger.error(f"Resume monitor error for {job_id}: {e}", exc_info=True)
         finally:
-            job = self.job_store.get_job(job_id)
-            if job:
-                job.completed_at = datetime.now(UTC)
-                self.job_store.save_job(job)
+            # Re-fetch job to get latest progress/checkpoints, then apply final status
+            latest_job = self.job_store.get_job(job_id)
+            if latest_job:
+                latest_job.status = final_status
+                latest_job.completed_at = datetime.now(UTC)
+                if error_message:
+                    latest_job.error_message = error_message
+                self.job_store.save_job(latest_job)
             self._active_containers.pop(job_id, None)
 
             # Cleanup container
@@ -823,3 +827,120 @@ class TrainingRunner:
                 await asyncio.to_thread(container.remove)
             except Exception:
                 pass
+
+    async def recover_orphaned_jobs(self) -> dict:
+        """Recover orphaned jobs after server restart.
+
+        Scans for jobs marked as RUNNING and either:
+        - Resumes monitoring if container is still running
+        - Marks as COMPLETED/FAILED if container has stopped
+
+        Returns:
+            Summary dict with resumed, completed, failed counts.
+        """
+        if not self._docker:
+            logger.warning("Docker not available, skipping orphan recovery")
+            return {"resumed": 0, "completed": 0, "failed": 0, "error": "no docker"}
+
+        result = {"resumed": 0, "completed": 0, "failed": 0}
+
+        # Get all running jobs from the store
+        running_jobs = self.job_store.list_jobs(status=TrainingStatus.RUNNING)
+        logger.info(f"Found {len(running_jobs)} jobs marked as RUNNING")
+
+        for job in running_jobs:
+            # Skip if already being monitored
+            if job.job_id in self._active_containers:
+                logger.debug(f"Job {job.job_id} already monitored, skipping")
+                continue
+
+            container_name = f"lora-training-{job.job_id}"
+            try:
+                container = await asyncio.to_thread(
+                    self._docker.containers.get, container_name
+                )
+                await asyncio.to_thread(container.reload)
+
+                if container.status == "running":
+                    # Container still running - resume monitoring
+                    self._active_containers[job.job_id] = container.id
+
+                    # Clear any stale completed_at timestamp
+                    if job.completed_at is not None:
+                        job.completed_at = None
+                        self.job_store.save_job(job)
+
+                    asyncio.create_task(
+                        self._resume_monitor_task(job.job_id, container)
+                    )
+                    logger.info(f"Resumed monitoring for job {job.job_id}")
+                    result["resumed"] += 1
+                else:
+                    # Container stopped - finalize based on exit code
+                    exit_code = container.attrs.get("State", {}).get("ExitCode", 1)
+                    if exit_code == 0:
+                        job.status = TrainingStatus.COMPLETED
+                        result["completed"] += 1
+                        logger.info(f"Job {job.job_id} completed (container exited 0)")
+                    else:
+                        job.status = TrainingStatus.FAILED
+                        logs = await asyncio.to_thread(container.logs, tail=50)
+                        job.error_message = f"Container exited with code {exit_code}: {logs.decode()[-500:]}"
+                        result["failed"] += 1
+                        logger.warning(
+                            f"Job {job.job_id} failed (container exited {exit_code})"
+                        )
+
+                    job.completed_at = datetime.now(UTC)
+                    self.job_store.save_job(job)
+
+                    # Clean up stopped container
+                    try:
+                        await asyncio.to_thread(container.remove)
+                    except Exception:
+                        pass
+
+            except docker.errors.NotFound:
+                # Container doesn't exist - check if training actually completed
+                # by looking for the final LoRA output file
+                output_dir = (
+                    self.outputs_path / job.job_id / f"{job.dataset_name}_{job.job_id}"
+                )
+                final_lora = output_dir / f"{job.dataset_name}_{job.job_id}.safetensors"
+
+                if final_lora.exists():
+                    # Training completed, container was auto-removed
+                    job.status = TrainingStatus.COMPLETED
+                    job.completed_at = datetime.now(UTC)
+                    self.job_store.save_job(job)
+                    result["completed"] += 1
+                    logger.info(
+                        f"Job {job.job_id} completed (container removed, output found)"
+                    )
+                elif job.current_step >= job.total_steps:
+                    # All steps done, assume success even if file missing
+                    job.status = TrainingStatus.COMPLETED
+                    job.completed_at = datetime.now(UTC)
+                    self.job_store.save_job(job)
+                    result["completed"] += 1
+                    logger.info(
+                        f"Job {job.job_id} completed (all steps done, container removed)"
+                    )
+                else:
+                    # Truly incomplete - mark as failed
+                    job.status = TrainingStatus.FAILED
+                    job.error_message = "Container not found after server restart"
+                    job.completed_at = datetime.now(UTC)
+                    self.job_store.save_job(job)
+                    result["failed"] += 1
+                    logger.warning(f"Job {job.job_id} failed (container not found)")
+
+            except Exception as e:
+                logger.error(f"Error recovering job {job.job_id}: {e}", exc_info=True)
+                result["failed"] += 1
+
+        logger.info(
+            f"Orphan recovery complete: {result['resumed']} resumed, "
+            f"{result['completed']} completed, {result['failed']} failed"
+        )
+        return result

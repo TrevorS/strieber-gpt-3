@@ -100,8 +100,15 @@ class JsonJobStore(JobStoreBase):
             except Exception as e:
                 logger.warning(f"Failed to load job: {e}")
 
-        # Sort by created time (job_id contains timestamp info via uuid)
-        result.sort(key=lambda j: j.started_at or j.config.dataset, reverse=True)
+        # Sort by created time (most recent first)
+        # Use timestamp to avoid timezone-aware vs naive datetime comparison issues
+        def sort_key(j: TrainingJob) -> float:
+            if j.started_at:
+                # Convert to timestamp (handles both aware and naive datetimes)
+                return j.started_at.timestamp()
+            return 0.0
+
+        result.sort(key=sort_key, reverse=True)
 
         return result[:limit]
 

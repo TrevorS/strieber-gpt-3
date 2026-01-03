@@ -130,10 +130,13 @@ class HttpJobStore(JobStoreBase):
                     logger.warning(f"Failed to parse job from list: {e}")
 
             # Sort by started_at (most recent first)
-            result.sort(
-                key=lambda j: j.started_at or j.config.dataset,
-                reverse=True,
-            )
+            # Use timestamp to avoid timezone-aware vs naive datetime comparison
+            def sort_key(j: TrainingJob) -> float:
+                if j.started_at:
+                    return j.started_at.timestamp()
+                return 0.0
+
+            result.sort(key=sort_key, reverse=True)
 
             return result[:limit]
         except httpx.HTTPError as e:

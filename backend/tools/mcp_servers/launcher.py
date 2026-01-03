@@ -5,8 +5,8 @@ instead of the default 127.0.0.1, enabling inter-container communication.
 """
 
 import logging
-import sys
 import os
+import sys
 
 # Setup logging early
 logging.basicConfig(level=logging.INFO)
@@ -46,9 +46,33 @@ def run_server(server_module: str, host: str = "0.0.0.0", port: int = 8000) -> N
 
             mcp_instance = comfy_zimage_server.get_mcp()
         elif server_module == "lora_trainer":
-            from lora_trainer import server as lora_trainer_server
+            import asyncio
+            import threading
 
-            mcp_instance = lora_trainer_server.get_mcp()
+            from lora_trainer.server import get_mcp, recover_orphaned_jobs
+
+            mcp_instance = get_mcp()
+
+            # Schedule recovery to run after server starts via background thread
+            def run_recovery_delayed():
+                import time
+
+                time.sleep(2)  # Wait for server to initialize
+                logger.info("Running delayed orphan recovery...")
+                loop = asyncio.new_event_loop()
+                asyncio.set_event_loop(loop)
+                try:
+                    result = loop.run_until_complete(recover_orphaned_jobs())
+                    logger.info(f"Orphan recovery completed: {result}")
+                except Exception as e:
+                    logger.error(f"Orphan recovery failed: {e}", exc_info=True)
+                finally:
+                    loop.close()
+
+            recovery_thread = threading.Thread(
+                target=run_recovery_delayed, daemon=True, name="orphan-recovery"
+            )
+            recovery_thread.start()
         else:
             raise ValueError(f"Unknown MCP server module: {server_module}")
     except ImportError as e:

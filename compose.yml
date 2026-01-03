@@ -528,9 +528,9 @@ services:
     environment:
       - PORT=8000
       - TRAINING_DATA_PATH=/data
-      # Job store: use HTTP backend for distributed persistence
-      - JOB_STORE_BACKEND=http
-      - STORAGE_API_URL=http://responses-api:8000
+      # Job store: use JSON file backend for persistence
+      # (HTTP backend not viable - responses-api generic storage is in-memory only)
+      - JOB_STORE_BACKEND=json
       # Vision model for auto-captioning
       - QWEN_VL_URL=http://llama-server-qwen-vl:8000
     volumes:

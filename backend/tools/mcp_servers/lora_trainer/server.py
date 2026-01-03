@@ -35,6 +35,23 @@ logger = logging.getLogger(__name__)
 # Initialize MCP server
 mcp = FastMCP("lora_trainer", host="0.0.0.0")
 
+
+async def recover_orphaned_jobs():
+    """Recover any orphaned training jobs after server restart.
+
+    Runs automatically when the server starts via the startup route.
+    """
+    logger.info("Running orphaned job recovery...")
+    try:
+        runner = _get_training_runner()
+        result = await runner.recover_orphaned_jobs()
+        logger.info(f"Orphan recovery result: {result}")
+        return result
+    except Exception as e:
+        logger.error(f"Failed to recover orphaned jobs: {e}", exc_info=True)
+        return {"error": str(e)}
+
+
 # Lazy initialization - only create managers when first accessed
 BASE_PATH = Path("/data")
 _dataset_manager: Optional[DatasetManager] = None
@@ -1848,7 +1865,9 @@ def _get_sample_prompts(job_id: str, dataset_name: str) -> list[str]:
     """Read sample prompts from training config."""
     import yaml
 
-    config_path = BASE_PATH / "outputs" / job_id / f"{dataset_name}_{job_id}" / "config.yaml"
+    config_path = (
+        BASE_PATH / "outputs" / job_id / f"{dataset_name}_{job_id}" / "config.yaml"
+    )
     if not config_path.exists():
         return []
 
@@ -1877,7 +1896,9 @@ async def api_list_sample_images(request: Request) -> Response:
     prompts = _get_sample_prompts(job_id, job.dataset_name)
 
     # Scan filesystem for samples
-    samples_dir = BASE_PATH / "outputs" / job_id / f"{job.dataset_name}_{job_id}" / "samples"
+    samples_dir = (
+        BASE_PATH / "outputs" / job_id / f"{job.dataset_name}_{job_id}" / "samples"
+    )
     samples = []
     if samples_dir.exists():
         for f in sorted(samples_dir.glob("*.jpg")):
@@ -1927,7 +1948,9 @@ async def api_get_sample_image(request: Request) -> Response:
                 return FileResponse(sample_file, media_type=media_type)
 
     # Fallback: look directly in the samples directory
-    samples_dir = BASE_PATH / "outputs" / job_id / f"{job.dataset_name}_{job_id}" / "samples"
+    samples_dir = (
+        BASE_PATH / "outputs" / job_id / f"{job.dataset_name}_{job_id}" / "samples"
+    )
     sample_file = samples_dir / filename
     if sample_file.exists():
         media_type = "image/jpeg" if filename.endswith(".jpg") else "image/png"
@@ -2100,6 +2123,217 @@ async def api_start_container(request: Request) -> Response:
         return JSONResponse({"error": "Container not found"}, status_code=404)
     except Exception as e:
         logger.error(f"Failed to start container {name}: {e}", exc_info=True)
+        return JSONResponse({"error": str(e)}, status_code=500)
+
+
+# ============================================================================
+# LoRA Management REST API Endpoints
+# ============================================================================
+
+LORAS_PATH = Path("/models/loras")
+
+
+def _find_source_job(lora_name: str) -> dict | None:
+    """Find the training job that created this LoRA (if any).
+
+    Searches completed jobs for one with a matching dataset name or
+    where the LoRA was promoted from.
+    """
+    job_store = _get_job_store()
+    jobs = job_store.list_jobs()
+
+    # Look for jobs with matching dataset_name or that promoted this LoRA
+    for job in jobs:
+        if job.dataset_name == lora_name:
+            return {
+                "job_id": job.job_id,
+                "dataset_name": job.dataset_name,
+                "trigger_token": job.trigger_token,
+                "completed_at": job.completed_at.isoformat()
+                if job.completed_at
+                else None,
+            }
+
+    return None
+
+
+def _serialize_lora(lora_path: Path) -> dict:
+    """Serialize LoRA file info to JSON-safe dict."""
+    stat = lora_path.stat()
+    name = lora_path.stem  # filename without extension
+
+    return {
+        "name": name,
+        "filename": lora_path.name,
+        "file_size": stat.st_size,
+        "created_at": stat.st_mtime,  # Unix timestamp
+        "source_job": _find_source_job(name),
+    }
+
+
+@mcp.custom_route("/api/loras", methods=["GET"])
+async def api_list_loras(request: Request) -> Response:
+    """List all LoRAs in the models directory."""
+    if not LORAS_PATH.exists():
+        return JSONResponse([])
+
+    loras = []
+    for lora_file in sorted(LORAS_PATH.glob("*.safetensors")):
+        loras.append(_serialize_lora(lora_file))
+
+    # Sort by creation date, newest first
+    loras.sort(key=lambda x: x["created_at"], reverse=True)
+    return JSONResponse(loras)
+
+
+@mcp.custom_route("/api/loras/{name}", methods=["GET"])
+async def api_get_lora(request: Request) -> Response:
+    """Get details for a specific LoRA."""
+    name = request.path_params["name"]
+    lora_path = LORAS_PATH / f"{name}.safetensors"
+
+    if not lora_path.exists():
+        return JSONResponse({"error": "LoRA not found"}, status_code=404)
+
+    lora_info = _serialize_lora(lora_path)
+
+    # If we have a source job, get more details including sample images
+    if lora_info["source_job"]:
+        job_id = lora_info["source_job"]["job_id"]
+        job = _get_job_store().get_job(job_id)
+        if job:
+            # Add sample images from the training job
+            samples_dir = (
+                BASE_PATH
+                / "outputs"
+                / job_id
+                / f"{job.dataset_name}_{job_id}"
+                / "samples"
+            )
+            sample_files = []
+            if samples_dir.exists():
+                for f in sorted(samples_dir.glob("*.jpg"))[-8:]:  # Last 8 samples
+                    sample_files.append(f.name)
+                for f in sorted(samples_dir.glob("*.png"))[-8:]:
+                    sample_files.append(f.name)
+            lora_info["training_samples"] = sample_files
+
+    return JSONResponse(lora_info)
+
+
+@mcp.custom_route("/api/loras/{name}", methods=["DELETE"])
+async def api_delete_lora(request: Request) -> Response:
+    """Delete a LoRA file."""
+    name = request.path_params["name"]
+    lora_path = LORAS_PATH / f"{name}.safetensors"
+
+    if not lora_path.exists():
+        return JSONResponse({"error": "LoRA not found"}, status_code=404)
+
+    try:
+        lora_path.unlink()
+        return Response(status_code=204)
+    except Exception as e:
+        logger.error(f"Failed to delete LoRA {name}: {e}")
+        return JSONResponse({"error": str(e)}, status_code=500)
+
+
+@mcp.custom_route("/api/loras/{name}", methods=["PUT"])
+async def api_rename_lora(request: Request) -> Response:
+    """Rename a LoRA file."""
+    name = request.path_params["name"]
+    body = await request.json()
+    new_name = body.get("new_name")
+
+    if not new_name:
+        return JSONResponse({"error": "new_name is required"}, status_code=400)
+
+    # Validate new name (alphanumeric, underscores, hyphens)
+    import re
+
+    if not re.match(r"^[a-zA-Z][a-zA-Z0-9_-]*$", new_name):
+        return JSONResponse(
+            {
+                "error": "Invalid name. Use letters, numbers, underscores, hyphens. Must start with letter."
+            },
+            status_code=400,
+        )
+
+    lora_path = LORAS_PATH / f"{name}.safetensors"
+    new_path = LORAS_PATH / f"{new_name}.safetensors"
+
+    if not lora_path.exists():
+        return JSONResponse({"error": "LoRA not found"}, status_code=404)
+
+    if new_path.exists():
+        return JSONResponse(
+            {"error": f"LoRA '{new_name}' already exists"}, status_code=409
+        )
+
+    try:
+        lora_path.rename(new_path)
+        return JSONResponse(_serialize_lora(new_path))
+    except Exception as e:
+        logger.error(f"Failed to rename LoRA {name} to {new_name}: {e}")
+        return JSONResponse({"error": str(e)}, status_code=500)
+
+
+@mcp.custom_route("/api/loras/{name}/test", methods=["POST"])
+async def api_test_lora(request: Request) -> Response:
+    """Generate a test image using this LoRA.
+
+    Calls the comfy_zimage MCP server to generate an image.
+    """
+    import httpx
+
+    name = request.path_params["name"]
+    body = await request.json()
+    prompt = body.get("prompt", f"{name}, portrait, studio lighting")
+
+    lora_path = LORAS_PATH / f"{name}.safetensors"
+    if not lora_path.exists():
+        return JSONResponse({"error": "LoRA not found"}, status_code=404)
+
+    # Call comfy_zimage server to generate image
+    comfy_url = "http://mcp-comfy-zimage:9141"
+
+    try:
+        async with httpx.AsyncClient(timeout=120.0) as client:
+            # Use the zimage_turbo tool endpoint
+            response = await client.post(
+                f"{comfy_url}/api/generate",
+                json={
+                    "prompt": prompt,
+                    "lora_name": name,
+                    "lora_strength": body.get("lora_strength", 1.0),
+                    "width": body.get("width", 1024),
+                    "height": body.get("height", 1024),
+                    "steps": body.get("steps", 4),
+                    "seed": body.get("seed"),
+                },
+            )
+
+            if response.status_code != 200:
+                error_text = response.text
+                logger.error(f"Comfy generation failed: {error_text}")
+                return JSONResponse(
+                    {"error": f"Generation failed: {error_text[:200]}"},
+                    status_code=502,
+                )
+
+            # Return the generated image URL/data
+            result = response.json()
+            return JSONResponse(result)
+
+    except httpx.TimeoutException:
+        return JSONResponse({"error": "Generation timed out"}, status_code=504)
+    except httpx.ConnectError:
+        return JSONResponse(
+            {"error": "Cannot connect to image generation service"},
+            status_code=503,
+        )
+    except Exception as e:
+        logger.error(f"Test generation failed: {e}", exc_info=True)
         return JSONResponse({"error": str(e)}, status_code=500)
 
 

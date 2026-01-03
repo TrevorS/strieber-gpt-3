@@ -2,7 +2,15 @@
 	import { onMount } from 'svelte';
 	import { page } from '$app/stores';
 	import { goto } from '$app/navigation';
-	import { ArrowLeft, Plus, Sparkles, Trash2, X, Check, Pencil, RefreshCw, Eraser } from 'lucide-svelte';
+	import { ArrowLeft, Plus, Sparkles, Trash2, Pencil, RefreshCw, Eraser } from 'lucide-svelte';
+	import { Button } from '$lib/components/ui/button';
+	import * as Card from '$lib/components/ui/card';
+	import { AspectRatio } from '$lib/components/ui/aspect-ratio';
+	import { Badge } from '$lib/components/ui/badge';
+	import * as Dialog from '$lib/components/ui/dialog';
+	import * as Select from '$lib/components/ui/select';
+	import { Textarea } from '$lib/components/ui/textarea';
+	import { Separator } from '$lib/components/ui/separator';
 
 	interface DatasetImage {
 		filename: string;
@@ -36,11 +44,6 @@
 	let showDeleteConfirm = $state(false);
 	let deleting = $state(false);
 
-	// Inline edit state
-	let editingFilename = $state<string | null>(null);
-	let editingCaption = $state('');
-	let savingCaption = $state(false);
-
 	// Delete image state
 	let deletingImage = $state<string | null>(null);
 	let showDeleteImageConfirm = $state<string | null>(null);
@@ -49,6 +52,7 @@
 	let lightboxImage = $state<DatasetImage | null>(null);
 	let lightboxEditMode = $state(false);
 	let lightboxCaption = $state('');
+	let savingCaption = $state(false);
 	let regeneratingCaption = $state(false);
 
 	$effect(() => {
@@ -169,45 +173,6 @@
 		} catch (e) {
 			error = e instanceof Error ? e.message : 'Failed to delete dataset';
 			deleting = false;
-		}
-	}
-
-	// Inline caption editing
-	function startEditing(image: DatasetImage) {
-		editingFilename = image.filename;
-		editingCaption = image.caption || '';
-	}
-
-	function cancelEditing() {
-		editingFilename = null;
-		editingCaption = '';
-	}
-
-	async function saveCaption(filename: string) {
-		if (!dataset) return;
-		savingCaption = true;
-		try {
-			const res = await fetch(`/api/datasets/${dataset.name}/images/${filename}`, {
-				method: 'PUT',
-				headers: { 'Content-Type': 'application/json' },
-				body: JSON.stringify({ caption: editingCaption })
-			});
-			if (!res.ok) throw new Error('Failed to save caption');
-			editingFilename = null;
-			await loadDataset(dataset.name);
-		} catch (e) {
-			error = e instanceof Error ? e.message : 'Failed to save caption';
-		} finally {
-			savingCaption = false;
-		}
-	}
-
-	function handleCaptionKeydown(e: KeyboardEvent, filename: string) {
-		if (e.key === 'Enter' && !e.shiftKey) {
-			e.preventDefault();
-			saveCaption(filename);
-		} else if (e.key === 'Escape') {
-			cancelEditing();
 		}
 	}
 
@@ -333,142 +298,104 @@
 		<header class="flex items-center justify-between mb-8">
 			<div>
 				<h1 class="text-3xl font-bold text-foreground">{dataset.name}</h1>
-				<p class="text-muted-foreground mt-1">
-					{dataset.images.length} images
-					<span class="mx-2">·</span>
-					<span class="font-mono text-sm">trigger: {dataset.trigger_token}</span>
-				</p>
+				<div class="flex items-center gap-3 mt-2">
+					<Badge variant="outline">{dataset.images.length} images</Badge>
+					<Badge variant="secondary" class="font-mono">{dataset.trigger_token}</Badge>
+				</div>
 			</div>
-			<div class="flex items-center gap-3">
-				<button
-					onclick={() => (showAddModal = true)}
-					class="flex items-center gap-2 px-4 py-2 bg-primary text-primary-foreground rounded-lg hover:bg-primary/90"
-				>
-					<Plus class="w-5 h-5" />
+			<div class="flex items-center gap-2">
+				<Button onclick={() => (showAddModal = true)}>
+					<Plus class="w-4 h-4 mr-2" />
 					Add Images
-				</button>
+				</Button>
+
+				<Separator orientation="vertical" class="h-8" />
 
 				<!-- Caption style selector -->
-				<select
-					bind:value={captionStyle}
-					class="px-3 py-2 bg-secondary text-secondary-foreground rounded-lg border-none focus:outline-none focus:ring-2 focus:ring-ring"
-				>
-					<option value="detailed">Detailed</option>
-					<option value="simple">Simple</option>
-					<option value="tags">Tags</option>
-				</select>
+				<Select.Root type="single" bind:value={captionStyle}>
+					<Select.Trigger class="w-[130px]">
+						{captionStyle.charAt(0).toUpperCase() + captionStyle.slice(1)}
+					</Select.Trigger>
+					<Select.Content>
+						<Select.Item value="detailed">Detailed</Select.Item>
+						<Select.Item value="simple">Simple</Select.Item>
+						<Select.Item value="tags">Tags</Select.Item>
+					</Select.Content>
+				</Select.Root>
 
-				<button
+				<Button
+					variant="secondary"
 					onclick={captionImages}
 					disabled={captioning || dataset.images.length === 0}
-					class="flex items-center gap-2 px-4 py-2 bg-secondary text-secondary-foreground rounded-lg hover:bg-secondary/80 disabled:opacity-50"
 				>
-					<Sparkles class="w-5 h-5" />
+					<Sparkles class="w-4 h-4 mr-2" />
 					{captioning ? 'Captioning...' : 'Auto-Caption'}
-				</button>
-				<button
+				</Button>
+
+				<Button
+					variant="secondary"
 					onclick={clearAllCaptions}
 					disabled={clearingAllCaptions || !dataset.images.some((img) => img.caption)}
-					class="flex items-center gap-2 px-4 py-2 bg-secondary text-secondary-foreground rounded-lg hover:bg-secondary/80 disabled:opacity-50"
-					title="Clear all captions"
 				>
-					<Eraser class="w-5 h-5" />
+					<Eraser class="w-4 h-4 mr-2" />
 					{clearingAllCaptions ? 'Clearing...' : 'Clear All'}
-				</button>
-				<button
-					onclick={() => (showDeleteConfirm = true)}
-					class="flex items-center gap-2 px-4 py-2 text-destructive hover:bg-destructive/10 rounded-lg"
-				>
-					<Trash2 class="w-5 h-5" />
-				</button>
+				</Button>
+
+				<Separator orientation="vertical" class="h-8" />
+
+				<Button variant="ghost" size="icon" onclick={() => (showDeleteConfirm = true)}>
+					<Trash2 class="w-4 h-4 text-destructive" />
+				</Button>
 			</div>
 		</header>
 
 		{#if dataset.images.length === 0}
-			<div class="text-center py-12 border border-dashed border-border rounded-lg">
-				<p class="text-muted-foreground mb-4">No images in this dataset</p>
-				<button
-					onclick={() => (showAddModal = true)}
-					class="px-4 py-2 bg-primary text-primary-foreground rounded-lg hover:bg-primary/90"
-				>
-					Add images
-				</button>
-			</div>
+			<Card.Root class="border-dashed">
+				<Card.Content class="flex flex-col items-center justify-center py-12">
+					<p class="text-muted-foreground mb-4">No images in this dataset</p>
+					<Button onclick={() => (showAddModal = true)}>Add images</Button>
+				</Card.Content>
+			</Card.Root>
 		{:else}
 			<div class="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4">
 				{#each dataset.images as image}
-					<div class="border border-border rounded-lg overflow-hidden bg-card group relative">
+					<Card.Root class="overflow-hidden group relative">
 						<!-- Delete button overlay -->
-						<button
-							onclick={(e) => {
+						<Button
+							variant="destructive"
+							size="icon"
+							class="absolute top-2 right-2 z-10 h-7 w-7 opacity-0 group-hover:opacity-100 transition-opacity"
+							onclick={(e: MouseEvent) => {
 								e.stopPropagation();
 								showDeleteImageConfirm = image.filename;
 							}}
-							class="absolute top-2 right-2 z-10 p-1.5 bg-black/60 hover:bg-destructive rounded-full opacity-0 group-hover:opacity-100 transition-opacity"
 						>
-							<Trash2 class="w-4 h-4 text-white" />
-						</button>
+							<Trash2 class="w-3.5 h-3.5" />
+						</Button>
 
 						<!-- Clickable image for lightbox -->
-						<button
-							onclick={() => openLightbox(image)}
-							class="w-full aspect-square bg-muted cursor-pointer"
-						>
-							<img
-								src="/api/datasets/{dataset.name}/images/{image.filename}"
-								alt={image.caption || image.filename}
-								class="w-full h-full object-cover"
-								loading="lazy"
-							/>
-						</button>
+						<AspectRatio ratio={1} class="bg-muted">
+							<button
+								onclick={() => openLightbox(image)}
+								class="block w-full h-full cursor-pointer"
+							>
+								<img
+									src="/api/datasets/{dataset.name}/images/{image.filename}"
+									alt={image.caption || image.filename}
+									class="w-full h-full object-cover"
+									loading="lazy"
+								/>
+							</button>
+						</AspectRatio>
 
-						<div class="p-3">
-							{#if editingFilename === image.filename}
-								<!-- Inline edit mode -->
-								<div class="flex flex-col gap-2">
-									<textarea
-										bind:value={editingCaption}
-										onkeydown={(e) => handleCaptionKeydown(e, image.filename)}
-										class="w-full px-2 py-1 text-sm bg-background border border-input rounded resize-none focus:outline-none focus:ring-2 focus:ring-ring"
-										rows="3"
-									></textarea>
-									<div class="flex justify-end gap-1">
-										<button
-											onclick={cancelEditing}
-											class="p-1 text-muted-foreground hover:text-foreground"
-										>
-											<X class="w-4 h-4" />
-										</button>
-										<button
-											onclick={() => saveCaption(image.filename)}
-											disabled={savingCaption}
-											class="p-1 text-primary hover:text-primary/80 disabled:opacity-50"
-										>
-											<Check class="w-4 h-4" />
-										</button>
-									</div>
-								</div>
+						<Card.Content class="p-3">
+							{#if image.caption}
+								<p class="text-sm text-muted-foreground line-clamp-3">{image.caption}</p>
 							{:else}
-								<!-- Display mode with edit button -->
-								<div
-									class="group/caption flex items-start justify-between gap-2 cursor-pointer"
-									onclick={() => startEditing(image)}
-									onkeydown={(e) => e.key === 'Enter' && startEditing(image)}
-									role="button"
-									tabindex="0"
-								>
-									{#if image.caption}
-										<p class="text-sm text-foreground line-clamp-2 flex-1">{image.caption}</p>
-									{:else}
-										<p class="text-sm text-muted-foreground italic flex-1">No caption</p>
-									{/if}
-									<Pencil
-										class="w-3 h-3 text-muted-foreground opacity-0 group-hover/caption:opacity-100 flex-shrink-0 mt-0.5"
-									/>
-								</div>
+								<p class="text-sm text-muted-foreground/60 italic">No caption</p>
 							{/if}
-						</div>
-					</div>
+						</Card.Content>
+					</Card.Root>
 				{/each}
 			</div>
 		{/if}
@@ -476,193 +403,156 @@
 </div>
 
 <!-- Add Images Modal -->
-{#if showAddModal}
-	<div class="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
-		<div class="bg-card border border-border rounded-lg p-6 w-full max-w-lg mx-4">
-			<div class="flex items-center justify-between mb-4">
-				<h2 class="text-xl font-semibold text-card-foreground">Add Images</h2>
-				<button
-					onclick={() => (showAddModal = false)}
-					class="text-muted-foreground hover:text-foreground"
-				>
-					<X class="w-5 h-5" />
-				</button>
-			</div>
-			<p class="text-sm text-muted-foreground mb-3">Enter image URLs, one per line:</p>
-			<textarea
-				bind:value={imageUrls}
-				placeholder="https://example.com/image1.jpg&#10;https://example.com/image2.jpg"
-				rows="6"
-				class="w-full px-3 py-2 bg-background border border-input rounded-lg text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-ring mb-4 font-mono text-sm"
-			></textarea>
-			<div class="flex justify-end gap-3">
-				<button
-					onclick={() => {
-						showAddModal = false;
-						imageUrls = '';
-					}}
-					class="px-4 py-2 text-muted-foreground hover:text-foreground"
-				>
-					Cancel
-				</button>
-				<button
-					onclick={addImages}
-					disabled={adding || !imageUrls.trim()}
-					class="px-4 py-2 bg-primary text-primary-foreground rounded-lg hover:bg-primary/90 disabled:opacity-50"
-				>
-					{adding ? 'Adding...' : 'Add Images'}
-				</button>
-			</div>
-		</div>
-	</div>
-{/if}
+<Dialog.Root bind:open={showAddModal}>
+	<Dialog.Content class="max-w-lg">
+		<Dialog.Header>
+			<Dialog.Title>Add Images</Dialog.Title>
+			<Dialog.Description>Enter image URLs, one per line</Dialog.Description>
+		</Dialog.Header>
+
+		<Textarea
+			bind:value={imageUrls}
+			placeholder="https://example.com/image1.jpg&#10;https://example.com/image2.jpg"
+			rows={6}
+			class="font-mono text-sm"
+		/>
+
+		<Dialog.Footer>
+			<Button
+				variant="outline"
+				onclick={() => {
+					showAddModal = false;
+					imageUrls = '';
+				}}
+			>
+				Cancel
+			</Button>
+			<Button onclick={addImages} disabled={adding || !imageUrls.trim()}>
+				{adding ? 'Adding...' : 'Add Images'}
+			</Button>
+		</Dialog.Footer>
+	</Dialog.Content>
+</Dialog.Root>
 
 <!-- Delete Dataset Confirmation Modal -->
-{#if showDeleteConfirm}
-	<div class="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
-		<div class="bg-card border border-border rounded-lg p-6 w-full max-w-md mx-4">
-			<h2 class="text-xl font-semibold text-card-foreground mb-4">Delete Dataset?</h2>
-			<p class="text-muted-foreground mb-6">
+<Dialog.Root bind:open={showDeleteConfirm}>
+	<Dialog.Content class="max-w-md">
+		<Dialog.Header>
+			<Dialog.Title>Delete Dataset?</Dialog.Title>
+			<Dialog.Description>
 				This will permanently delete <strong>{dataset?.name}</strong> and all its images.
-			</p>
-			<div class="flex justify-end gap-3">
-				<button
-					onclick={() => (showDeleteConfirm = false)}
-					class="px-4 py-2 text-muted-foreground hover:text-foreground"
-				>
-					Cancel
-				</button>
-				<button
-					onclick={deleteDataset}
-					disabled={deleting}
-					class="px-4 py-2 bg-destructive text-white rounded-lg hover:bg-destructive/90 disabled:opacity-50"
-				>
-					{deleting ? 'Deleting...' : 'Delete'}
-				</button>
-			</div>
-		</div>
-	</div>
-{/if}
+				This action cannot be undone.
+			</Dialog.Description>
+		</Dialog.Header>
+		<Dialog.Footer>
+			<Button variant="outline" onclick={() => (showDeleteConfirm = false)}>Cancel</Button>
+			<Button variant="destructive" onclick={deleteDataset} disabled={deleting}>
+				{deleting ? 'Deleting...' : 'Delete'}
+			</Button>
+		</Dialog.Footer>
+	</Dialog.Content>
+</Dialog.Root>
 
 <!-- Delete Image Confirmation Modal -->
-{#if showDeleteImageConfirm}
-	<div class="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
-		<div class="bg-card border border-border rounded-lg p-6 w-full max-w-md mx-4">
-			<h2 class="text-xl font-semibold text-card-foreground mb-4">Delete Image?</h2>
-			<p class="text-muted-foreground mb-6">
+<Dialog.Root open={showDeleteImageConfirm !== null} onOpenChange={(open) => !open && (showDeleteImageConfirm = null)}>
+	<Dialog.Content class="max-w-md">
+		<Dialog.Header>
+			<Dialog.Title>Delete Image?</Dialog.Title>
+			<Dialog.Description>
 				This will permanently delete this image and its caption.
-			</p>
-			<div class="flex justify-end gap-3">
-				<button
-					onclick={() => (showDeleteImageConfirm = null)}
-					class="px-4 py-2 text-muted-foreground hover:text-foreground"
-				>
-					Cancel
-				</button>
-				<button
-					onclick={() => showDeleteImageConfirm && deleteImage(showDeleteImageConfirm)}
-					disabled={deletingImage !== null}
-					class="px-4 py-2 bg-destructive text-white rounded-lg hover:bg-destructive/90 disabled:opacity-50"
-				>
-					{deletingImage ? 'Deleting...' : 'Delete'}
-				</button>
-			</div>
-		</div>
-	</div>
-{/if}
+			</Dialog.Description>
+		</Dialog.Header>
+		<Dialog.Footer>
+			<Button variant="outline" onclick={() => (showDeleteImageConfirm = null)}>Cancel</Button>
+			<Button
+				variant="destructive"
+				onclick={() => showDeleteImageConfirm && deleteImage(showDeleteImageConfirm)}
+				disabled={deletingImage !== null}
+			>
+				{deletingImage ? 'Deleting...' : 'Delete'}
+			</Button>
+		</Dialog.Footer>
+	</Dialog.Content>
+</Dialog.Root>
 
 <!-- Image Lightbox -->
-{#if lightboxImage && dataset}
-	<div
-		class="fixed inset-0 bg-black/90 flex items-center justify-center z-50"
-		onclick={closeLightbox}
-		onkeydown={(e) => e.key === 'Escape' && closeLightbox()}
-		role="dialog"
-		tabindex="-1"
-	>
-		<div
-			class="flex flex-col lg:flex-row max-w-6xl w-full max-h-[90vh] mx-4 gap-4"
-			onclick={(e) => e.stopPropagation()}
-			onkeydown={() => {}}
-			role="presentation"
-		>
-			<!-- Image -->
-			<div class="flex-1 flex items-center justify-center min-h-0">
-				<img
-					src="/api/datasets/{dataset.name}/images/{lightboxImage.filename}"
-					alt={lightboxImage.caption || lightboxImage.filename}
-					class="max-w-full max-h-[70vh] lg:max-h-[85vh] object-contain rounded-lg"
-				/>
-			</div>
-
-			<!-- Caption panel -->
-			<div class="lg:w-80 bg-card rounded-lg p-4 flex flex-col gap-4">
-				<div class="flex items-center justify-between">
-					<h3 class="font-medium text-foreground truncate">{lightboxImage.filename}</h3>
-					<button onclick={closeLightbox} class="text-muted-foreground hover:text-foreground">
-						<X class="w-5 h-5" />
-					</button>
+<Dialog.Root open={lightboxImage !== null && dataset !== null} onOpenChange={(open) => !open && closeLightbox()}>
+	<Dialog.Content class="max-w-5xl w-[95vw] p-0 gap-0 overflow-hidden">
+		{#if lightboxImage && dataset}
+			<div class="flex flex-col">
+				<!-- Image - full width, generous height -->
+				<div class="bg-black flex items-center justify-center p-4">
+					<img
+						src="/api/datasets/{dataset.name}/images/{lightboxImage.filename}"
+						alt={lightboxImage.caption || lightboxImage.filename}
+						class="max-h-[70vh] max-w-full object-contain"
+					/>
 				</div>
 
-				<div class="flex-1 flex flex-col gap-3">
-					<div class="flex items-center justify-between">
-						<span class="text-sm font-medium text-muted-foreground">Caption</span>
-						<div class="flex items-center gap-2">
+				<!-- Caption panel below -->
+				<div class="p-6 border-t bg-background">
+					<div class="flex items-center justify-between mb-4">
+						<p class="text-sm font-medium text-muted-foreground truncate">{lightboxImage.filename}</p>
+						<div class="flex items-center gap-1">
 							{#if !lightboxEditMode}
-								<button
+								<Button
+									variant="ghost"
+									size="icon"
+									class="h-7 w-7"
 									onclick={() => {
 										lightboxEditMode = true;
 										lightboxCaption = lightboxImage?.caption || '';
 									}}
-									class="p-1 text-muted-foreground hover:text-foreground"
-									title="Edit caption"
 								>
 									<Pencil class="w-4 h-4" />
-								</button>
+								</Button>
 							{/if}
-							<button
+							<Button
+								variant="ghost"
+								size="icon"
+								class="h-7 w-7"
 								onclick={regenerateLightboxCaption}
 								disabled={regeneratingCaption}
-								class="p-1 text-muted-foreground hover:text-foreground disabled:opacity-50"
-								title="Regenerate caption"
 							>
 								<RefreshCw class="w-4 h-4 {regeneratingCaption ? 'animate-spin' : ''}" />
-							</button>
+							</Button>
 							{#if lightboxImage?.caption}
-								<button
+								<Button
+									variant="ghost"
+									size="icon"
+									class="h-7 w-7"
 									onclick={() => lightboxImage && clearCaption(lightboxImage.filename)}
-									class="p-1 text-muted-foreground hover:text-foreground"
-									title="Clear caption"
 								>
 									<Eraser class="w-4 h-4" />
-								</button>
+								</Button>
 							{/if}
+							<Button
+								variant="ghost"
+								size="icon"
+								class="h-7 w-7 text-destructive hover:text-destructive"
+								onclick={() => (showDeleteImageConfirm = lightboxImage?.filename || null)}
+							>
+								<Trash2 class="w-4 h-4" />
+							</Button>
 						</div>
 					</div>
 
 					{#if lightboxEditMode}
-						<textarea
-							bind:value={lightboxCaption}
-							class="w-full px-3 py-2 bg-background border border-input rounded-lg text-foreground resize-none focus:outline-none focus:ring-2 focus:ring-ring"
-							rows="6"
-						></textarea>
+						<Textarea bind:value={lightboxCaption} rows={4} class="resize-none mb-3" />
 						<div class="flex justify-end gap-2">
-							<button
+							<Button
+								variant="outline"
+								size="sm"
 								onclick={() => {
 									lightboxEditMode = false;
 									lightboxCaption = lightboxImage?.caption || '';
 								}}
-								class="px-3 py-1.5 text-sm text-muted-foreground hover:text-foreground"
 							>
 								Cancel
-							</button>
-							<button
-								onclick={saveLightboxCaption}
-								disabled={savingCaption}
-								class="px-3 py-1.5 text-sm bg-primary text-primary-foreground rounded hover:bg-primary/90 disabled:opacity-50"
-							>
+							</Button>
+							<Button size="sm" onclick={saveLightboxCaption} disabled={savingCaption}>
 								{savingCaption ? 'Saving...' : 'Save'}
-							</button>
+							</Button>
 						</div>
 					{:else if lightboxImage.caption}
 						<p class="text-sm text-foreground whitespace-pre-wrap">{lightboxImage.caption}</p>
@@ -670,16 +560,7 @@
 						<p class="text-sm text-muted-foreground italic">No caption</p>
 					{/if}
 				</div>
-
-				<!-- Delete button -->
-				<button
-					onclick={() => (showDeleteImageConfirm = lightboxImage?.filename || null)}
-					class="flex items-center justify-center gap-2 px-4 py-2 text-destructive hover:bg-destructive/10 rounded-lg"
-				>
-					<Trash2 class="w-4 h-4" />
-					Delete Image
-				</button>
 			</div>
-		</div>
-	</div>
-{/if}
+		{/if}
+	</Dialog.Content>
+</Dialog.Root>
